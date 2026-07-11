@@ -2,26 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* Light theme — clean white surfaces with a golden-yellow primary */
+    --background: 45 40% 98%;
+    --foreground: 224 30% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 30% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 30% 12%;
+    --primary: 43 96% 50%;
+    --primary-foreground: 30 45% 10%;
+    --secondary: 45 60% 93%;
+    --secondary-foreground: 30 40% 18%;
+    --muted: 45 25% 94%;
+    --muted-foreground: 220 12% 44%;
+    --accent: 45 70% 92%;
+    --accent-foreground: 30 40% 15%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 44 22% 88%;
+    --input: 44 22% 82%;
+    --ring: 43 96% 45%;
+    --radius: 0.75rem;
+    /* kept for compatibility with tailwind sidebar tokens */
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 224 30% 12%;
+    --sidebar-muted: 220 12% 44%;
+    --sidebar-border: 44 22% 88%;
+    --sidebar-accent: 45 70% 92%;
+  }
+  .dark {
+    --background: 222 24% 7%;
+    --foreground: 40 25% 95%;
+    --card: 222 21% 11%;
+    --card-foreground: 40 25% 95%;
+    --popover: 222 21% 13%;
+    --popover-foreground: 40 25% 95%;
+    --primary: 44 96% 58%;
+    --primary-foreground: 30 50% 10%;
+    --secondary: 222 16% 19%;
+    --secondary-foreground: 40 25% 92%;
+    --muted: 222 17% 14%;
+    --muted-foreground: 220 14% 70%;
+    --accent: 222 17% 18%;
+    --accent-foreground: 40 25% 95%;
+    --destructive: 0 68% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 14% 22%;
+    --input: 220 14% 28%;
+    --ring: 44 96% 58%;
+    --sidebar: 222 21% 11%;
+    --sidebar-foreground: 40 25% 95%;
+    --sidebar-muted: 220 14% 70%;
+    --sidebar-border: 220 14% 22%;
+    --sidebar-accent: 222 17% 18%;
+  }
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  .page-title {
+    @apply text-xl font-semibold tracking-tight;
+  }
 }
 
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
+  .shadow-card {
+    box-shadow: 0 1px 2px 0 rgb(120 90 20 / 0.06), 0 1px 8px -2px rgb(120 90 20 / 0.08);
+  }
+  .dark .shadow-card {
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.4), 0 2px 10px -2px rgb(0 0 0 / 0.5);
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: black !important;
   }
 }

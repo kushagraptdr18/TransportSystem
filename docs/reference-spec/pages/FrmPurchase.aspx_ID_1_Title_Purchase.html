@@ -1,0 +1,1829 @@
+
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head id="Head1"><link href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.1/themes/base/jquery-ui.css" rel="stylesheet" />
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.8.1/jquery-ui.min.js"></script>
+   <title>
+	Purchase
+</title>
+    <style type="text/css">
+  .hiddencol
+  {
+    display: none;
+  }
+</style>
+    <!-- Google Font -->
+    <script type="text/javascript">
+        UserDate('DtpAmndDate');
+        UserDate('DtpInvDate');
+        UserDate('DtpSupDate');
+        UserDate('DtpMFGDate');
+        UserDate('DtpREDate');
+        UserDate('DtpEWayGDate');
+        UserDate('DtpDeliveryDate');
+        UserDate('DtpOrderDate');
+        UserDate('DtpWrntyDate');
+
+     
+
+    </script>
+   
+   
+</head>
+<body class="hold-transition skin-blue sidebar-min">
+    <form name="form1" method="post" action="./FrmPurchase.aspx?ID=1&amp;Title=Purchase" onkeypress="javascript:return WebForm_FireDefaultButton(event, 'BtnSave')" id="form1">
+<div>
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__LASTFOCUS" id="__LASTFOCUS" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="/wEPDwUJODQzNDIwOTc5D2QWAgIDD2QWBgIDD2QWDGYPDxYCHgRUZXh0BRxTSFJJIFNIUkkgQkFMQUpFRSBST0FEIExJTkVTZGQCAQ8PFgIfAAUHUkFJR0FSSGRkAgIPDxYCHwAFCTIwMjYtMjAyN2RkAgMPDxYCHwAFHFNIUkkgU0hSSSBCQUxBSkVFIFJPQUQgTElORVNkZAIEDw8WAh8ABQMxMTlkZAIFDw8WAh8ABQMyMDdkZAIFD2QWHAIBDw8WAh8ABRxTSFJJIFNIUkkgQkFMQUpFRSBST0FEIExJTkVTZGQCAw8PFgIfAAUGQ0hJUkFHZGQCBQ8PFgIfAAUDMjA3ZGQCBw8PFgIfAAUBMGRkAgsPFgIeB1Zpc2libGVoZAINDxYCHwFoZAIPDxYCHwFoZAIRDxYCHwFoZAITDxYCHwFoZAKtAQ8WAh8BaGQCwwEPFgIfAWhkAscBD2QWAgIDDxYCHwFoZALJAQ9kFgICAQ8WAh8BZ2QCywEPZBYCAgcPFgIfAWhkAgcPZBYCZg9kFioCAQ8PFgIfAAUIUHVyY2hhc2VkZAIJDw8WAh4HRW5hYmxlZGhkZAIRDxBkZBYBZmQCEw8PFgIfAAUBMWRkAhUPEA8WAh8BaGRkFgBkAhkPDxYCHwAFCjA0LzA3LzIwMjZkZAIbDxBkZBYBZmQCHw8QDxYGHg1EYXRhVGV4dEZpZWxkBQtTX1BhcnR5TmFtZR4ORGF0YVZhbHVlRmllbGQFC05fUGFydHlDb2RlHgtfIURhdGFCb3VuZGdkEBVwCi0tU2VsZWN0LS0GQURCQ0NECEFTSE9LIEpJDkJJTExFRCBQQVJUWSAxFUJJU0hXRVNIV0FSTEFMIFNURUVMUwRDQVNICENBU0ggQS9DCENBU0ggQS9DBkRFTU8gMQZERU1PIDIUREVNTyBDT05TSUdORUUgUEFSVFkUREVNTyBDT05TSUdORUUgUEFSVFkLREVNTyBQQVJUIDENREVNTyBQQVJUWSAxMQ5ERU1PIFBBUlRZIDEyMRZERU1PIFBBUlRZIEZPUiBCSUxMSU5HFkRFTU8gUEFSVFkgRk9SIEJJTExJTkcYREVNTyBQQVJUWSBGT1IgQ09OU0lHTkVFGERFTU8gUEFSVFkgRk9SIENPTlNJR05FRRhERU1PIFBBUlRZIEZPUiBDT05TSUdOT1IYREVNTyBQQVJUWSBGT1IgQ09OU0lHTk9SEkRFTU8gU1VQUExJRVIgTkFNRRJERU1PIFNVUFBMSUVSIE5BTUUJREVNTyBUQyAxCURFTU8gVEMgMg1ERU1PIFRDIFBBUlRZHkVWRVJTRU5BSSBDT05TVFJVQ1RJT04gUFZUIExURA1FWFBSRVNTIENBUkdPDUVYUFJFU1MgQ0FSR08HRkpIR0hVRAdGSkhHSFVEBkdBVVJBVgZHQVVSQVYMR09QQUwgU0hBUk1BDEdPUEFMIFNIQVJNQQZIQVJESUsiSElORFVTVEhBTiBFTkdJTkVFUklORyBBTkQgSU5ELkxURA5JTkRJQSBGT09UV0VBUh1KQVlBTEFLU0hNSSBFTkdJTkVFUklORyBXT1JLUwVKSUdBUgVKSUdBUgZKSUdBUk4GSklHQVJOKEpJTkRBTCBDRU1FTlQgSU5EVVNUUklFUyBQUklWQVRFIExJTUlURUQcSklOREFMIFNURUVMIENISEFUSVNHQVJIIExURB1KSU5EQUwgU1RFRUwgTElNSVRFRCwgUEFUUkFUVSFKSU5EQUwgU1RFRUwgTElNSVRFRCwgUFVOSklQQVRIUkEdSklOREFMIFNURUVMIExJTUlURUQsIFJBSUdBUkgUSyBMT04gVEVLTk8gUE9MWU1FUlMUSyBMT04gVEVLTk8gUE9MWU1FUlMHS0FJTEFTSAdLQUlMQVNIDktBVVNIQUwgU0hBUk1BDktBVVNIQUwgU0hBUk1BDktBVVNIQUwgU0hBUk1BDktBVVNIQUwgU0hBUk1BDktBVVNIQUwgU0hBUk1BDEtFWVVSIFNIQVJNQQxLRVlVUiBTSEFSTUE4S0lSQlkgQlVJTERJTkcgU1lTVEVNUyAmIFNUUlVDVFVSRSBJTkRJQSBQUklWQVRFIExJTUlURUQHS1VMREVFUAZLVU5EQU4GTUFOSVNIBk1BTklTSAhNT0hBTkxBTBtOQUxXQSBTUEVDSUFMIFNURUVMIExJTUlURUQdTkFMV0EgU1RFRUwgQU5EIFBPV0VSIExJTUlURUQKT00gUFJBS0FTSApPTSBQUkFLQVNID09NIFBSQUtBU0ggU0FIVQ9PTSBQUkFLQVNIIFNBSFUGUFJBS1NIBlBSQU1PRApQUkFTSEFOVEpJClBSQVNIQU5USkkGUFVTSFBBBlBVU0hQQQdSSVNIQUJIB1JJU0hBQkgFUk9CSU4FUk9CSU4FUk9ISVQGU0FNRUVSBlNBTUVFUgZTSEFJTkkGU0hBSU5JFFNISVYgU0hBTktBUiBQTEFTVElDCFNIT0VCIEpJCFNIT0VCIEpJCFNIUkkgUkFNB1NIVUJIQU0OU0hVQkhBTSBTQVJLQVIOU0hVQkhBTSBTQVJLQVIEU09OVQRTT05VEVNVTUlUIEpJIEdBSlJBVUxBEVNVTUlUIEpJIEdBSlJBVUxBCVRBUkFDSEFORAhUQyBQQVJUWQpUQyBQQVJUWSAyBlRDREVNTwVWSVJBVAlWSVNIQUwgSkkJVklTSEFMIEpJBVdBU0lNBVdBU0lNCFdBU0lNIEpJCFdBU0lNIEpJDVlBU0ggTE9HSVNUSUMNWUFTSCBMT0dJU1RJQwlaSEwgSU1QRVgJWkhMIElNUEVYFXABMAIyNQI0NQMyNDgEMTkzMAQxOTM2ATIBNwQxMzY3BDEzNjgCODMDNzk4AzI5NQMzMDEDNTg4Ajk0Azc5OQI3MwM3OTYCNzIDNzk1Ajc0Azc5NwMzNzYDMzc3AzU2MgQxOTIyAjEzAzc4NQI1NQM3ODkDMjc0AzgxNgIyOQM3ODgCNDIEMTkwNgI1NAQxOTE4AzI4OQM4MTQDMzI3AzgxNQQxOTM1BDE5MjkEMTkxMQQxOTA4BDE5MDUCMTIDNzg0AzMxMAM4MTICMTYCMTkCNjADNzkwAzc5MwMyNjMDODAxBDE5MTICNDMCMzMDMzI4AzgxNwIyMAQxOTA3BDE5MDkCNjcDODAwAzI4OAM4MDkBNQIyNAMyNzIDODEzAzMwMgM4MTEDMjc3AzgwMgMyODYDODA4AjQxAzI4MgM4MDUDMjgzAzgwNgI1MwIyOAM3ODcCMTACNDQDMjY0AzgwNwMyODEDODA0AjE1Azc4NgEzAzI0NgMyNDcCMjECMjcCNTgDNzkyAzI5MAM4MTACNTcDNzkxAzI3OAM4MDMCNjYDNzk0FCsDcGdnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2cWAWZkAiMPEA8WBh8DBQtTX1BhcnR5TmFtZR8EBQtOX1BhcnR5Q29kZR8FZ2QQFXAKLS1TZWxlY3QtLQZBREJDQ0QIQVNIT0sgSkkOQklMTEVEIFBBUlRZIDEVQklTSFdFU0hXQVJMQUwgU1RFRUxTBENBU0gIQ0FTSCBBL0MIQ0FTSCBBL0MGREVNTyAxBkRFTU8gMhRERU1PIENPTlNJR05FRSBQQVJUWRRERU1PIENPTlNJR05FRSBQQVJUWQtERU1PIFBBUlQgMQ1ERU1PIFBBUlRZIDExDkRFTU8gUEFSVFkgMTIxFkRFTU8gUEFSVFkgRk9SIEJJTExJTkcWREVNTyBQQVJUWSBGT1IgQklMTElORxhERU1PIFBBUlRZIEZPUiBDT05TSUdORUUYREVNTyBQQVJUWSBGT1IgQ09OU0lHTkVFGERFTU8gUEFSVFkgRk9SIENPTlNJR05PUhhERU1PIFBBUlRZIEZPUiBDT05TSUdOT1ISREVNTyBTVVBQTElFUiBOQU1FEkRFTU8gU1VQUExJRVIgTkFNRQlERU1PIFRDIDEJREVNTyBUQyAyDURFTU8gVEMgUEFSVFkeRVZFUlNFTkFJIENPTlNUUlVDVElPTiBQVlQgTFREDUVYUFJFU1MgQ0FSR08NRVhQUkVTUyBDQVJHTwdGSkhHSFVEB0ZKSEdIVUQGR0FVUkFWBkdBVVJBVgxHT1BBTCBTSEFSTUEMR09QQUwgU0hBUk1BBkhBUkRJSyJISU5EVVNUSEFOIEVOR0lORUVSSU5HIEFORCBJTkQuTFREDklORElBIEZPT1RXRUFSHUpBWUFMQUtTSE1JIEVOR0lORUVSSU5HIFdPUktTBUpJR0FSBUpJR0FSBkpJR0FSTgZKSUdBUk4oSklOREFMIENFTUVOVCBJTkRVU1RSSUVTIFBSSVZBVEUgTElNSVRFRBxKSU5EQUwgU1RFRUwgQ0hIQVRJU0dBUkggTFREHUpJTkRBTCBTVEVFTCBMSU1JVEVELCBQQVRSQVRVIUpJTkRBTCBTVEVFTCBMSU1JVEVELCBQVU5KSVBBVEhSQR1KSU5EQUwgU1RFRUwgTElNSVRFRCwgUkFJR0FSSBRLIExPTiBURUtOTyBQT0xZTUVSUxRLIExPTiBURUtOTyBQT0xZTUVSUwdLQUlMQVNIB0tBSUxBU0gOS0FVU0hBTCBTSEFSTUEOS0FVU0hBTCBTSEFSTUEOS0FVU0hBTCBTSEFSTUEOS0FVU0hBTCBTSEFSTUEOS0FVU0hBTCBTSEFSTUEMS0VZVVIgU0hBUk1BDEtFWVVSIFNIQVJNQThLSVJCWSBCVUlMRElORyBTWVNURU1TICYgU1RSVUNUVVJFIElORElBIFBSSVZBVEUgTElNSVRFRAdLVUxERUVQBktVTkRBTgZNQU5JU0gGTUFOSVNICE1PSEFOTEFMG05BTFdBIFNQRUNJQUwgU1RFRUwgTElNSVRFRB1OQUxXQSBTVEVFTCBBTkQgUE9XRVIgTElNSVRFRApPTSBQUkFLQVNICk9NIFBSQUtBU0gPT00gUFJBS0FTSCBTQUhVD09NIFBSQUtBU0ggU0FIVQZQUkFLU0gGUFJBTU9EClBSQVNIQU5USkkKUFJBU0hBTlRKSQZQVVNIUEEGUFVTSFBBB1JJU0hBQkgHUklTSEFCSAVST0JJTgVST0JJTgVST0hJVAZTQU1FRVIGU0FNRUVSBlNIQUlOSQZTSEFJTkkUU0hJViBTSEFOS0FSIFBMQVNUSUMIU0hPRUIgSkkIU0hPRUIgSkkIU0hSSSBSQU0HU0hVQkhBTQ5TSFVCSEFNIFNBUktBUg5TSFVCSEFNIFNBUktBUgRTT05VBFNPTlURU1VNSVQgSkkgR0FKUkFVTEERU1VNSVQgSkkgR0FKUkFVTEEJVEFSQUNIQU5ECFRDIFBBUlRZClRDIFBBUlRZIDIGVENERU1PBVZJUkFUCVZJU0hBTCBKSQlWSVNIQUwgSkkFV0FTSU0FV0FTSU0IV0FTSU0gSkkIV0FTSU0gSkkNWUFTSCBMT0dJU1RJQw1ZQVNIIExPR0lTVElDCVpITCBJTVBFWAlaSEwgSU1QRVgVcAEwAjI1AjQ1AzI0OAQxOTMwBDE5MzYBMgE3BDEzNjcEMTM2OAI4MwM3OTgDMjk1AzMwMQM1ODgCOTQDNzk5AjczAzc5NgI3MgM3OTUCNzQDNzk3AzM3NgMzNzcDNTYyBDE5MjICMTMDNzg1AjU1Azc4OQMyNzQDODE2AjI5Azc4OAI0MgQxOTA2AjU0BDE5MTgDMjg5AzgxNAMzMjcDODE1BDE5MzUEMTkyOQQxOTExBDE5MDgEMTkwNQIxMgM3ODQDMzEwAzgxMgIxNgIxOQI2MAM3OTADNzkzAzI2MwM4MDEEMTkxMgI0MwIzMwMzMjgDODE3AjIwBDE5MDcEMTkwOQI2NwM4MDADMjg4AzgwOQE1AjI0AzI3MgM4MTMDMzAyAzgxMQMyNzcDODAyAzI4NgM4MDgCNDEDMjgyAzgwNQMyODMDODA2AjUzAjI4Azc4NwIxMAI0NAMyNjQDODA3AzI4MQM4MDQCMTUDNzg2ATMDMjQ2AzI0NwIyMQIyNwI1OAM3OTIDMjkwAzgxMAI1NwM3OTEDMjc4AzgwMwI2NgM3OTQUKwNwZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZxYBZmQCJw8QDxYGHwMFC1NfUGFydHlOYW1lHwQFC05fUGFydHlDb2RlHwVnZBAVNgotLVNlbGVjdC0tFEEgQU5BTkQ6ICBBSlJQQTcwNjJMBkFESVRZQQ1BRElUWUEgU0hBUk1BFkFOSUwgS1VNQVI6IEVQU1BLMjcxMUYOQVNIT0sgTE9HSVNUSUMRQVdERVNIIEtVTUFSIFNIQUgGQlJPS0VSDkRFTU8gVFJBTlNQT1JUEERFTU8gVFJBTlNQT1JUIDIQREVNTyBUUkFOU1BPUlQgMxpERU1PIFRSQU5TUE9SVCBOQU1FIEZPUiBPQxJERU1PIFRSQU5TUE9SVCBPTkUIRE0gVFBUIDEPR09QQUwgVFJBTlNQT1JUE0dPUEFMIFRSQU5TUE9SVCBPTkUFSEFSU0gnSkFZIEFNQkFZIFJPQURMSU5FUyBQVlQgTFREOiBBRE9QVDAwNTNEB0pJR05FU0gQSklOREFMIFJPQUQgTElORQ5LQVVTSEFMIFNIQVJNQQVLRVlVUgZMQUtIQU4PTE9DQUwgVFJBTlNQT1JUEk1BTlBVU0hQIFJPQURMSU5FUxFNUyBERU1PIFRSQU5TUE9SVA1OIFIgUk9BRExJTkVTBU5BTUFOElBSQVNIQU5UIExPR0lTVElDUwtSQUpBIFBBTEFOSRZSQUpFTkRSQSBLVU1BUiBQQVRJREFSHlJBTUEgS1JJU0hOQSBUUkFOU1BPUlQgQ09NUEFOWQ5SQU1BTiBMT0dJU1RJQw9SQU1FU0hXQVIgWUFEQVYFUk9CSU4VUk9TSEFOIFNBSFUgVFJBTlNQT1JUIVNBUk9KIFRSQUlMT1IgU0VSVklDRTogQkhPUEsxNDIyShBTSElWQU0gTE9HSVNUSUNTEVNISVZBTUEgTE9HSVNUSUNTElNIUkkgUkFNIFRSQU5TUE9SVAdTSFVCQUhNEFNIVURISVIgTE9HSVNUSUMOU0hZQU0gTE9HSVNUSUMPU09IQU0gVFJBTlNQT1JUC1QgVFJBTlNQT1JUG1RBUkFDSEFORCBST0FETElORVMgUFZUIExURA1UQVJBQ0hBTkQgVFBUC1RDIERFTU8gVFBUClRDIFRSQU5TUE8MVEMgVFJBTlNQT1JUEVZJSkFZIEtVTUFSIFlBREFWBllPR0VTSAdZVVZSQUFKBllVVlJBShU2ATAEMTkxNAMyOTIEMTkyNAQxOTEzAzMxMgQxOTIwBDE5MTkCNjQDMjE2Azk2MAI4NAI2MQMzNzICNjICNjMDMjk3BDE5MTUDMzIxAjU2AzIxMwMyNjUDMjk2AjY1AjIzAzIxNQI1OQMzMjYDMjkxBDE5MzEEMTkxNwI1MQMzMDUEMTkyMwMyODcDMjYyBDE5MTYDMzA2AzMwNwE5AzI3MwMzMjUDMjY2AzMxNwMzMTgDMjE0AzM2MgMzNzMDMjQ1ATQEMTkxMAMzMjIDMzIwAzMwMBQrAzZnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2cWAWZkAisPEA8WBh8DBQtTX1BhcnR5TmFtZR8EBQtOX1BhcnR5Q29kZR8FZ2QQFQkKLS1TZWxlY3QtLQZERUVQQUsKREVNTyBBR0VOVAxERU1PIEFHRU5UIDEMREVNTyBBR0VOVCAzCURISVJFTkRSQQ9LQVJWWVkgSU5GT1RFQ0gGS0lTSE9SBlJBTUVTSBUJATADMzEzAzExNAMxMTUDMjQyAzI5MwMyNzADMjc5AzI2NxQrAwlnZ2dnZ2dnZ2cWAWZkAjMPEGRkFgFmZAI9D2QWAmYPZBYCAgEPEA8WBh8DBQ5TX0xvY2F0aW9uTmFtZR8EBQlOX0xvY0NvZGUfBWdkEBUCCi0tU2VsZWN0LS0HREVGQVVMVBUCATABMRQrAwJnZxYBAgFkAkEPEA8WBh8DBQhTX1BHTmFtZR8EBQhOX1BHQ29kZR8FZ2QQFR0KLS1TZWxlY3QtLQRBQkNEBkFCQ0QgMgRCRUFNBUJMT09NB0NIQU5ORUwHQ0xPVEhlcwhDT1NNRVRJQwpERU1PIEdST1VQCEZPT1RXRUFSB0dFTkVSQUwHR0VORVJBTAdHRU5FUkFMBEtJTE8GTElRVUlEBkxJUVVPUgVNRVRBTAZNRVRBTFMDTVJGB1BMQVNUSUMJUExBU1RJQ1NTBVBMQVRFDlBSRCBHUk9VUCBERU1PBFJBSUwKU1RBVElPTkFSWQVTVEVFTAVTVE9ORQRURUNIA1RNVBUdATABMwE0AjYyAjY0AjY2ATYCMTkCMzQCMTECMTABMQEyAjMxAjIzAjI1AjIyAjI4AjU4AjI2AjI5AjYzAjM1AjY1AjIwAjI3AjI0AjIxAjYxFCsDHWdnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnZ2dnFgFmZAJFDxBkZBYAZAJNDxAPFgYfAwUKU19Vbml0TmFtZR8EBQpOX1VuaXRDb2RlHwVnZBAVAwgtIFVuaXQgLQZCVU5ETEUCTVQVAwEwATMCMjkUKwMDZ2dnFgFmZAJVDxAPFgYfAwUKU19Vbml0TmFtZR8EBQpOX1VuaXRDb2RlHwVnZBAVAw0tIFJhdGUgVHlwZSAtBkJVTkRMRQJNVBUDATABMwIyORQrAwNnZ2cWAWZkAl8PEGRkFgECAWQCcw8QDxYGHwMFC1NfVmVoaWNsZU5vHwQFDU5fVmVoaWNsZUNvZGUfBWdkEBUPGC0tLS0tLSBWZWhpY2xlIE5vIC0tLS0tLQ1DRyAwNCBBQiAxMTIyCkNHMDRKRDM4NjAKQ0cxM0FGMjE2OQpDRzEzQVQyMDAxCkNHMTNBWjg4MDEKQ0cxM0FaODgxOApDRzEzQkE5MDE4CkNHMTNCQjg4MTgKQ0cxM0JFODk0MQlDRzEzRDY1ODIJQ0cxM0w4ODQxCkpIMDJCTjE4NDQJT1IxNVIyMjM3CVROODhKOTEwORUPATAEMTA5MgQxMDg4BDEwODUEMTA5NQQxMDk0BDEwODMEMTA5MAQxMDg0BDEwODcEMTA4OQQxMDkzBDEwODIEMTA4NgQxMDkxFCsDD2dnZ2dnZ2dnZ2dnZ2dnZxYBZmQCdw8QDxYGHwMFC1NfUGFydHlOYW1lHwQFC05fUGFydHlDb2RlHwVnZBAVCBQtLS0tLS0gRHJpdmVyIC0tLS0tLQdCSEFXQU5JDURFTU8gRFJJVkVSIDIQREVNTyBEUklWRVIgTkFNRQZISVRFU0gHS0FMQUtBUgVSQUpBTgZTVVJFU0gVCAEwAzI4MAM0MTIDMjQxAzMxNAMyNzUCOTADMjk0FCsDCGdnZ2dnZ2dnFgFmZAKFAQ9kFgICAQ88KwARAgEQFgAWABYADBQrAABkGAEFBkdWSXRlbQ9nZI5GpM6UEDLnwRNmLOrMYljXpjjZ" />
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+var theForm = document.forms['form1'];
+if (!theForm) {
+    theForm = document.form1;
+}
+function __doPostBack(eventTarget, eventArgument) {
+    if (!theForm.onsubmit || (theForm.onsubmit() != false)) {
+        theForm.__EVENTTARGET.value = eventTarget;
+        theForm.__EVENTARGUMENT.value = eventArgument;
+        theForm.submit();
+    }
+}
+//]]>
+</script>
+
+
+<script src="/WebResource.axd?d=9UnqcMDdIYXUZr9BF8Hgx0_KA2MdX0Kwmk22-w2zaND56MVO1uMch2bVwsVfXx5brbpV02ldSuu8ZG-2SR_QhnHrdLE1&amp;t=638942408805310136" type="text/javascript"></script>
+
+
+<script src="/ScriptResource.axd?d=rKD5dS3zByM1n7pdij5y4-5C_s9PBM9aIlyJWRRMBhwoFwjmGVQNxhRZ9h-I1XWJn45JamYS4aTyTlJFiFPZHMLTaRjna5h7VLGizGY6u1dUveFBcAGYgDq2_xVBAuGybFKqx2Bld04uEQt3gIBj_lbqqoefLP8XARjG1H4KO5K9gbbt0&amp;t=32e5dfca" type="text/javascript"></script>
+<script type="text/javascript">
+//<![CDATA[
+if (typeof(Sys) === 'undefined') throw new Error('ASP.NET Ajax client-side framework failed to load.');
+//]]>
+</script>
+
+<script src="/ScriptResource.axd?d=AfY3ntjwT4yQsPVhzm0PxiZDOFb6pU4z1anmECiPdF6fc77rlVJf8IKL_MDhTGol73Curj1zbFm1ph4RidATObYg5MNaigUaU7fsfrjS-20kifJOqYkFAMuxG45LYErJJwyNdeCuRytmKYrXRldoK7sQIpufNsqdmFoCCDDcIhziR3j90&amp;t=32e5dfca" type="text/javascript"></script>
+<script src="/WebResource.axd?d=wfB3T_SHT0xlkEaUaJTPPGLMC6L0WSkLnveGMLxnRECWAsv6crKEdb1PO57UXBcl4qxpg0cQBrJGaPh3Xeb-bAsJYV81&amp;t=638942408805310136" type="text/javascript"></script>
+<div>
+
+	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="63866F9F" />
+	<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="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" />
+</div>
+    <script type="text/javascript">
+//<![CDATA[
+Sys.WebForms.PageRequestManager._initialize('SCM1', 'form1', ['tUDP1','','tUpdatePanel1',''], [], [], 90, '');
+//]]>
+</script>
+
+    <div class="wrapper">
+        <!-- Start Header Control -->
+        
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Manpushp Software LLP.</title>
+    <!-- Tell the browser to be responsive to screen width -->
+    <meta content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+        name="viewport">
+    <!-- Bootstrap 3.3.7 -->
+    <link rel="stylesheet" href="bower_components/bootstrap/dist/css/bootstrap.min.css">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="bower_components/font-awesome/css/font-awesome.min.css">
+    <!-- Ionicons -->
+    <link rel="stylesheet" href="bower_components/Ionicons/css/ionicons.min.css">
+    <!-- Theme style -->
+    <link rel="stylesheet" href="dist/css/AdminLTE.min.css">
+    <!-- AdminLTE Skins. Choose a skin from the css/skins
+       folder instead of downloading all of them to reduce the load. -->
+    <link rel="stylesheet" href="dist/css/skins/_all-skins.min.css">
+    <!-- Morris chart -->
+    <link rel="stylesheet" href="bower_components/morris.js/morris.css">
+    <!-- jvectormap -->
+    <link rel="stylesheet" href="bower_components/jvectormap/jquery-jvectormap.css">
+    <!-- Date Picker -->
+    <link rel="stylesheet" href="bower_components/bootstrap-datepicker/dist/css/bootstrap-datepicker.min.css">
+    <!-- Daterange picker -->
+    <link rel="stylesheet" href="bower_components/bootstrap-daterangepicker/daterangepicker.css">
+    <!-- bootstrap wysihtml5 - text editor -->
+    <link rel="stylesheet" href="plugins/bootstrap-wysihtml5/bootstrap3-wysihtml5.min.css">
+
+    <!-- Google Font -->
+    
+    <link href="bower_components/select2/dist/css/select2.min.css" rel="stylesheet" type="text/css" />
+    <script type="text/javascript">
+        function DateFormat(field, rules, i, options) {
+            var regex = /^(0?[1-9]|[12][0-9]|3[01])[\/\-](0?[1-9]|1[012])[\/\-]\d{4}$/;
+            if (!regex.test(field.val())) {
+                return "Please enter date in dd/mm/yyyy format."
+            }
+        }
+    </script>
+    <!-----validator end-------->
+    <script src="datepicker/trirand/Bass.js" type="text/javascript"></script>
+    <script src="datepicker/trirand/dt.js" type="text/javascript"></script>
+</head>
+<!-- Header Start -->
+<header class="main-header">
+    <!-- Logo -->
+    <a href="SBLDeshboard.aspx" class="logo">
+      <!-- mini logo for sidebar mini 50x50 pixels -->
+      <span class="logo-mini"><b>M</b>SL</span>
+      <!-- logo for regular state and mobile devices -->
+      <span class="logo-lg"><b>HOME</b></span>
+    </a>
+    <!-- Header Navbar: style can be found in header.less -->
+    <nav class="navbar navbar-static-top">
+      <!-- Sidebar toggle button-->
+      <a href="#" class="sidebar-toggle" data-toggle="push-menu" role="button">
+        <span class="sr-only">Toggle navigation</span>
+      </a>
+       
+                  
+             
+      <div class="navbar-custom-menu">
+        <ul class="nav navbar-nav">
+          <!-- Messages: style can be found in dropdown.less-->
+         
+          <!-- Notifications: style can be found in dropdown.less -->
+         
+          <!-- User Account: style can be found in dropdown.less -->
+             
+            
+          <li class="dropdown user user-menu">
+              
+            <a href="#" class="dropdown-toggle" data-toggle="dropdown">
+                         
+              <img src="dist/img/user2-160x160.jpg" class="user-image" alt="User Image" />
+              <span class="hidden-xs"><span id="HeaderControl1_lblFirmN">SHRI SHRI BALAJEE ROAD LINES</span></span> - (
+              <span class="hidden-xs"><span id="HeaderControl1_lblAddress">RAIGARH</span></span> -
+              <span class="hidden-xs"><span id="HeaderControl1_lblFinYear">2026-2027</span></span> )
+            </a>
+            <ul class="dropdown-menu">
+              <!-- User image -->
+
+              <li class="user-header">
+                 
+                <img src="dist/img/user2-160x160.jpg" class="img-circle" alt="User Image" />
+                <p>                                      
+                <span id="HeaderControl1_lblFirmN1">SHRI SHRI BALAJEE ROAD LINES</span>
+                
+                  <small>Member since Nov. 1988</small>
+                </p>
+              </li>
+              <!-- Menu Body -->
+              <li class="user-body">
+                <div class="row">
+                  <div class="col-xs-4 text-center">
+                    <a href="#">Followers</a>
+                  </div>
+                  <div class="col-xs-4 text-center">
+                    <a href="#">Sales</a>
+                  </div>
+                  <div class="col-xs-4 text-center">
+                    <a href="#">Friends</a>
+                  </div>
+                </div>
+                <!-- /.row -->
+              </li>
+              <!-- Menu Footer-->
+              <li class="user-footer">
+                <div class="pull-left">
+                  <a href="#" class="btn btn-default btn-flat">Profile</a>
+                </div>
+                <div class="pull-right">
+                  <a href="Logout.aspx" class="btn btn-default btn-flat">Sign out</a>
+                </div>
+              </li>
+            </ul>
+          </li>
+
+           <li>
+            <a href="LogoutFirm.aspx?UCode="207">Switch Firm</a>
+          </li>
+
+          <li>
+            <a href="Logout.aspx">Sign out</a>
+          </li>
+          <!-- Control Sidebar Toggle Button -->
+         
+        </ul>
+      </div>
+    </nav>
+  </header>
+<!-- End Header -->
+
+        <!-- End Header Control -->
+        <!-- Start Menubar Control -->
+        
+<!-- Left side column. contains the logo and sidebar -->
+<aside class="main-sidebar">
+    <!-- sidebar: style can be found in sidebar.less -->
+    <section class="sidebar">
+      <!-- Sidebar user panel -->
+      <div class="user-panel">
+        <div class="pull-left image">
+          <img src="dist/img/user2-160x160.jpg" class="img-circle" alt="User Image">
+        </div>
+        <div class="pull-left info">
+          <p><span id="MenubarControl1_lblFirmN">SHRI SHRI BALAJEE ROAD LINES</span></p>
+          <a href="#"><i class="fa fa-circle text-success"></i> User - <span id="MenubarControl1_lblUserName">CHIRAG</span>
+            </a>
+        </div>
+      </div>            
+      <!-- sidebar menu: : style can be found in sidebar.less -->
+      <ul class="sidebar-menu" data-widget="tree">
+        <li class="header">MAIN NAVIGATION</li>
+         <li id="MenubarControl1_FirmCreation">
+          <a href="FrmFirmCreation.aspx">
+            <i class="fa fa-plus"></i> <span>Firm Creation</span>
+            <span class="pull-right-container">
+              <small class="label pull-right bg-green">new</small>
+            </span>
+          </a>
+        </li>                  
+        
+        <li class="treeview">
+          <a href="#">
+            <i class="fa fa-desktop"></i> <span>Administration</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+         
+         
+               
+                
+                
+                
+              <li id="MenubarControl1_Party"><a href="FrmParty.aspx"><i class="fa fa-gear"></i> Ledger</a></li>
+              <li id="MenubarControl1_IncomeExpense"><a href="FrmAcountOn.aspx"><i class="fa fa-gears"></i> Income / Expense</a></li>
+               <li id="MenubarControl1_ProductGroup"><a href="FrmProductGroup.aspx"><i class="fa fa-th-large"></i> Product Group</a></li>
+              <li id="MenubarControl1_prd"><a href="FrmProduct.aspx"><i class="fa fa-th-large"></i> Product</a></li>
+               <li id="MenubarControl1_State"><a href="FrmState.aspx"><i class="fa fa-map"></i> State</a></li>
+               <li id="MenubarControl1_City"><a href="FrmCity.aspx"><i class="fa fa-map-marker"></i> City</a></li>
+               <li id="MenubarControl1_FrmVehicle"><a href="FrmVehicle.aspx"><i class="fa fa-truck"></i>Vehicle Master</a></li> 
+              
+                <li id="MenubarControl1_FrmUnit"><a href="FrmUnit.aspx"><i class="fa fa-arrows-h"></i> Unit Info</a></li> 
+              <li id="MenubarControl1_FrmRateSetup"><a href="FrmRateSetup.aspx"><i class="fa fa-arrows-h"></i> Rate Setup</a></li>
+              <li id="MenubarControl1_FrmDocumentMaster"><a href="FrmDocumentMaster.aspx"><i class="fa fa-arrows-h"></i> Document Master</a></li>
+               <li id="MenubarControl1_FrmmainHeadMaster"><a href="FrmmainHeadMaster.aspx"><i class="fa fa-arrows-h"></i> Job Head Master</a></li>
+               <li id="MenubarControl1_FrmOpenStock"><a href="FrmOpenStock.aspx"><i class="fa fa-arrows-h"></i> Opening Stock</a></li>
+               <li id="MenubarControl1_FrmTyreInstallation"><a href="FrmTyreInstallation.aspx"><i class="fa fa-arrows-h"></i> Tyre Installation</a></li>
+               <li id="MenubarControl1_FrmDocRegistration"><a href="FrmDocRegistration.aspx"><i class="fa fa-arrows-h"></i> Document Registration</a></li>
+               <li id="MenubarControl1_FrmJobInfo"><a href="FrmJobInfo.aspx"><i class="fa fa-arrows-h"></i> Job Info</a></li> 
+               <li id="MenubarControl1_FrmPurchase"><a href="FrmPurchase.aspx?ID=1&Title=Purchase"><i class="fa fa-arrows-h"></i> Purchase</a></li>
+               <li id="MenubarControl1_FrmTyreScrap"><a href="FrmTyreScrap.aspx?ID=3&Title=Tyre Scrap"><i class="fa fa-arrows-h"></i> Tyre Scrap</a></li>
+               <li id="MenubarControl1_FrmJobEntry"><a href="FrmJobEntry.aspx"><i class="fa fa-arrows-h"></i> Job Entry</a></li>              
+             
+          </ul>
+        </li>       
+        <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i>
+            <span>Transaction</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+
+           <li id="MenubarControl1_FrmLREntry"><a href="FrmLREntry.aspx"><i class="fa fa-keyboard-o"></i> LR Entry </a></li>
+           <li id="MenubarControl1_Li7"><a href="FrmLREntryDM.aspx"><i class="fa fa-keyboard-o"></i> LR Entry (Dumy) </a></li>
+                  
+          <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>Full Truck Load</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+         <li id="MenubarControl1_FrmBChallanEntry"><a href="FrmBChallanEntry.aspx"><i class="fa fa-keyboard-o"></i> Challan Entry </a></li>
+         <li id="MenubarControl1_FrmBillFT"><a href="FrmBillFT.aspx"><i class="fa fa-copy (alias)"></i> Billing (Full Truck)</a></li>
+          </ul>
+        </li>
+        <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>Part Truck Load</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+           
+               <li id="MenubarControl1_FrmLoading"><a href="FrmLoading.aspx"><i class="fa fa-keyboard-o"></i> Loading Challan </a></li>
+               <li id="MenubarControl1_FrmLoadingSelect"><a href="FrmLoadingSlk.aspx"><i class="fa fa-keyboard-o"></i> Loading Challan (Selection) </a></li> 
+               <li id="MenubarControl1_FrmUnLoading"><a href="FrmUnLoading.aspx"><i class="fa fa-keyboard-o"></i> UnLoading / Arrival </a></li>
+               <li id="MenubarControl1_FrmDelivery"><a href="FrmDelivery.aspx"><i class="fa fa-keyboard-o"></i> Cash Memo & Gate Pass </a></li>
+               <li id="MenubarControl1_FrmOutwardCrossing"><a href="FrmOutwardCrossing.aspx"><i class="fa fa-keyboard-o"></i> Outward Crossing </a></li>                             
+               <li id="MenubarControl1_FrmCrossing"><a href="FrmCrossing.aspx"><i class="fa fa-keyboard-o"></i> Crossing Challan </a></li>
+               <li id="MenubarControl1_FrmHireSlip"><a href="FrmHireSlip.aspx"><i class="fa fa-copy (alias)"></i> Hire Slip</a></li>
+               <li id="MenubarControl1_FrmSummaryEntry"><a href="FrmSummaryEntry.aspx"><i class="fa fa-copy (alias)"></i> Summary Entry</a></li>
+               <li id="MenubarControl1_FrmBill"><a href="FrmBill.aspx"><i class="fa fa-copy (alias)"></i> Billing</a></li>
+               
+          </ul>
+        </li>
+               
+              <li id="MenubarControl1_FrmBillMNL"><a href="FrmBillMNL.aspx"><i class="fa fa-copy (alias)"></i> Billing (Without LR)</a></li>
+              <li id="MenubarControl1_FrmGSTBill"><a href="FrmTransaction.aspx"><i class="fa fa-copy (alias)"></i> Billing (GST Bill)</a></li>
+              <li id="MenubarControl1_Li6"><a href="FrmBillSub.aspx"><i class="fa fa-keyboard-o"></i> Bill Submission </a></li>
+                            
+              <li id="MenubarControl1_FrmReceipt"><a href="FrmReceiptPayment.aspx?ID=1&Title=Receipt"><i class="fa fa-copy (alias)"></i> Receipt</a></li>
+              <li id="MenubarControl1_Payment"><a href="FrmReceiptPayment.aspx?ID=2&Title=Payment"><i class="fa fa-copy (alias)"></i> Payment</a></li>
+              <li id="MenubarControl1_Contra"><a href="FrmReceiptPayment.aspx?ID=3&Title=Contra"><i class="fa fa-copy (alias)"></i> Contra</a></li>
+              <li id="MenubarControl1_FrmDConfirmation"><a href="FrmDConfirmation.aspx"><i class="fa fa-keyboard-o"></i> Delivery / POD Confirmation </a></li> 
+              <li id="MenubarControl1_FrmPODMobile"><a href="FrmPODMObile.aspx"><i class="fa fa-file-word-o"></i> POD Mobile</a></li>
+              
+          <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>Broker Ship</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+              <li id="MenubarControl1_FrmVehicleEntry"><a href="FrmVehicleEntry.aspx"><i class="fa fa-keyboard-o"></i> Broker Slip Entry </a></li>
+              <li id="MenubarControl1_FrmBrkBill"><a href="FrmBrkBill.aspx"><i class="fa fa-copy (alias)"></i> Broker Slip Billing</a></li>              
+          </ul>
+        </li>
+        <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>Trip Sheet</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+              <li id="MenubarControl1_FrmTripEntry"><a href="FrmTripEntry.aspx"><i class="fa fa-file-word-o"></i> Trip Sheet Entry</a></li>
+                           
+          </ul>
+        </li>
+         <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>Stationery</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+             <li id="MenubarControl1_FrmSTInward"><a href="FrmSTInward.aspx"><i class="fa fa-file-word-o"></i> Stationery Inward</a></li>
+              <li id="MenubarControl1_FrmLRIssue"><a href="FrmLRIssue.aspx"><i class="fa fa-file-word-o"></i> Stationery Issue</a></li>          
+          </ul>
+        </li>        
+             
+              <li id="MenubarControl1_FrmCReport"><a href="FrmCReport.aspx"><i class="fa fa-file-word-o"></i> Cash Report</a></li>
+              <li id="MenubarControl1_ShipmentInfo"><a href="FrmShipInfo.aspx"><i class="fa fa-file-word-o"></i> Shipment Info</a></li>
+             
+          
+          </ul>
+        </li>
+        <li class="treeview">
+          <a href="#">
+            <i class="fa fa-book"></i>
+            <span>Reports</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+          <li id="MenubarControl1_FrmLRRegister"><a href="FrmLRRegister.aspx"><i class="fa fa-file-word-o"></i> LR Register</a></li>
+          <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>FTL Report</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+              <li id="MenubarControl1_FrmChallanReg"><a href="FrmBChallanReg.aspx"><i class="fa fa-file-word-o"></i> Challan Register</a></li>
+              <li id="MenubarControl1_FrmBillFTReg"><a href="FrmBillFTReg.aspx"><i class="fa fa-file-word-o"></i> Billing Register (FTL)</a></li>
+              <li id="MenubarControl1_FrmFrghtChPending"><a href="FrmFreightChallanPending.aspx"><i class="fa fa-file-word-o"></i> LR Pending (Challan)</a></li>
+              <li id="MenubarControl1_FrmOutStandingCH"><a href="FrmOutStandingCH.aspx"><i class="fa fa-file-word-o"></i> Outstanding ( Challan )</a></li>
+              <li id="MenubarControl1_FrmChallanSummary"><a href="FrmChallanSummary.aspx"><i class="fa fa-file-word-o"></i> Challan Summary</a></li>
+          </ul>
+        </li>
+        <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>PTL Report</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+               <li id="MenubarControl1_FrmLoadChallanaReg"><a href="FrmLoadChallanaReg.aspx"><i class="fa fa-file-word-o"></i> Loading Register</a></li>
+               <li id="MenubarControl1_FrmStockRegister"><a href="FrmStockRegister.aspx"><i class="fa fa-file-word-o"></i> Stock Register</a></li>               
+               <li id="MenubarControl1_FrmOutWardReg"><a href="FrmOutWardReg.aspx"><i class="fa fa-file-word-o"></i> Outward Register</a></li>
+               <li id="MenubarControl1_FrmCMReg"><a href="FrmCMReg.aspx"><i class="fa fa-file-word-o"></i> CashMemo Register</a></li>
+               <li id="MenubarControl1_FrmDailyStatement"><a href="FrmDailyStatement.aspx"><i class="fa fa-file-word-o"></i> Daily Delivery Statement</a></li>
+               <li id="MenubarControl1_FrmCrossingReg"><a href="FrmCrossingReg.aspx"><i class="fa fa-file-word-o"></i> Crossing Register</a></li>
+               <li id="MenubarControl1_FrmBillingReg"><a href="FrmBillingReg.aspx"><i class="fa fa-file-word-o"></i> Billing Register</a></li>           
+               <li id="MenubarControl1_FrmSummaryReg"><a href="FrmSummaryReg.aspx"><i class="fa fa-file-word-o"></i> Summary Register</a></li>
+               <li id="MenubarControl1_FrmHireSlipReg"><a href="FrmHireSlipReg.aspx"><i class="fa fa-file-word-o"></i> Hire Slip Register</a></li>
+               <li id="MenubarControl1_Li4"><a href="FrmOutstandingHS.aspx"><i class="fa fa-file-word-o"></i> Outstanding ( Hire Slip )</a></li>
+               <li id="MenubarControl1_FrmCashPendingReg"><a href="FrmCashPendingReg.aspx"><i class="fa fa-file-word-o"></i> Cash Pending Register</a></li>
+               <li id="MenubarControl1_OustandingCashMemo"><a href="FrmOutstandingCM.aspx"><i class="fa fa-file-word-o"></i> Outstanding ( Cash Memo )</a></li>
+          </ul>
+        </li>
+
+        <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>Broker Report</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+               <li id="MenubarControl1_FrmVehicleEntryReg"><a href="FrmVehicleEntryReg.aspx"><i class="fa fa-file-word-o"></i> Broker Entry Register</a></li>
+               <li id="MenubarControl1_FrmBrkBillReg"><a href="frmBrkBillReg.aspx"><i class="fa fa-file-word-o"></i> Broker Bill Register</a></li>
+               <li id="MenubarControl1_FrmBrkOutstanding"><a href="FrmBrkOutstanding.aspx"><i class="fa fa-file-word-o"></i> Outstanding (Brk Party)</a></li>
+               <li id="MenubarControl1_FrmOutBrk"><a href="FrmBrkOutstandingBrkWise.aspx"><i class="fa fa-file-word-o"></i> Outstanding (Broker)</a></li>
+          </ul>
+        </li>
+         <li class="treeview">
+          <a href="#">
+            <i class="fa fa-laptop"></i> <span>Trip Sheet Report</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+           <li id="MenubarControl1_FrmTrpReg"><a href="FrmTripReg.aspx"><i class="fa fa-file-word-o"></i> Trip Sheet Register</a></li>
+           <li id="MenubarControl1_FrmTrpVclReg"><a href="FrmVehicleMaintanReg.aspx"><i class="fa fa-file-word-o"></i> Trip Sheet Reg (Vehicle)</a></li>
+          </ul>
+        </li>
+              <li id="MenubarControl1_Li1"><a href="FrmChallanBrokerReport.aspx"><i class="fa fa-file-word-o"></i> Challan/Broker Report</a></li>
+              <li id="MenubarControl1_Li5"><a href="FrmBillMNLReg.aspx"><i class="fa fa-file-word-o"></i> Bill Register(Without LR)</a></li>
+              <li id="MenubarControl1_FrmGSTBillReg"><a href="FrmGSTBillReg.aspx"><i class="fa fa-file-word-o"></i> GST Bill Reg</a></li>    
+              <li id="MenubarControl1_FrmledgerSummary"><a href="FrmledgerSummary.aspx"><i class="fa fa-file-word-o"></i> Ledger Summary</a></li>
+              <li id="MenubarControl1_FrmOutStandingReport"><a href="FrmOutStandingReport.aspx"><i class="fa fa-file-word-o"></i> Outstanding Report</a></li>
+              <li id="MenubarControl1_FrmOutstandingPWise"><a href="FrmOutstandingPWise.aspx"><i class="fa fa-file-word-o"></i> Outstanding Party Wise</a></li>
+              
+              <li id="MenubarControl1_FrmCashBook"><a href="FrmCashBook.aspx"><i class="fa fa-file-word-o"></i> Cash Book</a></li>
+              <li id="MenubarControl1_FrmBankBook"><a href="FrmBankBook.aspx"><i class="fa fa-file-word-o"></i> Bank Book</a></li>
+              <li id="MenubarControl1_FrmPaymentReg"><a href="FrmPaymentReg.aspx"><i class="fa fa-file-word-o"></i> Payment Register</a></li>
+              <li id="MenubarControl1_FrmReceiptReg"><a href="FrmReceiptReg.aspx"><i class="fa fa-file-word-o"></i> Receipt Register</a></li>
+              <li id="MenubarControl1_FrmBillPendingReg"><a href="FrmBillPendingReg.aspx"><i class="fa fa-file-word-o"></i> LR Pending (Billing)</a></li>
+              <li id="MenubarControl1_FrmCostingSheet"><a href="FrmCostingSheet.aspx"><i class="fa fa-file-word-o"></i> Costing Sheet</a></li>            
+              <li id="MenubarControl1_FrmPL"><a href="FrmPL.aspx"><i class="fa fa-file-word-o"></i> Profit & Loss</a></li>
+              <li id="MenubarControl1_FrmPodreg"><a href="FrmPODReg.aspx"><i class="fa fa-file-word-o"></i> POD Register</a></li>
+              <li id="MenubarControl1_FrmPartyList"><a href="FrmPartyList.aspx"><i class="fa fa-file-word-o"></i> Party List</a></li>
+              <li id="MenubarControl1_FrmBillSummary"><a href="FrmBillSummary.aspx"><i class="fa fa-file-word-o"></i> Bill Summary Register</a></li>
+              
+              <li id="MenubarControl1_FrmTDSReport"><a href="FrmTDSReport.aspx"><i class="fa fa-file-word-o"></i> TDS Report</a></li>
+              
+            
+          </ul>
+        </li> 
+          
+          <li id="MenubarControl1_UserPermission" class="treeview">
+          <a href="#">
+            <i class="fa fa-edit"></i> <span>Permission</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+         <li id="MenubarControl1_FrmUsercreation">
+          <a href="FrmUsercreation.aspx">
+            <i class="ion ion-person-add"></i> <span>User Creation</span>
+            <span class="pull-right-container">
+              <small class="label pull-right bg-green"></small>
+            </span>
+          </a>
+        </li>
+      
+                 
+       
+        
+          </ul>
+        </li>
+        <li id="MenubarControl1_Li2" class="treeview">
+          <a href="#">
+            <i class="fa fa-edit"></i> <span>Log Details</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+         <li id="MenubarControl1_LogReport">
+         <a href="FrmLogReport.aspx"><i class="fa fa-file-word-o">
+         </i> Log Report</a></li>
+     
+          </ul>
+        </li>
+        <li id="MenubarControl1_Li3" class="treeview">
+          <a href="#">
+            <i class="fa fa-edit"></i> <span>Utility</span>
+            <span class="pull-right-container">
+              <i class="fa fa-angle-left pull-right"></i>
+            </span>
+          </a>
+          <ul class="treeview-menu">
+         <li id="MenubarControl1_BiltyStatus">
+         <a href="FrmBiltyStatus.aspx"><i class="fa fa-file-word-o">
+         </i> Bilty Status</a></li>
+          <li id="MenubarControl1_ShipmentTracking">
+         <a href="ShipmentTracking.aspx" target="_"><i class="fa fa-file-word-o">
+         </i> Shipment Tracking</a></li>
+         <li id="MenubarControl1_CostCalculator">
+         <a href="FrmCostCalculator.aspx" target="_"><i class="fa fa-file-word-o">
+         </i> Cost Calculator</a></li>
+      
+          </ul>
+        </li>
+         
+         
+         <li id="MenubarControl1_BiltyTracking">
+         <a href="FrmBiltyStatus.aspx"><input type="button" style="color:Red; font-size:large; border-radius:12px; background-color:" 
+         value="Bilty Status"/></a>            
+         
+        </li>
+         <li id="MenubarControl1_BrkTracking">
+         <a href="FrmBrkStatus.aspx"><input type="button" style="color:Red; font-size:large; border-radius:12px;" value="Broker Slip Tracking"/></a>            
+         
+        </li>
+         <li id="MenubarControl1_ShipmentTracking2">
+         <a href="FrmShipmentTracking.aspx" target="_"><input type="button" style="color:Red; font-size:large; border-radius:12px;" value="Shipment Status"/></a>            
+         
+        </li>
+     
+       
+      
+       
+        
+      </ul>
+    </section>
+    <!-- /.sidebar -->
+  </aside>
+
+        <!-- End Menubar Control -->
+        <div class="content-wrapper">
+            <div id="UDP1">
+	
+                  
+                    <section class="content-header"> 
+                    <h1>
+                       <span id="lblTitle">Purchase</span>
+                    </h1>
+                         <ol class="breadcrumb">
+                               <div class="form-group">
+                               <a id="BtnClick" class="btn btn-warning" aria-hidden="true" class="fa fa-print" href="javascript:__doPostBack(&#39;BtnClick&#39;,&#39;&#39;)" style="visibility:hidden">Print</a>
+                               <input type="submit" name="BtnNew" value="New" id="BtnNew" class="btn btn-primary" />
+                               <input type="submit" name="BtnSave" value="Save" id="BtnSave" class="btn btn-success" />
+                              <input type="submit" name="btnUpdate" value="Update" id="btnUpdate" disabled="disabled" class="btn btn-warning" />                                                
+                               
+                               
+                                
+                               <a id="BtnShowInvoiceNo" class="btn btn-danger" href="javascript:__doPostBack(&#39;BtnShowInvoiceNo&#39;,&#39;&#39;)"><span aria-hidden="true" class="fa fa-file-word-o"></span> Show InvoiceNo</a>
+                                
+                                            </div>
+                          </ol>    
+
+                    </section>  
+                    <section class="content">
+                       <div class="row">
+                        <!-- Custom Tabs -->
+                        <div class="nav-tabs-custom">
+                            <div class="tab-content">
+                                <!-- Left col -->
+                                <div class="col-md-12">
+                                    <div class="box box-primary">
+                                        <div class="box-body">
+                                            <div class="col-md-12">
+                                                <!-- Horizontal Form -->
+                                                <div class="box-body1">
+                                                <div class="form-group" >
+                                                     <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Select Bill type" class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Bill&nbspType</label>                                                                                                                  
+                                                            <select name="CBOBillType" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOBillType\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOBillType" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">Estimate</option>
+		<option value="1">Invoice</option>
+
+	</select>
+                                                        </div>
+                                                     </div> 
+                                                    <div class="form-group" >
+                                                        <div class="col-sm-2">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Invoice No." class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Inv.&nbspNo.</label>
+                                                        
+                                                            <input name="txtInvoiceNo" type="text" value="1" readonly="readonly" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtInvoiceNo\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtInvoiceNo" class="form-control" /> 
+                                                                                                                       
+                                                        </div>
+                                                     </div> 
+                                                    <div class="form-group" >
+                                                         <div class="col-sm-2">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Ref No." class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Ref.&nbspNo.</label>                                                       
+                                                            <input name="txtRefNo" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtRefNo\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtRefNo" tabindex="1" class="form-control" /> 
+                                                        </div>
+                                                     </div> 
+                                                     <div class="form-group" >
+                                                           <div class="col-sm-2">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Invoice  Date" class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Inv.&nbspDate</label>
+                                                        
+                                                            <div class="input-group date">
+                                                                <div class="input-group-addon">
+                                                                    <i class="fa fa-calendar"></i>
+                                                                </div>
+                                                                <input name="DtpInvDate" type="text" value="04/07/2026" id="DtpInvDate" tabindex="2" class="form-control pull-right" />
+                                                               
+                                                            </div>                                                              
+                                                         </div>
+                                                      </div>
+                                                       
+                                                     <div class="form-group" >
+                                                           <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Select Invoice  Type" class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Inv.&nbspType</label>
+                                                                                                                   
+                                                            <select name="CBOInvoType" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOInvoType\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOInvoType" tabindex="3" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">Cash</option>
+		<option value="1">Credit</option>
+
+	</select>
+                                                        </div>
+                                                     </div> 
+                                                    </div>
+                                                </div>
+                                                     <div class="col-md-12">
+                                                <!-- Horizontal Form -->
+                                                <div class="box-body1">
+                                                      
+                                                     <div class="form-group" >
+                                                         <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Select Buyer Name" class="badge bg-red"><i class="fa fa-info">
+                                                            </i></span>&nbsp;Buyer&nbsp;&nbsp;<a id="BtnAddBuyer" class="btn-info" href="javascript:__doPostBack(&#39;BtnAddBuyer&#39;,&#39;&#39;)">+</a></label>                                                                                                                   
+                                                            <select name="CBOReceiver" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOReceiver\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOReceiver" tabindex="4" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">--Select--</option>
+		<option value="25">ADBCCD</option>
+		<option value="45">ASHOK JI</option>
+		<option value="248">BILLED PARTY 1</option>
+		<option value="1930">BISHWESHWARLAL STEELS</option>
+		<option value="1936">CASH</option>
+		<option value="2">CASH A/C</option>
+		<option value="7">CASH A/C</option>
+		<option value="1367">DEMO 1</option>
+		<option value="1368">DEMO 2</option>
+		<option value="83">DEMO CONSIGNEE PARTY</option>
+		<option value="798">DEMO CONSIGNEE PARTY</option>
+		<option value="295">DEMO PART 1</option>
+		<option value="301">DEMO PARTY 11</option>
+		<option value="588">DEMO PARTY 121</option>
+		<option value="94">DEMO PARTY FOR BILLING</option>
+		<option value="799">DEMO PARTY FOR BILLING</option>
+		<option value="73">DEMO PARTY FOR CONSIGNEE</option>
+		<option value="796">DEMO PARTY FOR CONSIGNEE</option>
+		<option value="72">DEMO PARTY FOR CONSIGNOR</option>
+		<option value="795">DEMO PARTY FOR CONSIGNOR</option>
+		<option value="74">DEMO SUPPLIER NAME</option>
+		<option value="797">DEMO SUPPLIER NAME</option>
+		<option value="376">DEMO TC 1</option>
+		<option value="377">DEMO TC 2</option>
+		<option value="562">DEMO TC PARTY</option>
+		<option value="1922">EVERSENAI CONSTRUCTION PVT LTD</option>
+		<option value="13">EXPRESS CARGO</option>
+		<option value="785">EXPRESS CARGO</option>
+		<option value="55">FJHGHUD</option>
+		<option value="789">FJHGHUD</option>
+		<option value="274">GAURAV</option>
+		<option value="816">GAURAV</option>
+		<option value="29">GOPAL SHARMA</option>
+		<option value="788">GOPAL SHARMA</option>
+		<option value="42">HARDIK</option>
+		<option value="1906">HINDUSTHAN ENGINEERING AND IND.LTD</option>
+		<option value="54">INDIA FOOTWEAR</option>
+		<option value="1918">JAYALAKSHMI ENGINEERING WORKS</option>
+		<option value="289">JIGAR</option>
+		<option value="814">JIGAR</option>
+		<option value="327">JIGARN</option>
+		<option value="815">JIGARN</option>
+		<option value="1935">JINDAL CEMENT INDUSTRIES PRIVATE LIMITED</option>
+		<option value="1929">JINDAL STEEL CHHATISGARH LTD</option>
+		<option value="1911">JINDAL STEEL LIMITED, PATRATU</option>
+		<option value="1908">JINDAL STEEL LIMITED, PUNJIPATHRA</option>
+		<option value="1905">JINDAL STEEL LIMITED, RAIGARH</option>
+		<option value="12">K LON TEKNO POLYMERS</option>
+		<option value="784">K LON TEKNO POLYMERS</option>
+		<option value="310">KAILASH</option>
+		<option value="812">KAILASH</option>
+		<option value="16">KAUSHAL SHARMA</option>
+		<option value="19">KAUSHAL SHARMA</option>
+		<option value="60">KAUSHAL SHARMA</option>
+		<option value="790">KAUSHAL SHARMA</option>
+		<option value="793">KAUSHAL SHARMA</option>
+		<option value="263">KEYUR SHARMA</option>
+		<option value="801">KEYUR SHARMA</option>
+		<option value="1912">KIRBY BUILDING SYSTEMS &amp; STRUCTURE INDIA PRIVATE LIMITED</option>
+		<option value="43">KULDEEP</option>
+		<option value="33">KUNDAN</option>
+		<option value="328">MANISH</option>
+		<option value="817">MANISH</option>
+		<option value="20">MOHANLAL</option>
+		<option value="1907">NALWA SPECIAL STEEL LIMITED</option>
+		<option value="1909">NALWA STEEL AND POWER LIMITED</option>
+		<option value="67">OM PRAKASH</option>
+		<option value="800">OM PRAKASH</option>
+		<option value="288">OM PRAKASH SAHU</option>
+		<option value="809">OM PRAKASH SAHU</option>
+		<option value="5">PRAKSH</option>
+		<option value="24">PRAMOD</option>
+		<option value="272">PRASHANTJI</option>
+		<option value="813">PRASHANTJI</option>
+		<option value="302">PUSHPA</option>
+		<option value="811">PUSHPA</option>
+		<option value="277">RISHABH</option>
+		<option value="802">RISHABH</option>
+		<option value="286">ROBIN</option>
+		<option value="808">ROBIN</option>
+		<option value="41">ROHIT</option>
+		<option value="282">SAMEER</option>
+		<option value="805">SAMEER</option>
+		<option value="283">SHAINI</option>
+		<option value="806">SHAINI</option>
+		<option value="53">SHIV SHANKAR PLASTIC</option>
+		<option value="28">SHOEB JI</option>
+		<option value="787">SHOEB JI</option>
+		<option value="10">SHRI RAM</option>
+		<option value="44">SHUBHAM</option>
+		<option value="264">SHUBHAM SARKAR</option>
+		<option value="807">SHUBHAM SARKAR</option>
+		<option value="281">SONU</option>
+		<option value="804">SONU</option>
+		<option value="15">SUMIT JI GAJRAULA</option>
+		<option value="786">SUMIT JI GAJRAULA</option>
+		<option value="3">TARACHAND</option>
+		<option value="246">TC PARTY</option>
+		<option value="247">TC PARTY 2</option>
+		<option value="21">TCDEMO</option>
+		<option value="27">VIRAT</option>
+		<option value="58">VISHAL JI</option>
+		<option value="792">VISHAL JI</option>
+		<option value="290">WASIM</option>
+		<option value="810">WASIM</option>
+		<option value="57">WASIM JI</option>
+		<option value="791">WASIM JI</option>
+		<option value="278">YASH LOGISTIC</option>
+		<option value="803">YASH LOGISTIC</option>
+		<option value="66">ZHL IMPEX</option>
+		<option value="794">ZHL IMPEX</option>
+
+	</select>
+                                                        </div>
+                                                     </div>
+                                                    
+                                                     <div class="form-group" >
+                                                         <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Select Consignee Name" class="badge bg-red"><i class="fa fa-info"></i>
+                                                            </span>&nbsp;Consignee&nbsp;&nbsp;<a id="BtnAddCnsgnee" class="btn-info" href="javascript:__doPostBack(&#39;BtnAddCnsgnee&#39;,&#39;&#39;)">+</a></label>
+                                                                                                                  
+                                                            <select name="CboConsignee" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CboConsignee\&#39;,\&#39;\&#39;)&#39;, 0)" id="CboConsignee" tabindex="6" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">--Select--</option>
+		<option value="25">ADBCCD</option>
+		<option value="45">ASHOK JI</option>
+		<option value="248">BILLED PARTY 1</option>
+		<option value="1930">BISHWESHWARLAL STEELS</option>
+		<option value="1936">CASH</option>
+		<option value="2">CASH A/C</option>
+		<option value="7">CASH A/C</option>
+		<option value="1367">DEMO 1</option>
+		<option value="1368">DEMO 2</option>
+		<option value="83">DEMO CONSIGNEE PARTY</option>
+		<option value="798">DEMO CONSIGNEE PARTY</option>
+		<option value="295">DEMO PART 1</option>
+		<option value="301">DEMO PARTY 11</option>
+		<option value="588">DEMO PARTY 121</option>
+		<option value="94">DEMO PARTY FOR BILLING</option>
+		<option value="799">DEMO PARTY FOR BILLING</option>
+		<option value="73">DEMO PARTY FOR CONSIGNEE</option>
+		<option value="796">DEMO PARTY FOR CONSIGNEE</option>
+		<option value="72">DEMO PARTY FOR CONSIGNOR</option>
+		<option value="795">DEMO PARTY FOR CONSIGNOR</option>
+		<option value="74">DEMO SUPPLIER NAME</option>
+		<option value="797">DEMO SUPPLIER NAME</option>
+		<option value="376">DEMO TC 1</option>
+		<option value="377">DEMO TC 2</option>
+		<option value="562">DEMO TC PARTY</option>
+		<option value="1922">EVERSENAI CONSTRUCTION PVT LTD</option>
+		<option value="13">EXPRESS CARGO</option>
+		<option value="785">EXPRESS CARGO</option>
+		<option value="55">FJHGHUD</option>
+		<option value="789">FJHGHUD</option>
+		<option value="274">GAURAV</option>
+		<option value="816">GAURAV</option>
+		<option value="29">GOPAL SHARMA</option>
+		<option value="788">GOPAL SHARMA</option>
+		<option value="42">HARDIK</option>
+		<option value="1906">HINDUSTHAN ENGINEERING AND IND.LTD</option>
+		<option value="54">INDIA FOOTWEAR</option>
+		<option value="1918">JAYALAKSHMI ENGINEERING WORKS</option>
+		<option value="289">JIGAR</option>
+		<option value="814">JIGAR</option>
+		<option value="327">JIGARN</option>
+		<option value="815">JIGARN</option>
+		<option value="1935">JINDAL CEMENT INDUSTRIES PRIVATE LIMITED</option>
+		<option value="1929">JINDAL STEEL CHHATISGARH LTD</option>
+		<option value="1911">JINDAL STEEL LIMITED, PATRATU</option>
+		<option value="1908">JINDAL STEEL LIMITED, PUNJIPATHRA</option>
+		<option value="1905">JINDAL STEEL LIMITED, RAIGARH</option>
+		<option value="12">K LON TEKNO POLYMERS</option>
+		<option value="784">K LON TEKNO POLYMERS</option>
+		<option value="310">KAILASH</option>
+		<option value="812">KAILASH</option>
+		<option value="16">KAUSHAL SHARMA</option>
+		<option value="19">KAUSHAL SHARMA</option>
+		<option value="60">KAUSHAL SHARMA</option>
+		<option value="790">KAUSHAL SHARMA</option>
+		<option value="793">KAUSHAL SHARMA</option>
+		<option value="263">KEYUR SHARMA</option>
+		<option value="801">KEYUR SHARMA</option>
+		<option value="1912">KIRBY BUILDING SYSTEMS &amp; STRUCTURE INDIA PRIVATE LIMITED</option>
+		<option value="43">KULDEEP</option>
+		<option value="33">KUNDAN</option>
+		<option value="328">MANISH</option>
+		<option value="817">MANISH</option>
+		<option value="20">MOHANLAL</option>
+		<option value="1907">NALWA SPECIAL STEEL LIMITED</option>
+		<option value="1909">NALWA STEEL AND POWER LIMITED</option>
+		<option value="67">OM PRAKASH</option>
+		<option value="800">OM PRAKASH</option>
+		<option value="288">OM PRAKASH SAHU</option>
+		<option value="809">OM PRAKASH SAHU</option>
+		<option value="5">PRAKSH</option>
+		<option value="24">PRAMOD</option>
+		<option value="272">PRASHANTJI</option>
+		<option value="813">PRASHANTJI</option>
+		<option value="302">PUSHPA</option>
+		<option value="811">PUSHPA</option>
+		<option value="277">RISHABH</option>
+		<option value="802">RISHABH</option>
+		<option value="286">ROBIN</option>
+		<option value="808">ROBIN</option>
+		<option value="41">ROHIT</option>
+		<option value="282">SAMEER</option>
+		<option value="805">SAMEER</option>
+		<option value="283">SHAINI</option>
+		<option value="806">SHAINI</option>
+		<option value="53">SHIV SHANKAR PLASTIC</option>
+		<option value="28">SHOEB JI</option>
+		<option value="787">SHOEB JI</option>
+		<option value="10">SHRI RAM</option>
+		<option value="44">SHUBHAM</option>
+		<option value="264">SHUBHAM SARKAR</option>
+		<option value="807">SHUBHAM SARKAR</option>
+		<option value="281">SONU</option>
+		<option value="804">SONU</option>
+		<option value="15">SUMIT JI GAJRAULA</option>
+		<option value="786">SUMIT JI GAJRAULA</option>
+		<option value="3">TARACHAND</option>
+		<option value="246">TC PARTY</option>
+		<option value="247">TC PARTY 2</option>
+		<option value="21">TCDEMO</option>
+		<option value="27">VIRAT</option>
+		<option value="58">VISHAL JI</option>
+		<option value="792">VISHAL JI</option>
+		<option value="290">WASIM</option>
+		<option value="810">WASIM</option>
+		<option value="57">WASIM JI</option>
+		<option value="791">WASIM JI</option>
+		<option value="278">YASH LOGISTIC</option>
+		<option value="803">YASH LOGISTIC</option>
+		<option value="66">ZHL IMPEX</option>
+		<option value="794">ZHL IMPEX</option>
+
+	</select>
+                                                        </div>
+                                                     </div>
+                                                     <div class="form-group" >
+                                                          <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Selct Transport Name" class="badge bg-red"><i class="fa fa-info"></i>
+                                                            </span>&nbsp;Transport&nbsp;&nbsp;<a id="BtnAddTpt" class="btn-info" href="javascript:__doPostBack(&#39;BtnAddTpt&#39;,&#39;&#39;)">+</a></label>
+                                                       
+                                                            <select name="CBOTransport" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOTransport\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOTransport" tabindex="8" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">--Select--</option>
+		<option value="1914">A ANAND:  AJRPA7062L</option>
+		<option value="292">ADITYA</option>
+		<option value="1924">ADITYA SHARMA</option>
+		<option value="1913">ANIL KUMAR: EPSPK2711F</option>
+		<option value="312">ASHOK LOGISTIC</option>
+		<option value="1920">AWDESH KUMAR SHAH</option>
+		<option value="1919">BROKER</option>
+		<option value="64">DEMO TRANSPORT</option>
+		<option value="216">DEMO TRANSPORT 2</option>
+		<option value="960">DEMO TRANSPORT 3</option>
+		<option value="84">DEMO TRANSPORT NAME FOR OC</option>
+		<option value="61">DEMO TRANSPORT ONE</option>
+		<option value="372">DM TPT 1</option>
+		<option value="62">GOPAL TRANSPORT</option>
+		<option value="63">GOPAL TRANSPORT ONE</option>
+		<option value="297">HARSH</option>
+		<option value="1915">JAY AMBAY ROADLINES PVT LTD: ADOPT0053D</option>
+		<option value="321">JIGNESH</option>
+		<option value="56">JINDAL ROAD LINE</option>
+		<option value="213">KAUSHAL SHARMA</option>
+		<option value="265">KEYUR</option>
+		<option value="296">LAKHAN</option>
+		<option value="65">LOCAL TRANSPORT</option>
+		<option value="23">MANPUSHP ROADLINES</option>
+		<option value="215">MS DEMO TRANSPORT</option>
+		<option value="59">N R ROADLINES</option>
+		<option value="326">NAMAN</option>
+		<option value="291">PRASHANT LOGISTICS</option>
+		<option value="1931">RAJA PALANI</option>
+		<option value="1917">RAJENDRA KUMAR PATIDAR</option>
+		<option value="51">RAMA KRISHNA TRANSPORT COMPANY</option>
+		<option value="305">RAMAN LOGISTIC</option>
+		<option value="1923">RAMESHWAR YADAV</option>
+		<option value="287">ROBIN</option>
+		<option value="262">ROSHAN SAHU TRANSPORT</option>
+		<option value="1916">SAROJ TRAILOR SERVICE: BHOPK1422J</option>
+		<option value="306">SHIVAM LOGISTICS</option>
+		<option value="307">SHIVAMA LOGISTICS</option>
+		<option value="9">SHRI RAM TRANSPORT</option>
+		<option value="273">SHUBAHM</option>
+		<option value="325">SHUDHIR LOGISTIC</option>
+		<option value="266">SHYAM LOGISTIC</option>
+		<option value="317">SOHAM TRANSPORT</option>
+		<option value="318">T TRANSPORT</option>
+		<option value="214">TARACHAND ROADLINES PVT LTD</option>
+		<option value="362">TARACHAND TPT</option>
+		<option value="373">TC DEMO TPT</option>
+		<option value="245">TC TRANSPO</option>
+		<option value="4">TC TRANSPORT</option>
+		<option value="1910">VIJAY KUMAR YADAV</option>
+		<option value="322">YOGESH</option>
+		<option value="320">YUVRAAJ</option>
+		<option value="300">YUVRAJ</option>
+
+	</select>                                                          
+                                                        </div>
+                                                     </div>
+                                                     <div class="form-group" >
+                                                            <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Select Agent Name" class="badge bg-red"><i class="fa fa-info"></i>
+                                                            </span>&nbsp;Agent&nbsp;&nbsp;<a id="BtnAddAgent" class="btn-info" href="javascript:__doPostBack(&#39;BtnAddAgent&#39;,&#39;&#39;)">+</a></label>
+                                                       
+                                                            <select name="CBOAgent" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOAgent\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOAgent" tabindex="12" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">--Select--</option>
+		<option value="313">DEEPAK</option>
+		<option value="114">DEMO AGENT</option>
+		<option value="115">DEMO AGENT 1</option>
+		<option value="242">DEMO AGENT 3</option>
+		<option value="293">DHIRENDRA</option>
+		<option value="270">KARVYY INFOTECH</option>
+		<option value="279">KISHOR</option>
+		<option value="267">RAMESH</option>
+
+	</select>                                                          
+                                                        </div>
+                                                     </div>
+                                                     
+                                                    </div>
+                                                         </div>
+                                                     <div class="col-md-12">
+                                                <!-- Horizontal Form -->
+                                                <div class="box-body1">
+                                                       
+                                                     
+                                                     <div class="form-group" >
+                                                          <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Transport Mode" class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Trans.&nbspMode</label>
+                                                       
+                                                            <input name="txtTransportMode" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtTransportMode\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtTransportMode" tabindex="10" class="form-control" />                                                            
+                                                        </div>
+                                                     </div>
+                                                     <div class="form-group" >
+                                                           <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Supply Date" class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Supply&nbspDate</label>
+                                                       
+                                                            <div class="input-group date">
+                                                                <div class="input-group-addon">
+                                                                    <i class="fa fa-calendar"></i>
+                                                                </div>
+                                                                <input name="DtpSupDate" type="text" value="04/07/2026" id="DtpSupDate" tabindex="7" class="form-control pull-right" />
+                                                            </div>
+                                                         </div>
+                                                      </div>  
+                                                     <div class="form-group" >
+                                                         <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Place of Supply" class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Supply&nbspPlace</label>
+                                                       
+                                                            <input name="txtPlaceofSupply" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtPlaceofSupply\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtPlaceofSupply" tabindex="11" class="form-control" />                                                            
+                                                        </div>
+                                                     </div> 
+                                                   <div class="form-group" >
+                                                            <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Suplly Type " class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Supply Type</label>
+                                                       
+                                                            <select name="CBOSupplyType" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOSupplyType\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOSupplyType" tabindex="15" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">Invoice</option>
+		<option value="1">Export Invoice</option>
+		<option value="2">Bill of Supply</option>
+
+	</select>                                                          
+                                                        </div>
+                                                     </div>    
+                                                      
+                                                                                                                                                         
+                                                </div>
+                                              </div>
+                                            <div class="col-md-12">
+                                                <!-- Horizontal Form -->
+                                                <div class="box-body1">                                                                                                      
+                                                      
+                                                    
+                                                     <div class="form-group" >
+                                                         <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Challan No." class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Challan.&nbspNo</label>
+                                                        
+                                                            <input name="txtOrignelInv" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtOrignelInv\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtOrignelInv" tabindex="13" class="form-control" />                                                            
+                                                        </div>
+                                                     </div> 
+                                                      
+                                                     <div class="form-group">
+                                                         <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Challan  Date" class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Challan&nbspDate</label>
+                                                       
+                                                            <div class="input-group date">
+                                                                <div class="input-group-addon">
+                                                                    <i class="fa fa-calendar"></i>
+                                                                </div>
+                                                                <input name="DtpOrgDate" type="text" value="04/07/2026" id="DtpOrgDate" tabindex="14" class="form-control pull-right" />
+                                                            </div>
+                                                         </div>
+                                                      </div>
+                                                      <div class="form-group" >
+                                                         <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Order No." class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Order.&nbspNo</label>
+                                                        
+                                                            <input name="TxtOrderNo" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtOrderNo\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtOrderNo" tabindex="13" class="form-control" />                                                            
+                                                        </div>
+                                                     </div> 
+                                                      
+                                                     <div class="form-group">
+                                                         <div class="col-sm-3">
+                                                        <label for="inputEmail3" >
+                                                            <span data-toggle="tooltip" title="Enter Order Date" class="badge bg-red"><i class="fa fa-info"></i></span>&nbsp;Order&nbspDate</label>
+                                                       
+                                                            <div class="input-group date">
+                                                                <div class="input-group-addon">
+                                                                    <i class="fa fa-calendar"></i>
+                                                                </div>
+                                                                <input name="DtpOrderDate" type="text" value="04/07/2026" id="DtpOrderDate" tabindex="14" class="form-control pull-right" />
+                                                            </div>
+                                                         </div>
+                                                      </div>
+                                                        
+                                                   
+                                                </div>
+                                                </div>
+                                                <div class="col-md-12">
+                                                <!-- Horizontal Form -->
+                                                <div class="box-body1">                                                                                                      
+                                                                                                          
+                                                     
+                                                                                                       
+                                                </div>
+                                                </div>
+                                             
+                                             <div class="col-md-12" style="padding-top: 10px; text-align: center">
+                                                 </div>            
+                                        </div>
+                                        </div>
+                                    </div>
+                                     <div class="col-xs-12">
+                                            <div class="box" style="margin-bottom: 2px; margin-top: 6px">
+                                            </div>
+                                        </div>
+
+                             
+                                     <div class="col-md-12">
+                                       <div class="box box-primary">                                    
+                                        <div class="box-body">
+                                             <div class="col-md-12">
+                                             <!-- Horizontal Form -->
+                                                <div class="box-body1">
+                                                 
+                                                 <div id="UpdatePanel1">
+		
+                                                  <div class="col-md-2" style="width: 14%">
+                                                <div class="form-group">                                                      
+                                                    <label> Location</label>
+                                                     <select name="CBOLocation" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOLocation\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOLocation" tabindex="16" class="form-control select2" style="width:100%;">
+			<option value="0">--Select--</option>
+			<option selected="selected" value="1">DEFAULT</option>
+
+		</select>
+                                                  </div>
+                                                      </div>
+                                                      
+	</div>
+                                                       <div class="col-md-2" style="width: 15%">
+                                                        <div class="form-group">
+                                                    <label> Product&nbspGroup&nbsp;&nbsp;<a id="BtnAddPG" class=" btn-info" href="javascript:__doPostBack(&#39;BtnAddPG&#39;,&#39;&#39;)">+</a></label>
+                                                     <select name="CBOPrdGrp" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOPrdGrp\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOPrdGrp" tabindex="17" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">--Select--</option>
+		<option value="3">ABCD</option>
+		<option value="4">ABCD 2</option>
+		<option value="62">BEAM</option>
+		<option value="64">BLOOM</option>
+		<option value="66">CHANNEL</option>
+		<option value="6">CLOTHes</option>
+		<option value="19">COSMETIC</option>
+		<option value="34">DEMO GROUP</option>
+		<option value="11">FOOTWEAR</option>
+		<option value="10">GENERAL</option>
+		<option value="1">GENERAL</option>
+		<option value="2">GENERAL</option>
+		<option value="31">KILO</option>
+		<option value="23">LIQUID</option>
+		<option value="25">LIQUOR</option>
+		<option value="22">METAL</option>
+		<option value="28">METALS</option>
+		<option value="58">MRF</option>
+		<option value="26">PLASTIC</option>
+		<option value="29">PLASTICSS</option>
+		<option value="63">PLATE</option>
+		<option value="35">PRD GROUP DEMO</option>
+		<option value="65">RAIL</option>
+		<option value="20">STATIONARY</option>
+		<option value="27">STEEL</option>
+		<option value="24">STONE</option>
+		<option value="21">TECH</option>
+		<option value="61">TMT</option>
+
+	</select>
+                                                  </div>
+                                                      </div>
+                                               
+                                               
+                                                 
+                                                      <div class="col-md-2" style="width: 17%">
+                                                       <div class="form-group">
+                                                    <label> Product &nbsp;&nbsp;<a id="BtnAddPrd" class=" btn-info" href="javascript:__doPostBack(&#39;BtnAddPrd&#39;,&#39;&#39;)">+</a></label>
+                                                     <select name="CBOItem" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOItem\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOItem" tabindex="18" class="form-control select2" style="width:100%;">
+
+	</select>
+                                                  </div>
+                                                </div>
+                                                <div class="col-md-2" style="width: 15%">
+                                                  <div class="form-group">
+                                                    
+                                                    <label>Part No.</label>
+                                                     <input name="TxtPartNo" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtPartNo\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtPartNo" tabindex="19" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                <div class="col-md-2" style="width: 16%">
+                                                  <div class="form-group">
+                                                    
+                                                    <label>Desc.</label>
+                                                     <input name="TxtDesc" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtDesc\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtDesc" tabindex="20" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                    <div class="col-md-2" style="width: 11%">
+                                                  <div class="form-group">
+                                                     
+                                                    <label>Qty.</label>
+                                                     <input name="txtQuantity" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtQuantity\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtQuantity" tabindex="21" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                     <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                      
+                                                    <label> Unit</label>
+                                                     <select name="CBOUnit" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOUnit\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOUnit" tabindex="22" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">- Unit -</option>
+		<option value="3">BUNDLE</option>
+		<option value="29">MT</option>
+
+	</select>
+                                                  </div>
+                                                </div>
+                                                 
+                                                    </div>
+                                                 </div>
+                                                  <div class="col-md-12">
+                                             <!-- Horizontal Form -->
+                                                <div class="box-body1"> 
+                                                <div class="col-md-2" style="width: 10%">
+                                                  <div class="form-group">
+                                                     
+                                                    <label>Pkgs</label>
+                                                     <input name="txtPkgs" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtPkgs\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtPkgs" tabindex="23" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                 <div class="col-md-2" style="width: 11%">
+                                                  <div class="form-group">
+                                                     
+                                                    <label>Wt/TQty</label>
+                                                     <input name="TxtTQty" type="text" readonly="readonly" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtTQty\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtTQty" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                     <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                     
+                                                    <label>Rate</label>
+                                                     <input name="txtRate" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtRate\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtRate" tabindex="24" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                     <div class="col-md-2" style="width: 15%">
+                                                     <div class="form-group">
+                                                      
+                                                    <label>RateType</label>
+                                                    <select name="CboRateType" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CboRateType\&#39;,\&#39;\&#39;)&#39;, 0)" id="CboRateType" tabindex="25" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">- Rate Type -</option>
+		<option value="3">BUNDLE</option>
+		<option value="29">MT</option>
+
+	</select> 
+                                                  </div>
+                                                </div>
+                                                <div class="col-md-2" style="width: 11%">
+                                                  <div class="form-group">
+                                                      
+                                                    <label>Size</label>                                                   
+                                                           <input name="TxtSizeName" type="text" id="TxtSizeName" tabindex="26" class="form-control" />                                                   
+                                                  </div>
+                                                </div>   
+                                                <div class="col-md-2" style="width: 15%">
+                                                  <div class="form-group">
+                                                      
+                                                    <label>Total</label>
+                                                     <input name="txtItemTotal" type="text" readonly="readonly" id="txtItemTotal" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                <div class="col-md-2" style="width: 11%">
+                                                     <div class="form-group">
+                                                    
+                                                    <label>Disc.%</label>
+                                                     <input name="txtDiscountPer" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtDiscountPer\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtDiscountPer" tabindex="27" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                <div class="col-md-2" style="width: 15%">
+                                                  <div class="form-group">
+                                                     
+                                                    <label>Tax.Val.</label>
+                                                     <input name="txtTaxableVal" type="text" readonly="readonly" id="txtTaxableVal" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                </div>
+                                                </div>
+                                                  <div class="col-md-12">
+                                             <!-- Horizontal Form -->
+                                                <div class="box-body1">                                                       
+                                                           
+                                                    
+                                                     
+                                                        
+                                                    
+                                                      
+                                                 <div class="col-md-2" style="width: 14%">
+                                                <div class="form-group">
+                                                      
+                                                    <label>Include</label>
+                                                     <select name="CBOInclude" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOInclude\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOInclude" tabindex="28" class="form-control select2" style="width:100%;">
+		<option value="0">GST Inc</option>
+		<option selected="selected" value="1">NON GST Inc</option>
+
+	</select>
+                                                  </div>
+                                                </div>   
+                                                       <div class="col-md-2" style="width: 12%">
+                                                     <div class="form-group">
+                                                      
+                                                    <label>GST%</label>
+                                                     <input name="TxtGSTper" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtGSTper\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtGSTper" tabindex="29" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                      
+                                                    <label>CGSTAmt</label>
+                                                     <input name="TxtCGSTAmt" type="text" readonly="readonly" id="TxtCGSTAmt" class="form-control" />
+                                                  </div>
+                                                </div>  
+                                                    
+                                                <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                     
+                                                    <label>SGSTAmt</label>
+                                                     <input name="TxtSGSTAmt" type="text" readonly="readonly" id="TxtSGSTAmt" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                      
+                                                    <label>IGSTAmt</label>
+                                                     <input name="TxtIGSTAmt" type="text" readonly="readonly" id="TxtIGSTAmt" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                       <div class="col-md-2" style="width: 14%">
+                                                  <div class="form-group">
+                                                     
+                                                    <label>Total.Amt.</label>
+                                                     <input name="TxtTotalAmt" type="text" readonly="readonly" id="TxtTotalAmt" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                   
+                                                    <label>Opng.Km</label>
+                                                     <input name="TxtOpKm" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtOpKm\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtOpKm" tabindex="30" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                   
+                                                    <label>Curr.Km.</label>
+                                                     <input name="TxtCurrKm" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtCurrKm\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtCurrKm" tabindex="31" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                                                                                                             
+                                                </div>
+                                            </div>
+
+                                                <div class="col-md-12">
+                                             <!-- Horizontal Form -->
+                                                <div class="box-body1">                                                       
+                                                 
+                                                <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                   
+                                                    <label>Clsng. Km</label>
+                                                     <input name="TxtClsngKm" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtClsngKm\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtClsngKm" tabindex="32" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                <div class="col-md-2" style="width: 17%">
+                                                       <div class="form-group">
+                                                    <label> Vehicle No &nbsp;&nbsp;<a id="BtnAddVehicle" class="btn-info" href="javascript:__doPostBack(&#39;BtnAddVehicle&#39;,&#39;&#39;)">+</a></label>
+                                                     <select name="CBOVehicleNo" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBOVehicleNo\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBOVehicleNo" tabindex="33" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">------ Vehicle No ------</option>
+		<option value="1092">CG 04 AB 1122</option>
+		<option value="1088">CG04JD3860</option>
+		<option value="1085">CG13AF2169</option>
+		<option value="1095">CG13AT2001</option>
+		<option value="1094">CG13AZ8801</option>
+		<option value="1083">CG13AZ8818</option>
+		<option value="1090">CG13BA9018</option>
+		<option value="1084">CG13BB8818</option>
+		<option value="1087">CG13BE8941</option>
+		<option value="1089">CG13D6582</option>
+		<option value="1093">CG13L8841</option>
+		<option value="1082">JH02BN1844</option>
+		<option value="1086">OR15R2237</option>
+		<option value="1091">TN88J9109</option>
+
+	</select>
+                                                  </div>
+                                                </div>
+                                                <div class="col-md-2" style="width: 17%">
+                                                  <div class="form-group">
+                                                   
+                                                    <label>Driver&nbsp;&nbsp;<a id="BtnAddDriver" class="btn-info" href="javascript:__doPostBack(&#39;BtnAddDriver&#39;,&#39;&#39;)">+</a></label>
+                                                      <select name="CBODriver" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;CBODriver\&#39;,\&#39;\&#39;)&#39;, 0)" id="CBODriver" tabindex="34" class="form-control select2" style="width:100%;">
+		<option selected="selected" value="0">------ Driver ------</option>
+		<option value="280">BHAWANI</option>
+		<option value="412">DEMO DRIVER 2</option>
+		<option value="241">DEMO DRIVER NAME</option>
+		<option value="314">HITESH</option>
+		<option value="275">KALAKAR</option>
+		<option value="90">RAJAN</option>
+		<option value="294">SURESH</option>
+
+	</select>
+                                                  </div>
+                                                </div> 
+                                               <div class="col-md-2" style="width: 16%">
+                                                  <div class="form-group">
+                                                    <label>Wrnty Date</label>
+                                                      <div class="input-group date">
+                                                                <div class="input-group-addon">
+                                                                    <i class="fa fa-calendar"></i>
+                                                                </div>
+                                                                <input name="DtpWrntyDate" type="text" value="04/07/2026" id="DtpWrntyDate" tabindex="35" class="form-control pull-right" />
+                                                            </div>
+                                                  </div>
+                                                </div> 
+                                                <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                   
+                                                    <label>Wrnty Days</label>
+                                                     <input name="TxtWrntyDays" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtWrntyDays\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtWrntyDays" tabindex="36" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                <div class="col-md-2" style="width: 12%">
+                                                  <div class="form-group">
+                                                   
+                                                    <label>Avg.Km.</label>
+                                                     <input name="TxtAvgKm" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtAvgKm\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtAvgKm" tabindex="37" class="form-control" />
+                                                  </div>
+                                                </div> 
+                                                <div class="col-md-2" style="width: 14%">
+                                                  <div class="form-group">
+                                                   
+                                                    <label>Avg.Cost</label>
+                                                     <input name="TxtAvgCost" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtAvgCost\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtAvgCost" tabindex="38" class="form-control" />
+                                                  </div>
+                                                </div>
+                                                  </div></div>
+                                   
+                                     
+                                       <div class="col-md-12" style="padding-top: 30px; text-align: center">
+                                            <div class="form-group">
+                                                <input type="submit" name="BtnaddProduct" value="Add Product" id="BtnaddProduct" tabindex="39" class="btn btn-success" />
+                                                <input type="submit" name="BtnEditProduct" value="Edit Product" id="BtnEditProduct" class="btn btn-warning" />
+                                            </div>
+                                        </div>
+
+                                      </div>
+                                    </div>
+                                     </div>
+                              
+                                     <div class="col-xs-12">
+                                            <div class="box" style="margin-bottom: 2px; margin-top: 2px">
+                                            </div>
+                                        </div>
+                                 <div class="col-md-12">
+                                  <div id="Panel1" style="overflow:auto;">
+		
+                                                <div>
+
+		</div>
+                                            
+	</div>
+                                    <!-- /.box-header -->
+                                    
+                                    <!-- /.box-body -->
+                                </div>
+                                  <div class="col-xs-12">
+                                      <div class="box" style="margin-bottom: 2px; margin-top: 2px"> </div>
+                                  </div>
+                              
+                                 <div class="col-md-12">
+                                    <div class="box box-primary">
+                                        <div class="box-body">
+                                               <div class="col-md-12">
+                                             <!-- Horizontal Form -->
+                                                    <div class="box-body1">
+                                                 
+                                                  <div class="form-group">
+                                                      <div class="col-sm-2">
+                                                    <label> Total Tax.Amt.</label>
+                                                    <input name="TxtTotTaxAmt" type="text" readonly="readonly" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtTotTaxAmt\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtTotTaxAmt" class="form-control" />
+                                                     </div>
+                                                  </div>
+
+                                                    
+
+                                                    <div class="form-group">
+                                                      <div class="col-sm-2">
+                                                    <label> Disc Amt</label>
+                                                    <input name="TxtTotDiscAmt" type="text" readonly="readonly" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtTotDiscAmt\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtTotDiscAmt" class="form-control" />
+                                                     </div>
+                                                  </div>
+
+                                                    
+                                                 
+                                                  <div class="form-group">
+                                                       <div class="col-sm-2">
+                                                    <label>
+                                                       Tot.CGST Amt</label>
+                                                    <input name="TxtTotCGSTAmt" type="text" readonly="readonly" id="TxtTotCGSTAmt" class="form-control" />
+                                                     </div>
+                                                  </div>
+                                             
+                                                <div class="form-group">
+                                                     <div class="col-sm-2">
+                                                    <label>
+                                                       Tot.SGST Amt</label>
+                                                    <input name="TxtTotSGSTAmt" type="text" readonly="readonly" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtTotSGSTAmt\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtTotSGSTAmt" class="form-control" />
+                                                 </div>
+                                               </div>
+                                                                                                                                                
+                                                     
+                                           
+                                                <div class="form-group">
+                                                     <div class="col-sm-2">
+                                                    <label>
+                                                         Tot.IGST Amt</label>
+                                                    <input name="TxtTotIGSTAmt" type="text" readonly="readonly" id="TxtTotIGSTAmt" class="form-control" />
+                                                </div>
+                                            </div>
+                                             <div class="form-group">
+                                                       <div class="col-sm-2">
+                                                    <label>
+                                                        Total&nbspAmount</label>
+                                                    <input name="txtTotal" type="text" readonly="readonly" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtTotal\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtTotal" class="form-control" />
+                                                     </div>
+                                                 </div>
+
+                                            <div class="form-group">
+                                                      <div class="col-sm-2">
+                                                   
+                                                    
+                                                     </div>
+                                                  </div>
+                                            </div>
+                                            </div>
+
+
+                                             <div class="col-md-12">
+                                             <!-- Horizontal Form -->
+                                                    <div class="box-body2">
+
+                                           
+                                                 
+                                           
+                                                <div class="form-group">
+                                                     <div class="col-sm-2">
+                                                    <label>
+                                                      Frieght</label>
+                                                    <input name="txtFreight" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtFreight\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtFreight" class="form-control" />
+                                                 </div>
+                                              </div>
+                                               <div class="form-group">
+                                                     <div class="col-sm-2">
+                                                    <label> Others</label>
+                                                    <input name="TxtOthers" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtOthers\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtOthers" class="form-control" />
+                                                 </div>
+                                                 </div>
+                                                   <div class="form-group">
+                                                     <div class="col-sm-2">
+                                                    <label> TCS %</label>
+                                                    <input name="TxtTCSPer" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtTCSPer\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtTCSPer" class="form-control" />
+                                                  </div>
+
+                                              
+                                                 </div>
+                                                      <div class="form-group">
+                                                     <div class="col-sm-2">
+                                                    <label> TCS Amt</label>
+                                                    <input name="TxtTCSAmt" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;TxtTCSAmt\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="TxtTCSAmt" class="form-control" />
+                                                  </div>
+
+                                                    </div>
+                                                     <div class="form-group">
+                                                 <div class="col-sm-2">
+                                                    <label> Grnd.Total</label>
+                                                    <input name="txtgrandtotal" type="text" readonly="readonly" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtgrandtotal\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtgrandtotal" class="form-control" />
+                                                </div>
+                                               </div>
+                                                 </div>
+                                             </div>
+
+                                               <div class="col-md-12">
+                                             <!-- Horizontal Form -->
+                                                 <div class="box-body3">
+                                            
+                                               
+                                           
+                                                <div class="form-group">
+                                                     <div class="col-sm-2">
+                                                    <label> Advance</label>
+                                                    <input name="txtAdvAmt" type="text" onchange="javascript:setTimeout(&#39;__doPostBack(\&#39;txtAdvAmt\&#39;,\&#39;\&#39;)&#39;, 0)" onkeypress="if (WebForm_TextBoxKeyHandler(event) == false) return false;" id="txtAdvAmt" class="form-control" />
+                                                </div>
+                                                </div>
+                                            
+                                                <div class="form-group">
+                                                     <div class="col-sm-2">
+                                                    <label> Blnc.Amt</label>
+                                                    <input name="txtBalAmt" type="text" readonly="readonly" id="txtBalAmt" class="form-control" />
+                                                </div>
+                                                </div> 
+                                           
+                                                <div class="form-group">
+                                                     <div class="col-sm-4">
+                                                    <label>Narration</label>
+                                                    <input name="txtNarration" type="text" id="txtNarration" class="form-control" />
+                                                 </div>
+                                               </div>  
+                                             </div>
+                                             </div>
+
+                                        
+                                        </div>
+
+                                            
+                                  </div>
+                                      
+                              
+                                  </div>
+                                </div>
+                                  
+                                 
+                            </div>
+                            <!-- /.box -->
+                      </div>
+                       
+                    <!-- /.row -->
+                   </section>
+                
+</div>
+            <!-- /.content -->
+        </div>
+        <!-- /.content-wrapper -->
+        
+<footer class="main-footer">
+    <div class="pull-right hidden-xs">
+      <b>Version</b> 2.4.0
+    </div>
+    <strong><a href="http://www.manpushpsoftware.com/" target="_blank">Manpushp Software LLP.</a>.</strong> All rights
+    reserved.
+  </footer>
+<!-- Control Sidebar -->
+
+<!-- /.control-sidebar -->
+<!-- Add the sidebar's background. This div must be placed
+       immediately after the control sidebar -->
+<div class="control-sidebar-bg">
+</div>
+<!-- jQuery 3 -->
+<script src="bower_components/jquery/dist/jquery.min.js"></script>
+<!-- jQuery UI 1.11.4 -->
+<script src="bower_components/jquery-ui/jquery-ui.min.js"></script>
+<!-- Resolve conflict in jQuery UI tooltip with Bootstrap tooltip -->
+<script>
+    $.widget.bridge('uibutton', $.ui.button);
+</script>
+<!-- Bootstrap 3.3.7 -->
+<script src="bower_components/bootstrap/dist/js/bootstrap.min.js"></script>
+<!-- Morris.js charts -->
+<script src="bower_components/raphael/raphael.min.js"></script>
+<script src="bower_components/morris.js/morris.min.js"></script>
+<!-- Sparkline -->
+<script src="bower_components/jquery-sparkline/dist/jquery.sparkline.min.js"></script>
+<!-- jvectormap -->
+<script src="plugins/jvectormap/jquery-jvectormap-1.2.2.min.js"></script>
+<script src="plugins/jvectormap/jquery-jvectormap-world-mill-en.js"></script>
+<!-- jQuery Knob Chart -->
+<script src="bower_components/jquery-knob/dist/jquery.knob.min.js"></script>
+<!-- daterangepicker -->
+<script src="bower_components/moment/min/moment.min.js"></script>
+<script src="bower_components/bootstrap-daterangepicker/daterangepicker.js"></script>
+<!-- datepicker -->
+<script src="bower_components/bootstrap-datepicker/dist/js/bootstrap-datepicker.min.js"></script>
+<!-- Bootstrap WYSIHTML5 -->
+<script src="plugins/bootstrap-wysihtml5/bootstrap3-wysihtml5.all.min.js"></script>
+<!-- Slimscroll -->
+<script src="bower_components/jquery-slimscroll/jquery.slimscroll.min.js"></script>
+<!-- FastClick -->
+<script src="bower_components/fastclick/lib/fastclick.js"></script>
+<!-- AdminLTE App -->
+<script src="dist/js/adminlte.min.js"></script>
+<!-- AdminLTE dashboard demo (This is only for demo purposes) -->
+<script src="dist/js/pages/dashboard.js"></script>
+<!-- AdminLTE for demo purposes -->
+<script src="dist/js/demo.js"></script>
+<script src="bower_components/select2/dist/js/select2.full.min.js" type="text/javascript"></script>
+<script src="bower_components/select2/dist/js/select2.full.min.js"></script>
+<script src="plugins/input-mask/jquery.inputmask.js"></script>
+<script src="plugins/input-mask/jquery.inputmask.date.extensions.js"></script>
+<script src="bower_components/bootstrap-daterangepicker/daterangepicker.js"></script>
+<script src="bower_components/bootstrap-datepicker/dist/js/bootstrap-datepicker.min.js"></script>
+<script src="bower_components/chart.js/Chart.js"></script>
+
+
+<script>
+    $(function () {
+        //Initialize Select2 Elements
+        $('.select2').select2()
+
+        //Datemask dd/mm/yyyy
+        $('#datemask').inputmask('dd/mm/yyyy', { 'placeholder': 'dd/mm/yyyy' })
+        //Datemask2 mm/dd/yyyy
+        $('#datemask2').inputmask('mm/dd/yyyy', { 'placeholder': 'mm/dd/yyyy' })
+        //Money Euro
+        $('[data-mask]').inputmask()
+
+        //Date range picker
+        $('#reservation').daterangepicker()
+        //Date range picker with time picker
+        $('#reservationtime').daterangepicker({ timePicker: true, timePickerIncrement: 30, format: 'MM/DD/YYYY h:mm A' })
+        //Date range as a button
+        $('#daterange-btn').daterangepicker(
+      {
+          ranges: {
+              'Today': [moment(), moment()],
+              'Yesterday': [moment().subtract(1, 'days'), moment().subtract(1, 'days')],
+              'Last 7 Days': [moment().subtract(6, 'days'), moment()],
+              'Last 30 Days': [moment().subtract(29, 'days'), moment()],
+              'This Month': [moment().startOf('month'), moment().endOf('month')],
+              'Last Month': [moment().subtract(1, 'month').startOf('month'), moment().subtract(1, 'month').endOf('month')]
+          },
+          startDate: moment().subtract(29, 'days'),
+          endDate: moment()
+      },
+      function (start, end) {
+          $('#daterange-btn span').html(start.format('MMMM D, YYYY') + ' - ' + end.format('MMMM D, YYYY'))
+      }
+    )
+
+        //Date picker
+        $('#datepicker').datepicker({
+            autoclose: true
+        })
+
+        //iCheck for checkbox and radio inputs
+        $('input[type="checkbox"].minimal, input[type="radio"].minimal').iCheck({
+            checkboxClass: 'icheckbox_minimal-blue',
+            radioClass: 'iradio_minimal-blue'
+        })
+        //Red color scheme for iCheck
+        $('input[type="checkbox"].minimal-red, input[type="radio"].minimal-red').iCheck({
+            checkboxClass: 'icheckbox_minimal-red',
+            radioClass: 'iradio_minimal-red'
+        })
+        //Flat red color scheme for iCheck
+        $('input[type="checkbox"].flat-red, input[type="radio"].flat-red').iCheck({
+            checkboxClass: 'icheckbox_flat-green',
+            radioClass: 'iradio_flat-green'
+        })
+
+        //Colorpicker
+        $('.my-colorpicker1').colorpicker()
+        //color picker with addon
+        $('.my-colorpicker2').colorpicker()
+
+        //Timepicker
+        $('.timepicker').timepicker({
+            showInputs: false
+        })
+    })
+</script>
+
+    </div>
+    
+
+<script type="text/javascript">
+//<![CDATA[
+WebForm_AutoFocus('btnSave');//]]>
+</script>
+</form>
+    <script>
+        // WRITE THE VALIDATION SCRIPT IN THE HEAD TAG.
+        function isNumber(evt) {
+            var iKeyCode = (evt.which) ? evt.which : evt.keyCode
+            if (iKeyCode != 46 && iKeyCode > 31 && (iKeyCode < 48 || iKeyCode > 57))
+                return false;
+            return true;
+        }
+        function initdropdown() {
+
+            $('#CBOBillType').select2();
+            $('#CBOInvoiceNo').select2();
+            $('#CBOInvoType').select2();
+            $('#CBOReceiver').select2();
+            $('#CboConsignee').select2();
+            $('#CBOTransport').select2();
+            $('#CBOSupplyType').select2();
+            $('#CBOAgent').select2();
+            $('#CBOLocation').select2();
+            $('#CBOPrdGrp').select2();
+            $('#CBOItem').select2();
+            $('#CBOUnit').select2();
+            $('#CBOInclude').select2();
+            $('#CboOrder').select2();
+            $('#CboRateType').select2();
+            $('#CBOVehicleNo').select2();
+            $('#CBODriver').select2();
+
+        }
+        function pageLoad(sender, args) {
+            initdropdown();
+            UserDate('DtpAmndDate');
+            UserDate('DtpInvDate');
+            UserDate('DtpSupDate');
+            UserDate('DtpMFGDate');
+            UserDate('DtpREDate');
+            UserDate('DtpOrgDate');
+            UserDate('DtpOrderDate');
+            UserDate('DtpWrntyDate');
+        }
+
+        
+    </script>
+    <!-- ./wrapper -->
+</body>
+    
+</html>
+

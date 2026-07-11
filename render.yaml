@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: transport-tms
+    runtime: node
+    plan: free
+    # free plan has no preDeployCommand — run migrations as part of the build
+    buildCommand: npm ci && npx prisma generate && npx prisma migrate deploy && npm run build
+    startCommand: npm start
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_VERSION
+        value: 20.12.2
+      - key: DATABASE_URL
+        sync: false # paste your Neon pooled connection string in the dashboard
+      - key: DIRECT_DATABASE_URL
+        sync: false # paste your Neon direct (non-pooled) connection string
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: UPLOAD_DIR
+        value: /tmp/uploads # NOTE: free tier has no persistent disk — uploads are lost on redeploy
+      - key: NEXT_PUBLIC_APP_NAME
+        value: TransportTMS

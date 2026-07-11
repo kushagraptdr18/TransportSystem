@@ -1,0 +1,1576 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+// ============ ENUMS ============
+
+enum Role {
+  OWNER
+  ADMIN
+  OPERATOR
+  ACCOUNTANT
+  VIEWER
+}
+
+enum LedgerGroup {
+  BANK
+  CASH
+  CONSIGNEE_CONSIGNOR
+  DRIVER
+  EXPENSE
+  INCOME
+  OFFICE
+  OWNER_BROKER
+  STAFF
+  SUPPLIERS
+}
+
+enum LrType {
+  TO_PAY
+  TBB
+  PAID
+  FOC
+  CANCELLED
+}
+
+enum LrStatus {
+  PENDING
+  ON_CHALAN
+  ARRIVED
+  DELIVERED
+  BILLED
+}
+
+enum RateBasis {
+  QTY
+  ACTUAL_WT
+  CHARGE_WT
+  FIXED
+}
+
+enum VoucherType {
+  RECEIPT
+  PAYMENT
+  CONTRA
+}
+
+enum VoucherEntryType {
+  CASH
+  BANK
+  CONTRA
+}
+
+enum ModuleLink {
+  BILLING
+  LORRY_HIRE
+  BROKER_ENTRY
+  FREIGHT_CHALLAN
+  CASH_MEMO
+  GST_BILLING
+  LR_ENTRY
+  OTHERS
+}
+
+enum AdvanceType {
+  CASH
+  BANK
+  DIESEL
+  TOLL
+  TYRE
+  SPARE_PARTS
+  REPAIR
+  OTHER
+}
+
+enum PodSourceType {
+  BOOKING
+  OUTWARD_CROSSING
+  CROSSING_CHALLAN
+  GATE_PASS
+  BROKER_SLIP
+}
+
+enum DeliveryType {
+  GATE_PASS
+  CASH_MEMO
+}
+
+enum CashCredit {
+  CASH
+  CREDIT
+}
+
+enum LoadingChalanType {
+  DIRECT
+  CROSSING
+}
+
+enum InvoiceKind {
+  PART_TRUCK
+  FULL_TRUCK
+  MANUAL
+  GST
+}
+
+enum TdsMode {
+  TDS_APPLICABLE
+  DECLARATION
+}
+
+enum TripLeg {
+  GOING
+  RETURN
+}
+
+enum EntrySide {
+  DEBIT
+  CREDIT
+}
+
+enum DocNumberType {
+  LR
+  CHALAN
+  LOADING_CHALAN
+  ARRIVAL
+  DELIVERY
+  CROSSING
+  OUTWARD_CROSSING
+  HIRE_SLIP
+  SUMMARY
+  VOUCHER_RECEIPT
+  VOUCHER_PAYMENT
+  VOUCHER_CONTRA
+  POD
+  BROKER_SLIP
+  BROKER_BILL
+  TRIP
+  JOB_ENTRY
+  PURCHASE
+  CASH_REPORT
+}
+
+// ============ PLATFORM ============
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
+  firms Firm[]
+}
+
+model Firm {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id])
+  name               String
+  alias              String?
+  address1           String?
+  address2           String?
+  stateId            String?
+  cityId             String?
+  phone              String?
+  mobile             String?
+  email              String?
+  website            String?
+  gstin              String?
+  pan                String?
+  cin                String?
+  msmeNo             String?
+  jurisdiction       String?
+  cgstPct            Decimal  @default(0) @db.Decimal(5, 2)
+  sgstPct            Decimal  @default(0) @db.Decimal(5, 2)
+  igstPct            Decimal  @default(0) @db.Decimal(5, 2)
+  bankName           String?
+  bankAccount        String?
+  bankBranch         String?
+  bankIfsc           String?
+  logoPath           String?
+  sealPath           String?
+  smtpHost           String?
+  smtpUser           String?
+  smtpPass           String?
+  defaultBankPartyId String?
+  defaultTdsPct      Decimal  @default(1) @db.Decimal(5, 2)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  financialYears FinancialYear[]
+  userFirms      UserFirm[]
+
+  @@index([tenantId])
+}
+
+model FinancialYear {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  firm      Firm     @relation(fields: [firmId], references: [id])
+  label     String // e.g. "2026-2027"
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean  @default(true)
+
+  @@unique([firmId, label])
+  @@index([tenantId])
+}
+
+model User {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  name          String
+  username      String
+  passwordHash  String
+  role          Role     @default(OPERATOR)
+  signaturePath String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  userFirms   UserFirm[]
+  permissions UserPermission[]
+  auditLogs   AuditLog[]
+
+  @@unique([tenantId, username])
+  @@index([tenantId])
+}
+
+model UserFirm {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+  firmId String
+  firm   Firm   @relation(fields: [firmId], references: [id])
+
+  @@unique([userId, firmId])
+}
+
+model UserPermission {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+  module    String // e.g. "lr", "chalan", "billing", "masters", "reports", "accounts"
+  canView   Boolean @default(true)
+  canCreate Boolean @default(false)
+  canEdit   Boolean @default(false)
+  canDelete Boolean @default(false)
+  canPrint  Boolean @default(true)
+  canExport Boolean @default(true)
+
+  @@unique([userId, module])
+}
+
+model DocumentSequence {
+  id       String        @id @default(cuid())
+  tenantId String
+  firmId   String
+  fyId     String
+  docType  DocNumberType
+  next     Int           @default(1)
+  prefix   String        @default("")
+
+  @@unique([firmId, fyId, docType])
+  @@index([tenantId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String?
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  entity    String
+  entityId  String
+  action    String // CREATE | UPDATE | DELETE | PRINT | LOGIN
+  before    Json?
+  after     Json?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entity, entityId])
+}
+
+// ============ MASTERS ============
+
+model State {
+  id       String @id @default(cuid())
+  tenantId String
+  name     String
+  gstCode  String @default("")
+  cities   City[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model City {
+  id         String  @id @default(cuid())
+  tenantId   String
+  stateId    String
+  state      State   @relation(fields: [stateId], references: [id])
+  name       String
+  district   String?
+  pincode    String?
+  stdCode    String?
+  officeType String?
+
+  @@unique([tenantId, name, stateId])
+  @@index([tenantId])
+}
+
+model Party {
+  id                 String      @id @default(cuid())
+  tenantId           String
+  ledgerGroup        LedgerGroup
+  name               String
+  alias              String?
+  address1           String?
+  address2           String?
+  stateId            String?
+  cityId             String?
+  gstin              String?
+  pan                String?
+  aadhar             String?
+  iecNo              String?
+  rcNo               String?
+  licenseNo          String?
+  ownerName          String?
+  phone              String?
+  mobile             String?
+  email              String?
+  arnNo              String?
+  vendorCode         String?
+  openingBalance     Decimal     @default(0) @db.Decimal(14, 2)
+  openingSide        EntrySide   @default(DEBIT)
+  // broker TDS handling
+  tdsMode            TdsMode?
+  bankName           String?
+  bankAccount        String?
+  bankBranch         String?
+  bankIfsc           String?
+  panDocPath         String?
+  declarationDocPath String?
+  aadharDocPath      String?
+  gstDocPath         String?
+  photoPath          String?
+  isActive           Boolean     @default(true)
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  vehicles Vehicle[]
+
+  @@unique([tenantId, name, ledgerGroup])
+  @@index([tenantId, ledgerGroup])
+}
+
+model AccountHead {
+  id       String @id @default(cuid())
+  tenantId String
+  name     String
+  kind     String // INCOME | EXPENSE
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model ProductGroup {
+  id       String    @id @default(cuid())
+  tenantId String
+  name     String
+  products Product[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Product {
+  id        String       @id @default(cuid())
+  tenantId  String
+  groupId   String
+  group     ProductGroup @relation(fields: [groupId], references: [id])
+  name      String
+  unit      String? // default unit, e.g. MT
+  type      String?
+  hsnCode   String?
+  gstPct    Decimal      @default(0) @db.Decimal(5, 2)
+  className String?
+  division  String?
+  leadTime  String?
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Unit {
+  id       String  @id @default(cuid())
+  tenantId String
+  name     String
+  value    Decimal @default(1) @db.Decimal(12, 4)
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Vehicle {
+  id               String   @id @default(cuid())
+  tenantId         String
+  number           String
+  ownerId          String?
+  owner            Party?   @relation(fields: [ownerId], references: [id])
+  isOwn            Boolean  @default(false)
+  ownerNames       String? // owned vehicles: one or more owner names, comma-separated
+  chassisNo        String?
+  engineNo         String?
+  vehicleType      String?
+  permitNo         String?
+  insuranceNo      String?
+  rcDocPath        String?
+  fitnessDocPath   String?
+  insuranceDocPath String?
+  permitDocPath    String?
+  stateTaxDocPath  String?
+  pucDocPath       String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  @@unique([tenantId, number])
+  @@index([tenantId])
+}
+
+model RateMaster {
+  id              String    @id @default(cuid())
+  tenantId        String
+  partyId         String
+  productId       String?
+  sourceCityId    String
+  destCityId      String
+  rate            Decimal   @default(0) @db.Decimal(12, 2)
+  rateBasis       RateBasis @default(CHARGE_WT)
+  hamali          Decimal   @default(0) @db.Decimal(12, 2)
+  hamaliBasis     RateBasis @default(FIXED)
+  preBhada        Decimal   @default(0) @db.Decimal(12, 2)
+  preBhadaBasis   RateBasis @default(FIXED)
+  dCharge         Decimal   @default(0) @db.Decimal(12, 2)
+  dChargeBasis    RateBasis @default(FIXED)
+  stationery      Decimal   @default(0) @db.Decimal(12, 2)
+  stationeryBasis RateBasis @default(FIXED)
+  crossing        Decimal   @default(0) @db.Decimal(12, 2)
+  crossingBasis   RateBasis @default(FIXED)
+
+  @@unique([tenantId, partyId, productId, sourceCityId, destCityId])
+  @@index([tenantId])
+}
+
+model DocumentType {
+  id           String  @id @default(cuid())
+  tenantId     String
+  name         String
+  description  String?
+  showReminder Boolean @default(true)
+
+  registrations VehicleDocument[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model VehicleDocument {
+  id            String       @id @default(cuid())
+  tenantId      String
+  docNo         String?
+  docTypeId     String
+  docType       DocumentType @relation(fields: [docTypeId], references: [id])
+  vehicleId     String
+  companyName   String?
+  status        String       @default("DONE") // DONE | PENDING
+  entryDate     DateTime
+  effectiveDate DateTime?
+  expiryDate    DateTime?
+  remarks       String?
+
+  @@index([tenantId, expiryDate])
+}
+
+model JobHead {
+  id           String  @id @default(cuid())
+  tenantId     String
+  name         String
+  gstPct       Decimal @default(0) @db.Decimal(5, 2)
+  hsnCode      String?
+  description  String?
+  showReminder Boolean @default(false)
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+// ============ LR / BOOKING ============
+
+model Lr {
+  id            String   @id @default(cuid())
+  tenantId      String
+  firmId        String
+  fyId          String
+  lrNo          String
+  lrDate        DateTime
+  refLrNo       String?
+  privateMarka  String?
+  isDummy       Boolean  @default(false)
+  sourceCityId  String
+  destCityId    String
+  consignorId   String
+  consigneeId   String
+  billToId      String?
+  vehicleId     String?
+  vehicleText   String? // dummy LR free text
+  ownerName     String?
+  deliveryAt    String?
+  transpMode    String?
+  remarks       String?
+  lrType        LrType   @default(TBB)
+  status        LrStatus @default(PENDING)
+  printFreight  Boolean  @default(true)
+  gstApplicable Boolean  @default(false)
+
+  // insurance
+  insCompany  String?
+  insPolicyNo String?
+  insAmount   Decimal? @db.Decimal(14, 2)
+
+  // party invoice / e-way
+  invoiceNo   String?
+  obdNo       String?
+  refNo       String?
+  invoiceDate DateTime?
+  goodsValue  Decimal?  @db.Decimal(14, 2)
+  ewayBillNo  String?
+  ewayExpiry  DateTime?
+
+  // charges
+  freight     Decimal @default(0) @db.Decimal(14, 2)
+  hamali      Decimal @default(0) @db.Decimal(12, 2)
+  preBhada    Decimal @default(0) @db.Decimal(12, 2)
+  biltyCharge Decimal @default(0) @db.Decimal(12, 2)
+  collCharge  Decimal @default(0) @db.Decimal(12, 2)
+  cpc         Decimal @default(0) @db.Decimal(12, 2)
+  otherCharge Decimal @default(0) @db.Decimal(12, 2)
+  total       Decimal @default(0) @db.Decimal(14, 2)
+  cgstAmt     Decimal @default(0) @db.Decimal(12, 2)
+  sgstAmt     Decimal @default(0) @db.Decimal(12, 2)
+  igstAmt     Decimal @default(0) @db.Decimal(12, 2)
+  advance     Decimal @default(0) @db.Decimal(14, 2)
+  advanceBank String?
+  grandTotal  Decimal @default(0) @db.Decimal(14, 2)
+
+  // POD extras (filled at POD confirmation)
+  poNumber    String?
+  gateEntryNo String?
+
+  items          LrItem[]
+  chalanLrs      ChalanLr[]
+  invoiceLrs     InvoiceLr[]
+  pods           Pod[]
+  trackingEvents TrackingEvent[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, lrNo])
+  @@index([tenantId, firmId, fyId, status])
+  @@index([tenantId, vehicleId, status])
+}
+
+model LrItem {
+  id           String    @id @default(cuid())
+  tenantId     String
+  lrId         String
+  lr           Lr        @relation(fields: [lrId], references: [id], onDelete: Cascade)
+  productId    String?
+  productName  String
+  description  String?
+  qty          Decimal   @default(0) @db.Decimal(12, 3)
+  actualWt     Decimal   @default(0) @db.Decimal(12, 3)
+  chargeWt     Decimal   @default(0) @db.Decimal(12, 3)
+  unit         String    @default("MT")
+  rate         Decimal   @default(0) @db.Decimal(12, 2)
+  rateBasis    RateBasis @default(CHARGE_WT)
+  recWt        Decimal?  @db.Decimal(12, 3)
+  shortageWt   Decimal?  @db.Decimal(12, 3)
+  shortageRate Decimal?  @db.Decimal(12, 2)
+  shortageAmt  Decimal?  @db.Decimal(12, 2)
+  amount       Decimal   @default(0) @db.Decimal(14, 2)
+  length       Decimal?  @db.Decimal(10, 2)
+  width        Decimal?  @db.Decimal(10, 2)
+  height       Decimal?  @db.Decimal(10, 2)
+
+  @@index([tenantId])
+}
+
+// ============ CHALAN (freight challan to broker/owner) ============
+
+model Chalan {
+  id           String   @id @default(cuid())
+  tenantId     String
+  firmId       String
+  fyId         String
+  chalanNo     String
+  chalanDate   DateTime
+  brokerId     String
+  vehicleId    String
+  driverName   String?
+  driverMobile String?
+  licenseNo    String?
+  payableAt    String?
+  sourceCityId String?
+  destCityId   String?
+  remarks      String?
+
+  actualWt       Decimal   @default(0) @db.Decimal(12, 3)
+  chargeWt       Decimal   @default(0) @db.Decimal(12, 3)
+  rate           Decimal   @default(0) @db.Decimal(12, 2)
+  rateBasis      RateBasis @default(CHARGE_WT)
+  freight        Decimal   @default(0) @db.Decimal(14, 2) // vehicle freight (manual)
+  bookingFreight Decimal   @default(0) @db.Decimal(14, 2) // reference only, never printed
+  detention      Decimal   @default(0) @db.Decimal(12, 2)
+  odcAmt         Decimal   @default(0) @db.Decimal(12, 2)
+  fineSlip       Decimal   @default(0) @db.Decimal(12, 2)
+  ldCharge       Decimal   @default(0) @db.Decimal(12, 2)
+  shortageAmt    Decimal   @default(0) @db.Decimal(12, 2)
+  mamool         Decimal   @default(0) @db.Decimal(12, 2)
+  courierCharge  Decimal   @default(0) @db.Decimal(12, 2)
+  commissionPct  Decimal   @default(0) @db.Decimal(5, 2)
+  commissionAmt  Decimal   @default(0) @db.Decimal(12, 2)
+  tdsPct         Decimal   @default(0) @db.Decimal(5, 2)
+  tdsAmt         Decimal   @default(0) @db.Decimal(12, 2)
+  otherAmt       Decimal   @default(0) @db.Decimal(12, 2)
+  otherRemarks   String?
+  totalChalanAmt Decimal   @default(0) @db.Decimal(14, 2)
+  grandTotal     Decimal   @default(0) @db.Decimal(14, 2)
+  advanceTotal   Decimal   @default(0) @db.Decimal(14, 2)
+  balance        Decimal   @default(0) @db.Decimal(14, 2)
+
+  // trip KM
+  startKm       Decimal?  @db.Decimal(12, 1)
+  unloadDate    DateTime?
+  unloadKm      Decimal?  @db.Decimal(12, 1)
+  runningKm     Decimal?  @db.Decimal(12, 1)
+  tripDays      Int?
+  unloadRemarks String?
+
+  isFinal Boolean @default(false)
+
+  lrs      ChalanLr[]
+  advances ChalanAdvance[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, chalanNo])
+  @@index([tenantId, firmId, fyId])
+  @@index([tenantId, vehicleId])
+}
+
+model ChalanLr {
+  id       String @id @default(cuid())
+  tenantId String
+  chalanId String
+  chalan   Chalan @relation(fields: [chalanId], references: [id], onDelete: Cascade)
+  lrId     String
+  lr       Lr     @relation(fields: [lrId], references: [id])
+
+  @@unique([chalanId, lrId])
+  @@index([tenantId, lrId])
+}
+
+model ChalanAdvance {
+  id           String      @id @default(cuid())
+  tenantId     String
+  chalanId     String
+  chalan       Chalan      @relation(fields: [chalanId], references: [id], onDelete: Cascade)
+  type         AdvanceType
+  supplierName String?
+  bankName     String?
+  dieselQty    Decimal?    @db.Decimal(12, 3)
+  dieselRate   Decimal?    @db.Decimal(12, 2)
+  amount       Decimal     @default(0) @db.Decimal(14, 2)
+  date         DateTime?
+  remarks      String?
+
+  @@index([tenantId])
+}
+
+// ============ PART-TRUCK OPS ============
+
+model LoadingChalan {
+  id           String            @id @default(cuid())
+  tenantId     String
+  firmId       String
+  fyId         String
+  chalanNo     String
+  chalanDate   DateTime
+  type         LoadingChalanType @default(DIRECT)
+  vehicleId    String?
+  driverName   String?
+  driverMobile String?
+  licenseNo    String?
+  vehicleOwner String?
+  brokerId     String?
+  sourceCityId String?
+  destCityId   String?
+  remarks      String?
+  lrIds        Json? // ordered list of LR ids on this loading chalan
+  totFreight   Decimal           @default(0) @db.Decimal(14, 2)
+  truckFreight Decimal           @default(0) @db.Decimal(14, 2)
+  advance      Decimal           @default(0) @db.Decimal(14, 2)
+  commAmt      Decimal           @default(0) @db.Decimal(12, 2)
+  lcCharge     Decimal           @default(0) @db.Decimal(12, 2)
+  dcCharge     Decimal           @default(0) @db.Decimal(12, 2)
+  cfCharge     Decimal           @default(0) @db.Decimal(12, 2)
+  totCrossing  Decimal           @default(0) @db.Decimal(12, 2)
+  netAmount    Decimal           @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, chalanNo])
+  @@index([tenantId, firmId, fyId])
+}
+
+model Arrival {
+  id         String   @id @default(cuid())
+  tenantId   String
+  firmId     String
+  fyId       String
+  arrivalNo  String
+  unloadDate DateTime
+  unloadedBy String?
+  godownNo   String?
+  manifestNo String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([firmId, fyId, arrivalNo])
+  @@index([tenantId])
+}
+
+model Delivery {
+  id              String       @id @default(cuid())
+  tenantId        String
+  firmId          String
+  fyId            String
+  delNo           String
+  delDate         DateTime
+  type            DeliveryType @default(GATE_PASS)
+  partyId         String?
+  vehicleId       String?
+  lrNo            String?
+  grNo            String?
+  freight         Decimal      @default(0) @db.Decimal(14, 2)
+  totQty          Decimal      @default(0) @db.Decimal(12, 3)
+  totWeight       Decimal      @default(0) @db.Decimal(12, 3)
+  ewayBillNo      String?
+  deliveryPerson  String?
+  through         String?
+  payType         LrType       @default(TO_PAY)
+  cashType        CashCredit   @default(CASH)
+  deliveryCharges Decimal      @default(0) @db.Decimal(12, 2)
+  gatepassCharge  Decimal      @default(0) @db.Decimal(12, 2)
+  labourCharges   Decimal      @default(0) @db.Decimal(12, 2)
+  aoc             Decimal      @default(0) @db.Decimal(12, 2)
+  damrage         Decimal      @default(0) @db.Decimal(12, 2)
+  total           Decimal      @default(0) @db.Decimal(14, 2)
+  remarks         String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, delNo])
+  @@index([tenantId, firmId, fyId])
+}
+
+model Crossing {
+  id            String    @id @default(cuid())
+  tenantId      String
+  firmId        String
+  fyId          String
+  chalanNo      String
+  chalanDate    DateTime
+  transporterId String?
+  vehicleId     String?
+  driverName    String?
+  licenseNo     String?
+  consigneeId   String?
+  lrNo          String?
+  grNo          String?
+  sourceCityId  String?
+  addressTo     String?
+  freight       Decimal   @default(0) @db.Decimal(14, 2)
+  ewayBillNo    String?
+  payType       LrType    @default(TO_PAY)
+  crossingAmt   Decimal   @default(0) @db.Decimal(14, 2)
+  dcPct         Decimal   @default(0) @db.Decimal(5, 2)
+  dcAmt         Decimal   @default(0) @db.Decimal(12, 2)
+  toPayAmt      Decimal   @default(0) @db.Decimal(14, 2)
+  paidAmt       Decimal   @default(0) @db.Decimal(14, 2)
+  tbbAmt        Decimal   @default(0) @db.Decimal(14, 2)
+  partA         Decimal   @default(0) @db.Decimal(14, 2)
+  balance       Decimal   @default(0) @db.Decimal(14, 2)
+  drCr          EntrySide @default(DEBIT)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, chalanNo])
+  @@index([tenantId, firmId, fyId])
+}
+
+model OutwardCrossing {
+  id              String    @id @default(cuid())
+  tenantId        String
+  firmId          String
+  fyId            String
+  ocNo            String
+  chalanDate      DateTime
+  arrivalNo       String?
+  arrivalDate     DateTime?
+  vehicleId       String?
+  transporterId   String?
+  sourceCityId    String?
+  destCityId      String?
+  lrType          LrType    @default(TO_PAY)
+  unit            String?
+  remarks         String?
+  lines           Json // booking detail lines
+  totalQty        Decimal   @default(0) @db.Decimal(12, 3)
+  totalWt         Decimal   @default(0) @db.Decimal(12, 3)
+  totFreight      Decimal   @default(0) @db.Decimal(14, 2)
+  crossingFreight Decimal   @default(0) @db.Decimal(14, 2)
+  grandTotal      Decimal   @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, ocNo])
+  @@index([tenantId, firmId, fyId])
+}
+
+model HireSlip {
+  id               String   @id @default(cuid())
+  tenantId         String
+  firmId           String
+  fyId             String
+  slipNo           String
+  slipDate         DateTime
+  vehicleId        String?
+  ownerName        String?
+  ownerPan         String?
+  brokerName       String?
+  driverName       String?
+  driverMobile     String?
+  licenseNo        String?
+  product          String?
+  form15           String?
+  via              String?
+  payableAt        String?
+  chalanNo         String?
+  sourceCityId     String?
+  destCityId       String?
+  totalPkgs        Decimal  @default(0) @db.Decimal(12, 3)
+  actualWt         Decimal  @default(0) @db.Decimal(12, 3)
+  guaranteeWt      Decimal  @default(0) @db.Decimal(12, 3)
+  ratePmt          Decimal  @default(0) @db.Decimal(12, 2)
+  lorryHire        Decimal  @default(0) @db.Decimal(14, 2)
+  loadingH         Decimal  @default(0) @db.Decimal(12, 2)
+  craneCharge      Decimal  @default(0) @db.Decimal(12, 2)
+  unloadingH       Decimal  @default(0) @db.Decimal(12, 2)
+  overHeightCharge Decimal  @default(0) @db.Decimal(12, 2)
+  others           Decimal  @default(0) @db.Decimal(12, 2)
+  lessTds          Decimal  @default(0) @db.Decimal(12, 2)
+  lessSc           Decimal  @default(0) @db.Decimal(12, 2)
+  totalHire        Decimal  @default(0) @db.Decimal(14, 2)
+  advance          Decimal  @default(0) @db.Decimal(14, 2)
+  balance          Decimal  @default(0) @db.Decimal(14, 2)
+  narration        String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, slipNo])
+  @@index([tenantId, firmId, fyId])
+}
+
+model SettlementSummary {
+  id              String    @id @default(cuid())
+  tenantId        String
+  firmId          String
+  fyId            String
+  summaryNo       String
+  summaryDate     DateTime
+  chalanNo        String?
+  chalanDate      DateTime?
+  vehicleId       String?
+  sourceCityId    String?
+  destCityId      String?
+  remarks         String?
+  deliveryAmt     Decimal   @default(0) @db.Decimal(14, 2)
+  crossingAmt     Decimal   @default(0) @db.Decimal(14, 2)
+  delCommPct      Decimal   @default(0) @db.Decimal(5, 2)
+  delCommAmt      Decimal   @default(0) @db.Decimal(12, 2)
+  delCharges      Decimal   @default(0) @db.Decimal(12, 2)
+  crossingFreight Decimal   @default(0) @db.Decimal(14, 2)
+  truckFreight    Decimal   @default(0) @db.Decimal(14, 2)
+  unloadCharges   Decimal   @default(0) @db.Decimal(12, 2)
+  doorDelivery    Decimal   @default(0) @db.Decimal(12, 2)
+  extraLines      Json? // [{side:'A'|'B', name, value}]
+  totPartA        Decimal   @default(0) @db.Decimal(14, 2)
+  totPartB        Decimal   @default(0) @db.Decimal(14, 2)
+  balance         Decimal   @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, summaryNo])
+  @@index([tenantId, firmId, fyId])
+}
+
+// ============ BILLING ============
+
+model Invoice {
+  id            String      @id @default(cuid())
+  tenantId      String
+  firmId        String
+  fyId          String
+  kind          InvoiceKind
+  invoiceNo     String
+  invoiceDate   DateTime
+  dueDate       DateTime?
+  partyId       String
+  lrTypeFilter  LrType?
+  remarks       String?
+  subject       String?
+  bankPartyId   String?
+  gstApplicable Boolean     @default(false)
+  cgstPct       Decimal     @default(0) @db.Decimal(5, 2)
+  cgstAmt       Decimal     @default(0) @db.Decimal(12, 2)
+  sgstPct       Decimal     @default(0) @db.Decimal(5, 2)
+  sgstAmt       Decimal     @default(0) @db.Decimal(12, 2)
+  igstPct       Decimal     @default(0) @db.Decimal(5, 2)
+  igstAmt       Decimal     @default(0) @db.Decimal(12, 2)
+  tdsPct        Decimal     @default(1) @db.Decimal(5, 2)
+  tdsAmt        Decimal     @default(0) @db.Decimal(12, 2)
+  total         Decimal     @default(0) @db.Decimal(14, 2)
+  grandTotal    Decimal     @default(0) @db.Decimal(14, 2)
+  netTotal      Decimal     @default(0) @db.Decimal(14, 2)
+  advance       Decimal     @default(0) @db.Decimal(14, 2)
+  balance       Decimal     @default(0) @db.Decimal(14, 2)
+  totalWt       Decimal     @default(0) @db.Decimal(12, 3)
+
+  // GST invoice extras
+  placeOfSupply String?
+  supplyDate    DateTime?
+  transportMode String?
+  reverseCharge Boolean   @default(false)
+  tcsPct        Decimal   @default(0) @db.Decimal(5, 2)
+  tcsAmt        Decimal   @default(0) @db.Decimal(12, 2)
+  freightExtra  Decimal   @default(0) @db.Decimal(12, 2)
+  othersExtra   Decimal   @default(0) @db.Decimal(12, 2)
+  narration     String?
+  vehicleText   String?
+
+  lrs         InvoiceLr[]
+  charges     InvoiceCharge[]
+  lines       InvoiceLine[]
+  submissions BillSubmission[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, kind, invoiceNo])
+  @@index([tenantId, firmId, fyId, kind])
+  @@index([tenantId, partyId])
+}
+
+model InvoiceLr {
+  id        String  @id @default(cuid())
+  tenantId  String
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  lrId      String
+  lr        Lr      @relation(fields: [lrId], references: [id])
+
+  @@unique([invoiceId, lrId])
+  @@index([tenantId, lrId])
+}
+
+model InvoiceCharge {
+  id          String  @id @default(cuid())
+  tenantId    String
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  chargeType  String // Destination / Late Loading / Waiting / Detention / Other / ...
+  description String?
+  amount      Decimal @default(0) @db.Decimal(14, 2)
+  relatedLrs  String?
+  remarks     String?
+
+  @@index([tenantId])
+}
+
+model InvoiceLine {
+  id           String  @id @default(cuid())
+  tenantId     String
+  invoiceId    String
+  invoice      Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  productName  String
+  description  String?
+  uom          String?
+  hsnCode      String?
+  qty          Decimal @default(0) @db.Decimal(12, 3)
+  rate         Decimal @default(0) @db.Decimal(12, 2)
+  total        Decimal @default(0) @db.Decimal(14, 2)
+  discountPct  Decimal @default(0) @db.Decimal(5, 2)
+  taxableValue Decimal @default(0) @db.Decimal(14, 2)
+  gstPct       Decimal @default(0) @db.Decimal(5, 2)
+  cgstAmt      Decimal @default(0) @db.Decimal(12, 2)
+  sgstAmt      Decimal @default(0) @db.Decimal(12, 2)
+  igstAmt      Decimal @default(0) @db.Decimal(12, 2)
+  amount       Decimal @default(0) @db.Decimal(14, 2)
+
+  @@index([tenantId])
+}
+
+model BillSubmission {
+  id          String   @id @default(cuid())
+  tenantId    String
+  firmId      String
+  fyId        String
+  invoiceId   String?
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id])
+  billNo      String
+  billDate    DateTime
+  partyId     String?
+  receivedBy  String?
+  deptName    String?
+  submittedBy String?
+  docketNo    String?
+  counterName String?
+  remarks     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, firmId, fyId])
+}
+
+// ============ VOUCHERS / ACCOUNTS ============
+
+model Voucher {
+  id            String           @id @default(cuid())
+  tenantId      String
+  firmId        String
+  fyId          String
+  voucherNo     String
+  voucherDate   DateTime
+  type          VoucherType
+  entryType     VoucherEntryType @default(CASH)
+  moduleLink    ModuleLink       @default(OTHERS)
+  partyId       String?
+  vehicleId     String?
+  accountHeadId String?
+  ledgerPosting String           @default("PARTY") // PARTY | VEHICLE | BOTH
+  bankPartyId   String?
+  chequeNo      String?
+  chequeDate    DateTime?
+  biltyNo       String?
+  amount        Decimal          @default(0) @db.Decimal(14, 2)
+  tdsAmt        Decimal          @default(0) @db.Decimal(12, 2)
+  deduction     Decimal          @default(0) @db.Decimal(12, 2)
+  otherAmt      Decimal          @default(0) @db.Decimal(12, 2)
+  netAmount     Decimal          @default(0) @db.Decimal(14, 2)
+  remarks       String?
+
+  allocations VoucherAllocation[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, type, voucherNo])
+  @@index([tenantId, firmId, fyId, type])
+}
+
+model VoucherAllocation {
+  id        String     @id @default(cuid())
+  tenantId  String
+  voucherId String
+  voucher   Voucher    @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  refType   ModuleLink
+  refId     String // invoice/chalan/broker slip id
+  refNo     String
+  billAmt   Decimal    @default(0) @db.Decimal(14, 2)
+  tdsPct    Decimal    @default(0) @db.Decimal(5, 2)
+  tdsAmt    Decimal    @default(0) @db.Decimal(12, 2)
+  deduction Decimal    @default(0) @db.Decimal(12, 2)
+  otherAmt  Decimal    @default(0) @db.Decimal(12, 2)
+  amount    Decimal    @default(0) @db.Decimal(14, 2)
+  remarks   String?
+
+  @@index([tenantId, refType, refId])
+}
+
+model LedgerEntry {
+  id            String    @id @default(cuid())
+  tenantId      String
+  firmId        String
+  fyId          String
+  date          DateTime
+  partyId       String?
+  vehicleId     String?
+  accountHeadId String?
+  side          EntrySide
+  amount        Decimal   @db.Decimal(14, 2)
+  refType       String // LR | CHALAN | INVOICE | VOUCHER | BROKER_SLIP | ...
+  refId         String
+  refNo         String
+  narration     String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, firmId, fyId, partyId, date])
+  @@index([tenantId, refType, refId])
+}
+
+// ============ POD ============
+
+model Pod {
+  id          String        @id @default(cuid())
+  tenantId    String
+  firmId      String
+  fyId        String
+  docNo       String
+  docDate     DateTime
+  sourceType  PodSourceType @default(BOOKING)
+  lrId        String?
+  lr          Lr?           @relation(fields: [lrId], references: [id])
+  refNo       String? // gate pass no / chalan no etc.
+  vehicleId   String?
+  unloadDate  DateTime?
+  ackNo       String?
+  actualWt    Decimal?      @db.Decimal(12, 3)
+  recWt       Decimal?      @db.Decimal(12, 3)
+  shortageWt  Decimal?      @db.Decimal(12, 3)
+  poNumber    String?
+  gateEntryNo String?
+  filePath    String?
+  fileSize    Int?
+  remarks     String?
+  status      String        @default("COMPLETED") // PENDING | COMPLETED
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([firmId, fyId, docNo])
+  @@index([tenantId, lrId])
+}
+
+// ============ BROKER SLIP ============
+
+model BrokerSlip {
+  id            String    @id @default(cuid())
+  tenantId      String
+  firmId        String
+  fyId          String
+  slipNo        String
+  slipDate      DateTime
+  vehicleId     String?
+  transporterId String? // broker/transporter
+  loadStationId String?
+  destCityId    String?
+  consignorId   String?
+  consigneeId   String?
+  lrNo          String?
+  lrDate        DateTime?
+  ewbNo         String?
+  ewbDate       DateTime?
+  productId     String?
+  productName   String?
+  qty           Decimal   @default(0) @db.Decimal(12, 3)
+  actualWt      Decimal   @default(0) @db.Decimal(12, 3)
+  chargeWt      Decimal   @default(0) @db.Decimal(12, 3)
+  unit          String?
+  rateBasis     RateBasis @default(CHARGE_WT)
+
+  // party side (receivable)
+  partyId        String?
+  pRate          Decimal @default(0) @db.Decimal(12, 2)
+  pFreight       Decimal @default(0) @db.Decimal(14, 2)
+  pDetention     Decimal @default(0) @db.Decimal(12, 2)
+  pOdcAmt        Decimal @default(0) @db.Decimal(12, 2)
+  pFineSlip      Decimal @default(0) @db.Decimal(12, 2)
+  pLdCharge      Decimal @default(0) @db.Decimal(12, 2)
+  pShortageAmt   Decimal @default(0) @db.Decimal(12, 2)
+  pTdsPct        Decimal @default(0) @db.Decimal(5, 2)
+  pTdsAmt        Decimal @default(0) @db.Decimal(12, 2)
+  pCommPct       Decimal @default(0) @db.Decimal(5, 2)
+  pCommAmt       Decimal @default(0) @db.Decimal(12, 2)
+  pMamool        Decimal @default(0) @db.Decimal(12, 2)
+  pPaymentCharge Decimal @default(0) @db.Decimal(12, 2)
+  pChalanAmt     Decimal @default(0) @db.Decimal(14, 2)
+  pNetAmt        Decimal @default(0) @db.Decimal(14, 2)
+  pAdvance       Decimal @default(0) @db.Decimal(14, 2)
+  pBalance       Decimal @default(0) @db.Decimal(14, 2)
+  pRemarks       String?
+
+  // owner/broker side (payable) — auto-copied booking info
+  ownerId      String?
+  ownerName    String?
+  vRate        Decimal @default(0) @db.Decimal(12, 2)
+  vFreight     Decimal @default(0) @db.Decimal(14, 2)
+  vDetention   Decimal @default(0) @db.Decimal(12, 2)
+  vOdcAmt      Decimal @default(0) @db.Decimal(12, 2)
+  vFineAmt     Decimal @default(0) @db.Decimal(12, 2)
+  vLdCharge    Decimal @default(0) @db.Decimal(12, 2)
+  vShortageAmt Decimal @default(0) @db.Decimal(12, 2)
+  vTdsPct      Decimal @default(0) @db.Decimal(5, 2)
+  vTdsAmt      Decimal @default(0) @db.Decimal(12, 2)
+  vCommPct     Decimal @default(0) @db.Decimal(5, 2)
+  vCommAmt     Decimal @default(0) @db.Decimal(12, 2)
+  vMamool      Decimal @default(0) @db.Decimal(12, 2)
+  vPaymentAmt  Decimal @default(0) @db.Decimal(12, 2)
+  vChalanAmt   Decimal @default(0) @db.Decimal(14, 2)
+  vNetAmt      Decimal @default(0) @db.Decimal(14, 2)
+  vAdvance     Decimal @default(0) @db.Decimal(14, 2)
+  vBalance     Decimal @default(0) @db.Decimal(14, 2)
+  vRemarks     String?
+
+  advances Json? // [{side:'P'|'V', type, supplierName, bankName, dieselQty, dieselRate, amount, date, remarks}]
+
+  // trip km
+  startKm       Decimal?  @db.Decimal(12, 1)
+  unloadDate    DateTime?
+  unloadKm      Decimal?  @db.Decimal(12, 1)
+  runningKm     Decimal?  @db.Decimal(12, 1)
+  tripDays      Int?
+  unloadRemarks String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, slipNo])
+  @@index([tenantId, firmId, fyId])
+  @@index([tenantId, vehicleId])
+}
+
+// ============ TRIPS & VEHICLE EXPENSES ============
+
+model Trip {
+  id          String    @id @default(cuid())
+  tenantId    String
+  firmId      String
+  fyId        String
+  tripNo      String
+  tripDate    DateTime
+  returnDate  DateTime?
+  vehicleId   String
+  vehicleType String?
+
+  // going leg
+  goingPartyId      String?
+  goingSourceCityId String?
+  goingDestCityId   String?
+  gFreight          Decimal @default(0) @db.Decimal(14, 2)
+  gHamali           Decimal @default(0) @db.Decimal(12, 2)
+  gOthers           Decimal @default(0) @db.Decimal(12, 2)
+  gTotalFreight     Decimal @default(0) @db.Decimal(14, 2)
+  gDiesel           Decimal @default(0) @db.Decimal(12, 2)
+  gDriverAdvance    Decimal @default(0) @db.Decimal(12, 2)
+  gPartyAdvance     Decimal @default(0) @db.Decimal(12, 2)
+  gOther            Decimal @default(0) @db.Decimal(12, 2)
+  gBankName         String?
+  gBalance          Decimal @default(0) @db.Decimal(14, 2)
+  gRemarks          String?
+
+  // return leg
+  returnPartyId      String?
+  returnSourceCityId String?
+  returnDestCityId   String?
+  rFreight           Decimal @default(0) @db.Decimal(14, 2)
+  rHamali            Decimal @default(0) @db.Decimal(12, 2)
+  rOthers            Decimal @default(0) @db.Decimal(12, 2)
+  rTotalFreight      Decimal @default(0) @db.Decimal(14, 2)
+  rDiesel            Decimal @default(0) @db.Decimal(12, 2)
+  rDriverAdvance     Decimal @default(0) @db.Decimal(12, 2)
+  rPartyAdvance      Decimal @default(0) @db.Decimal(12, 2)
+  rDetention         Decimal @default(0) @db.Decimal(12, 2)
+  rBankName          String?
+  rBalance           Decimal @default(0) @db.Decimal(14, 2)
+  rRemarks           String?
+
+  expenses TripExpense[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, tripNo])
+  @@index([tenantId, vehicleId, tripDate])
+}
+
+model TripExpense {
+  id       String    @id @default(cuid())
+  tenantId String
+  tripId   String
+  trip     Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  category String // DIESEL | TOLL | DRIVER_BATA | LOADING | UNLOADING | PARKING | POLICE_RTO | MISC
+  amount   Decimal   @default(0) @db.Decimal(14, 2)
+  remarks  String?
+  date     DateTime?
+
+  @@index([tenantId])
+}
+
+model VehicleExpense {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  vehicleId String
+  date      DateTime
+  category  String // TYRE_PURCHASE | TYRE_REPAIR | SERVICE | SPARE_PARTS | REPAIR | INSURANCE | FITNESS | PERMIT | ROAD_TAX | RTO_PAPERS | POLLUTION | DRIVER_SALARY | CLEANER_SALARY | EMI | GPS_RECHARGE | FASTAG_RECHARGE | WASHING | OTHER
+  amount    Decimal  @default(0) @db.Decimal(14, 2)
+  remarks   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, vehicleId, date])
+}
+
+// ============ MAINTENANCE SUITE ============
+
+model JobInfo {
+  id             String    @id @default(cuid())
+  tenantId       String
+  firmId         String
+  entryDate      DateTime
+  vehicleId      String
+  garageId       String? // party (supplier)
+  jobDescription String?
+  jobCompDate    DateTime?
+  status         String    @default("PENDING") // DONE | PENDING
+  remarks        String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, vehicleId])
+}
+
+model JobEntry {
+  id             String     @id @default(cuid())
+  tenantId       String
+  firmId         String
+  fyId           String
+  invoiceNo      String
+  refNo          String?
+  invoiceDate    DateTime
+  billType       String     @default("INVOICE") // ESTIMATE | INVOICE
+  invType        CashCredit @default(CREDIT)
+  supplierId     String?
+  vehicleId      String?
+  attenderName   String?
+  attenderMobile String?
+  challanNo      String?
+  challanDate    DateTime?
+  lines          Json // [{jobHeadId, jobHeadName, description, qty, rate, total, discountPct, taxableValue, gstInc, gstPct, cgstAmt, sgstAmt, igstAmt, amount}]
+  currKm         Decimal?   @db.Decimal(12, 1)
+  kmInterval     Decimal?   @db.Decimal(12, 1)
+  daysInterval   Int?
+  remindType     String? // KM | DAYS
+  dueDate        DateTime?
+  totTaxable     Decimal    @default(0) @db.Decimal(14, 2)
+  discAmt        Decimal    @default(0) @db.Decimal(12, 2)
+  totCgst        Decimal    @default(0) @db.Decimal(12, 2)
+  totSgst        Decimal    @default(0) @db.Decimal(12, 2)
+  totIgst        Decimal    @default(0) @db.Decimal(12, 2)
+  freight        Decimal    @default(0) @db.Decimal(12, 2)
+  others         Decimal    @default(0) @db.Decimal(12, 2)
+  tcsPct         Decimal    @default(0) @db.Decimal(5, 2)
+  tcsAmt         Decimal    @default(0) @db.Decimal(12, 2)
+  grandTotal     Decimal    @default(0) @db.Decimal(14, 2)
+  advance        Decimal    @default(0) @db.Decimal(14, 2)
+  balance        Decimal    @default(0) @db.Decimal(14, 2)
+  narration      String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, invoiceNo])
+  @@index([tenantId, vehicleId])
+}
+
+model Purchase {
+  id          String     @id @default(cuid())
+  tenantId    String
+  firmId      String
+  fyId        String
+  kind        String     @default("PURCHASE") // PURCHASE | TYRE_SCRAP
+  invoiceNo   String
+  refNo       String?
+  invoiceDate DateTime
+  billType    String     @default("INVOICE")
+  invType     CashCredit @default(CREDIT)
+  buyerId     String?
+  consigneeId String?
+  transportId String?
+  agentId     String?
+  transMode   String?
+  supplyDate  DateTime?
+  supplyPlace String?
+  supplyType  String     @default("INVOICE") // INVOICE | EXPORT_INVOICE | BILL_OF_SUPPLY
+  challanNo   String?
+  challanDate DateTime?
+  orderNo     String?
+  orderDate   DateTime?
+  vehicleId   String?
+  driverId    String?
+  lines       Json
+  opngKm      Decimal?   @db.Decimal(12, 1)
+  currKm      Decimal?   @db.Decimal(12, 1)
+  clsngKm     Decimal?   @db.Decimal(12, 1)
+  wrntyDate   DateTime?
+  wrntyDays   Int?
+  totTaxable  Decimal    @default(0) @db.Decimal(14, 2)
+  discAmt     Decimal    @default(0) @db.Decimal(12, 2)
+  totCgst     Decimal    @default(0) @db.Decimal(12, 2)
+  totSgst     Decimal    @default(0) @db.Decimal(12, 2)
+  totIgst     Decimal    @default(0) @db.Decimal(12, 2)
+  freight     Decimal    @default(0) @db.Decimal(12, 2)
+  others      Decimal    @default(0) @db.Decimal(12, 2)
+  tcsPct      Decimal    @default(0) @db.Decimal(5, 2)
+  tcsAmt      Decimal    @default(0) @db.Decimal(12, 2)
+  grandTotal  Decimal    @default(0) @db.Decimal(14, 2)
+  advance     Decimal    @default(0) @db.Decimal(14, 2)
+  balance     Decimal    @default(0) @db.Decimal(14, 2)
+  narration   String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([firmId, fyId, kind, invoiceNo])
+  @@index([tenantId])
+}
+
+model TyreInstallation {
+  id             String    @id @default(cuid())
+  tenantId       String
+  firmId         String
+  entryDate      DateTime
+  productGroupId String?
+  productId      String?
+  vehicleId      String
+  position       String? // FRONT | REAR
+  partNo         String?
+  instKm         Decimal?  @db.Decimal(12, 1)
+  uninstKm       Decimal?  @db.Decimal(12, 1)
+  instDate       DateTime?
+  uninstDate     DateTime?
+  remarks        String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, vehicleId])
+}
+
+model OpeningStock {
+  id             String    @id @default(cuid())
+  tenantId       String
+  firmId         String
+  date           DateTime
+  productGroupId String?
+  productId      String
+  qty            Decimal   @default(0) @db.Decimal(12, 3)
+  rate           Decimal   @default(0) @db.Decimal(12, 2)
+  partNo         String?
+  wrntyExpDate   DateTime?
+  remarks        String?
+
+  @@index([tenantId])
+}
+
+model StationeryStock {
+  id       String   @id @default(cuid())
+  tenantId String
+  firmId   String
+  type     String // INWARD | ISSUE
+  date     DateTime
+  bookNo   String?
+  fromNo   Int?
+  toNo     Int?
+  issuedTo String?
+  remarks  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+// ============ TRACKING ============
+
+model TrackingEvent {
+  id       String   @id @default(cuid())
+  tenantId String
+  lrId     String?
+  lr       Lr?      @relation(fields: [lrId], references: [id])
+  lrNo     String?
+  grNo     String?
+  date     DateTime
+  location String?
+  status   String? // e.g. IN_TRANSIT | DELIVERED
+  remarks  String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, lrId])
+}
+
+// ============ SAVED FILTERS ============
+
+model SavedFilter {
+  id       String @id @default(cuid())
+  tenantId String
+  userId   String
+  screen   String
+  name     String
+  params   Json
+
+  @@unique([userId, screen, name])
+  @@index([tenantId])
+}

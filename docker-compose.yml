@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: transport-tms-db
+    environment:
+      POSTGRES_USER: tms
+      POSTGRES_PASSWORD: tms_dev_password
+      POSTGRES_DB: transport_tms
+    ports:
+      - "5433:5432"
+    volumes:
+      - tms_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tms -d transport_tms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  tms_pgdata:

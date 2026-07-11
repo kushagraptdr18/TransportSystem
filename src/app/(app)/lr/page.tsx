@@ -1,0 +1,21 @@
+import { LrForm } from "@/components/lr/lr-form";
+import { loadLrFormData } from "./form-data";
+
+export const dynamic = "force-dynamic";
+
+export default async function LrEntryPage({
+  searchParams,
+}: {
+  searchParams: { id?: string };
+}) {
+  const data = await loadLrFormData(searchParams.id);
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-xl font-semibold">
+        LR Entry{data.mode === "edit" ? ` — ${data.defaults.lrNo}` : ""}
+      </h1>
+      <LrForm key={data.lrId ?? "new"} {...data} isDummy={false} />
+    </div>
+  );
+}

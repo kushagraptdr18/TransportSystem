@@ -1,0 +1,147 @@
+import { redirect } from "next/navigation";
+import { Building2, CalendarRange, ChevronRight, LogOut, MapPin, Truck } from "lucide-react";
+import { withTenant } from "@/lib/db";
+import { getSession } from "@/lib/session";
+import { formatDate } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { selectFirm } from "./actions";
+
+export const dynamic = "force-dynamic";
+
+export default async function SelectFirmPage() {
+  const session = getSession();
+  if (!session) redirect("/login");
+
+  const firms = await withTenant(session.tenantId, async (tx) => {
+    const assignments = await tx.userFirm.findMany({ where: { userId: session.userId } });
+    const firmIds = assignments.map((a) => a.firmId);
+    return tx.firm.findMany({
+      where: {
+        tenantId: session.tenantId,
+        isActive: true,
+        ...(firmIds.length > 0 ? { id: { in: firmIds } } : {}),
+      },
+      include: {
+        financialYears: { where: { isActive: true }, orderBy: { startDate: "desc" } },
+      },
+      orderBy: { name: "asc" },
+    });
+  });
+
+  const initials = session.name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+
+  return (
+    <div className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background p-4">
+      {/* decorative top band */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-primary/15 via-primary/5 to-transparent" />
+      <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
+      <div className="pointer-events-none absolute -left-24 top-40 h-56 w-56 rounded-full bg-primary/10 blur-3xl" />
+
+      <div className="relative w-full max-w-2xl space-y-6">
+        {/* brand + user strip */}
+        <div className="flex flex-col items-center gap-4 text-center">
+          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary shadow-card">
+            <Truck className="h-7 w-7 text-primary-foreground" />
+          </span>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              Welcome back, {session.name.split(/\s+/)[0]}
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Choose a firm and financial year to start working
+            </p>
+          </div>
+        </div>
+
+        {firms.length === 0 && (
+          <Card className="shadow-card">
+            <CardContent className="p-8 text-center text-sm text-muted-foreground">
+              No firms are available for your account. Contact your administrator.
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="space-y-4">
+          {firms.map((firm) => (
+            <Card
+              key={firm.id}
+              className="overflow-hidden border-border/70 shadow-card transition-shadow hover:shadow-lg"
+            >
+              <CardContent className="p-0">
+                <div className="flex items-center gap-4 border-b bg-muted/40 px-5 py-4">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/15">
+                    <Building2 className="h-5 w-5 text-primary" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px] font-semibold">{firm.name}</p>
+                    {firm.address1 && (
+                      <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
+                        <MapPin className="h-3 w-3 shrink-0" />
+                        {firm.address1}
+                      </p>
+                    )}
+                  </div>
+                  {firm.gstin && (
+                    <Badge variant="outline" className="hidden shrink-0 font-mono text-[10px] sm:inline-flex">
+                      {firm.gstin}
+                    </Badge>
+                  )}
+                </div>
+
+                <div className="px-5 py-4">
+                  {firm.financialYears.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No financial years configured.</p>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {firm.financialYears.map((fy) => (
+                        <form key={fy.id} action={selectFirm}>
+                          <input type="hidden" name="firmId" value={firm.id} />
+                          <input type="hidden" name="fyId" value={fy.id} />
+                          <button
+                            type="submit"
+                            className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:border-primary hover:bg-primary/5"
+                          >
+                            <CalendarRange className="h-4 w-4 shrink-0 text-primary" />
+                            <span className="flex-1">
+                              <span className="block text-sm font-semibold">FY {fy.label}</span>
+                              <span className="block text-xs text-muted-foreground">
+                                {formatDate(fy.startDate)} — {formatDate(fy.endDate)}
+                              </span>
+                            </span>
+                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+                          </button>
+                        </form>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold">
+            {initials}
+          </span>
+          <span className="text-sm text-muted-foreground">
+            {session.name} · {session.role}
+          </span>
+          <form action="/logout" method="POST">
+            <Button type="submit" variant="ghost" size="sm" className="text-muted-foreground">
+              <LogOut className="h-3.5 w-3.5" />
+              Sign out
+            </Button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}
