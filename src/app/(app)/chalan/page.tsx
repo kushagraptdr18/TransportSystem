@@ -1,6 +1,6 @@
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
-import { peekDocNumber } from "@/lib/sequences";
+import { randomUniqueDocNumber } from "@/lib/sequences";
 import { toNum } from "@/lib/utils";
 import { ChalanForm, type ChalanRecord, type BrokerOption } from "./chalan-form";
 
@@ -16,11 +16,14 @@ export default async function ChalanPage({
   const [nextNo, brokers, vehicles, banks, record] = await withTenant(
     session.tenantId,
     async (tx) => {
-      const nextNo = await peekDocNumber(tx, {
-        firmId: session.firmId,
-        fyId: session.fyId,
-        docType: "CHALAN",
-      });
+      const nextNo = await randomUniqueDocNumber(async (n) =>
+        Boolean(
+          await tx.chalan.findFirst({
+            where: { firmId: session.firmId, fyId: session.fyId, chalanNo: n },
+            select: { id: true },
+          })
+        )
+      );
       const brokers = await tx.party.findMany({
         where: { ledgerGroup: "OWNER_BROKER", isActive: true },
         orderBy: { name: "asc" },

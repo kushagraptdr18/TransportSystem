@@ -69,6 +69,27 @@ export async function syncSequenceTo(
   });
 }
 
+/**
+ * Random unique document number: N random digits (never starting with 0),
+ * re-rolled until `exists` reports it free. Uniqueness is ultimately
+ * guaranteed by the DB constraint on the document table; this only avoids
+ * showing a colliding prefill. Falls back to a timestamp suffix if an
+ * improbable streak of collisions occurs.
+ */
+export async function randomUniqueDocNumber(
+  exists: (candidate: string) => Promise<boolean>,
+  opts?: { digits?: number }
+): Promise<string> {
+  const digits = opts?.digits ?? 6;
+  const min = Math.pow(10, digits - 1);
+  const span = Math.pow(10, digits) - min;
+  for (let i = 0; i < 30; i++) {
+    const candidate = String(min + Math.floor(Math.random() * span));
+    if (!(await exists(candidate))) return candidate;
+  }
+  return String(Date.now()).slice(-Math.max(digits, 9));
+}
+
 /** Peek at the next number without consuming it (for form prefill). */
 export async function peekDocNumber(
   tx: Tx,

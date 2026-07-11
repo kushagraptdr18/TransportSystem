@@ -7,7 +7,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
-import { nextDocNumber, syncSequenceTo } from "@/lib/sequences";
+import { randomUniqueDocNumber, syncSequenceTo } from "@/lib/sequences";
 import { stateCodeFromGstin } from "@/lib/calc/gst";
 import { computeLrTotals, itemAmount } from "@/components/lr/lr-calc";
 
@@ -115,12 +115,14 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
 
       let lrNo = data.lrNo;
       if (!data.id && !lrNo) {
-        lrNo = await nextDocNumber(tx, {
-          tenantId: session.tenantId,
-          firmId: session.firmId,
-          fyId: session.fyId,
-          docType: "LR",
-        });
+        lrNo = await randomUniqueDocNumber(async (n) =>
+          Boolean(
+            await tx.lr.findFirst({
+              where: { firmId: session.firmId, fyId: session.fyId, lrNo: n },
+              select: { id: true },
+            })
+          )
+        );
       }
 
       const lrData = {

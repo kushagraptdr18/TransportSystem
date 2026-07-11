@@ -110,6 +110,7 @@ const KIND_TITLES: Record<InvoiceKind, string> = {
 interface InvoiceFormProps {
   kind: InvoiceKind;
   initial: InvoiceEditPayload | null;
+  suggestedInvoiceNo?: string;
   partyOptions: MasterOption[];
   bankOptions: MasterOption[];
   defaults: BillingDefaults;
@@ -118,6 +119,7 @@ interface InvoiceFormProps {
 export function InvoiceForm({
   kind,
   initial,
+  suggestedInvoiceNo,
   partyOptions: partyOptions0,
   bankOptions,
   defaults,
@@ -131,7 +133,7 @@ export function InvoiceForm({
   const [partyOptions, setPartyOptions] = React.useState(partyOptions0);
 
   // header
-  const [invoiceNo, setInvoiceNo] = React.useState(initial?.invoiceNo ?? "");
+  const [invoiceNo, setInvoiceNo] = React.useState(initial?.invoiceNo ?? suggestedInvoiceNo ?? "");
   const [invoiceDateText, setInvoiceDateText] = React.useState(
     initial ? isoToText(initial.invoiceDate) : formatDate(new Date())
   );
@@ -412,7 +414,7 @@ export function InvoiceForm({
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className="space-y-1">
-            <Label className="text-xs">Invoice No * (manual)</Label>
+            <Label className="text-xs">Invoice No * (auto-generated, editable)</Label>
             <Input className="h-8" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
           </div>
           <div className="space-y-1">

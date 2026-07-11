@@ -1,6 +1,6 @@
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
-import { peekDocNumber } from "@/lib/sequences";
+import { randomUniqueDocNumber } from "@/lib/sequences";
 import { formatDate } from "@/lib/utils";
 import type { MasterOption } from "@/components/data/master-combobox";
 import type { LrFormValues, PartyDetail } from "@/components/lr/lr-form";
@@ -49,7 +49,14 @@ export async function loadLrFormData(editId?: string): Promise<LrFormData> {
           where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
           orderBy: { name: "asc" },
         }),
-        peekDocNumber(tx, { firmId: session.firmId, fyId: session.fyId, docType: "LR" }),
+        randomUniqueDocNumber(async (n) =>
+          Boolean(
+            await tx.lr.findFirst({
+              where: { firmId: session.firmId, fyId: session.fyId, lrNo: n },
+              select: { id: true },
+            })
+          )
+        ),
         editId
           ? tx.lr.findFirst({
               where: { id: editId, deletedAt: null },

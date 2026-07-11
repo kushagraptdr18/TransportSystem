@@ -5,6 +5,7 @@ import { stateCodeFromGstin } from "@/lib/calc/gst";
 import { toNum } from "@/lib/utils";
 import { InvoiceForm } from "@/components/billing/invoice-form";
 import { getInvoiceForEdit, type BillingDefaults } from "./actions";
+import { randomUniqueDocNumber } from "@/lib/sequences";
 
 const TITLES: Record<InvoiceKind, string> = {
   PART_TRUCK: "Part Truck Billing",
@@ -23,7 +24,15 @@ export async function InvoiceEntryPage({
 }) {
   const session = requireSession();
 
-  const { firm, parties, banks } = await withTenant(session.tenantId, async (tx) => {
+  const { firm, parties, banks, suggestedNo } = await withTenant(session.tenantId, async (tx) => {
+    const suggestedNo = await randomUniqueDocNumber(async (n) =>
+      Boolean(
+        await tx.invoice.findFirst({
+          where: { firmId: session.firmId, fyId: session.fyId, kind, invoiceNo: n },
+          select: { id: true },
+        })
+      )
+    );
     const [firm, partyRows, bankRows] = await Promise.all([
       tx.firm.findUnique({ where: { id: session.firmId } }),
       tx.party.findMany({
@@ -35,7 +44,7 @@ export async function InvoiceEntryPage({
         orderBy: { name: "asc" },
       }),
     ]);
-    return { firm, parties: partyRows, banks: bankRows };
+    return { firm, parties: partyRows, banks: bankRows, suggestedNo };
   });
 
   const defaults: BillingDefaults = {
@@ -56,6 +65,7 @@ export async function InvoiceEntryPage({
       </h1>
       <InvoiceForm
         kind={kind}
+        suggestedInvoiceNo={suggestedNo}
         initial={initial && initial.kind === kind ? initial : null}
         partyOptions={parties.map((p) => ({
           value: p.id,
