@@ -41,7 +41,7 @@ export async function getVehicleOptions(): Promise<Option[]> {
   return vehicles.map((v) => ({
     value: v.id,
     label: v.number,
-    meta: v.isOwn ? "Own vehicle" : v.owner?.name,
+    meta: v.isOwn ? `Owned${v.ownerNames ? " — " + v.ownerNames : ""}` : `Broker — ${v.owner?.name ?? "?"}`,
   }));
 }
 

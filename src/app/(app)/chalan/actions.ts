@@ -52,6 +52,7 @@ export async function getPendingLrsForVehicle(
     actualWt: lr.items.reduce((s, i) => s + toNum(i.actualWt), 0),
     chargeWt: lr.items.reduce((s, i) => s + toNum(i.chargeWt), 0),
     freight: toNum(lr.freight),
+    rate: lr.items.length ? Math.max(...lr.items.map((i) => toNum(i.rate))) : 0,
   }));
 }
 
@@ -87,7 +88,9 @@ const chalanSchema = z.object({
   payableAt: z.string().optional().nullable(),
   remarks: z.string().optional().nullable(),
   lrIds: z.array(z.string()),
-  freight: z.number().default(0), // vehicle freight (manual)
+  freight: z.number().default(0), // vehicle freight (manual fallback)
+  rate: z.number().default(0),
+  rateBasis: z.enum(["QTY", "ACTUAL_WT", "CHARGE_WT", "FIXED"]).default("CHARGE_WT"),
   detention: z.number().default(0),
   odcAmt: z.number().default(0),
   fineSlip: z.number().default(0),
@@ -119,11 +122,11 @@ async function recomputeAndStore(
   const bookingFreight = lrs.reduce((s, l) => s + toNum(l.freight), 0);
 
   const totals = computeChalan({
-    rate: 0,
-    rateBasis: "FIXED",
+    rate: data.rate,
+    rateBasis: data.rateBasis,
     actualWt,
     chargeWt,
-    manualFreight: data.freight,
+    manualFreight: data.rate > 0 ? 0 : data.freight,
     detention: data.detention,
     odcAmt: data.odcAmt,
     fineSlip: data.fineSlip,
@@ -166,6 +169,8 @@ async function recomputeAndStore(
       actualWt,
       chargeWt,
       freight: totals.freight,
+      rate: data.rate,
+      rateBasis: data.rateBasis,
       bookingFreight,
       detention: data.detention,
       odcAmt: data.odcAmt,
@@ -350,6 +355,7 @@ export async function deleteChalan(
         include: { lrs: true },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
+      await tx.chalanLr.deleteMany({ where: { chalanId } });
       await tx.chalan.update({ where: { id: chalanId }, data: { deletedAt: new Date() } });
       await tx.lr.updateMany({
         where: { id: { in: chalan.lrs.map((l) => l.lrId) }, status: "ON_CHALAN" },

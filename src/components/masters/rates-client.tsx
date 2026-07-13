@@ -3,7 +3,11 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import type { MasterOption } from "@/components/data/master-combobox";
 import { SimpleMaster, type FieldDef } from "@/components/masters/simple-master";
-import { saveRate, deleteRate } from "@/app/(app)/masters/rates/actions";
+import * as React from "react";
+import { Upload } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast";
+import { saveRate, deleteRate, importRatesFromExcel } from "@/app/(app)/masters/rates/actions";
 import { formatMoney } from "@/lib/utils";
 
 export interface RateRow {
@@ -95,6 +99,29 @@ export function RatesClient({
   cityOptions: MasterOption[];
   canDelete: boolean;
 }) {
+  const { toast } = useToast();
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = React.useState(false);
+
+  const handleImport = async (file: File) => {
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await importRatesFromExcel(fd);
+      toast({
+        title: `Import finished: ${res.created} created, ${res.updated} updated`,
+        description: res.errors.length
+          ? `${res.errors.length} row(s) skipped — ${res.errors.slice(0, 3).join(" ")}`
+          : undefined,
+        variant: res.errors.length ? "destructive" : undefined,
+      });
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
   const numeric = [
     "rate",
     "hamali",
@@ -104,6 +131,30 @@ export function RatesClient({
     "crossing",
   ] as const;
   return (
+    <div>
+      <div className="flex justify-end px-4 pt-4">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".xlsx"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void handleImport(f);
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={importing}
+          onClick={() => fileRef.current?.click()}
+          title="Excel with headers: Party, Product, Source, Destination, Rate, Basis, Hamali, Pre Bhada, D Charge, Stationery, Crossing"
+        >
+          <Upload className="h-4 w-4" />
+          {importing ? "Importing..." : "Import from Excel"}
+        </Button>
+      </div>
     <SimpleMaster
       title="Rate Setup"
       newLabel="New Rate"
@@ -166,5 +217,6 @@ export function RatesClient({
       }
       dialogClassName="max-h-[90vh] overflow-y-auto sm:max-w-2xl"
     />
+    </div>
   );
 }

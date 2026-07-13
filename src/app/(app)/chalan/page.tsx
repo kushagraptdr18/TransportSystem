@@ -65,6 +65,8 @@ export default async function ChalanPage({
             remarks: record.remarks ?? "",
             isFinal: record.isFinal,
             freight: toNum(record.freight),
+            rate: toNum(record.rate),
+            rateBasis: record.rateBasis,
             detention: toNum(record.detention),
             odcAmt: toNum(record.odcAmt),
             fineSlip: toNum(record.fineSlip),
@@ -92,6 +94,7 @@ export default async function ChalanPage({
               actualWt: lr.items.reduce((s, i) => s + toNum(i.actualWt), 0),
               chargeWt: lr.items.reduce((s, i) => s + toNum(i.chargeWt), 0),
               freight: toNum(lr.freight),
+              rate: lr.items.length ? Math.max(...lr.items.map((i) => toNum(i.rate))) : 0,
             })),
             advances: record.advances.map((a) => ({
               type: a.type,
@@ -125,7 +128,7 @@ export default async function ChalanPage({
       vehicles={vehicles.map((v) => ({
         value: v.id,
         label: v.number,
-        meta: v.isOwn ? "Own vehicle" : v.owner?.name ?? undefined,
+        meta: v.isOwn ? `Owned${v.ownerNames ? " — " + v.ownerNames : ""}` : `Broker — ${v.owner?.name ?? "?"}`,
       }))}
       banks={banks.map((b) => ({ value: b.id, label: b.name }))}
       record={record}

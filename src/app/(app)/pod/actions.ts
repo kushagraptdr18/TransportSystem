@@ -51,6 +51,7 @@ export async function getVehiclePendingPodLrs(vehicleId: string): Promise<PodPen
         vehicleId,
         deletedAt: null,
         lrType: { not: "CANCELLED" },
+        status: "ON_CHALAN", // workflow: POD only after chalan is created
         pods: { none: {} },
       },
       include: { items: true },
@@ -109,6 +110,9 @@ export async function findLrForPod(
   );
   if (!lr) return { ok: false, error: `LR ${lrNo} not found.` };
   if (lr.lrType === "CANCELLED") return { ok: false, error: `LR ${lrNo} is cancelled.` };
+  if (lr.status === "PENDING") {
+    return { ok: false, error: `LR ${lrNo} has no chalan yet — create the chalan first.` };
+  }
   if (lr.pods.length > 0) {
     return {
       ok: false,

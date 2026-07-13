@@ -70,7 +70,7 @@ export default async function BrokerSlipPage({
         vehicles: vehicleRows.map((v) => ({
           value: v.id,
           label: v.number,
-          meta: v.isOwn ? "Own vehicle" : v.owner?.name,
+          meta: v.isOwn ? `Owned${v.ownerNames ? " — " + v.ownerNames : ""}` : `Broker — ${v.owner?.name ?? "?"}`,
           isOwn: v.isOwn,
         })),
         products: productRows.map((p) => ({ value: p.id, label: p.name, meta: p.group.name })),

@@ -104,7 +104,7 @@ function pendingWhere(session: { firmId: string; fyId: string }, kind: InvoiceKi
     fyId: session.fyId,
     deletedAt: null,
     lrType: kind === "PART_TRUCK" ? ("TBB" as const) : { not: "CANCELLED" as const },
-    status: { not: "BILLED" as const },
+    status: "DELIVERED" as const, // workflow: bill only after POD confirms delivery
     invoiceLrs: { none: {} },
     OR: [{ billToId: partyId }, { billToId: null, consignorId: partyId }],
   };
@@ -167,6 +167,13 @@ export async function resolveBulkLrs(
       }
       if (lr.lrType === "CANCELLED") {
         errors.push({ lrNo, reason: `LR ${lrNo} is cancelled.` });
+        continue;
+      }
+      if (lr.status !== "DELIVERED") {
+        errors.push({
+          lrNo,
+          reason: `LR ${lrNo} is not delivered yet (status ${lr.status}). Complete chalan + POD first.`,
+        });
         continue;
       }
       if (kind === "PART_TRUCK" && lr.lrType !== "TBB") {

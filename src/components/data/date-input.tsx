@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { CalendarDays } from "lucide-react";
 import { cn, formatDate, parseDdMmYyyy } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 
@@ -11,43 +12,120 @@ interface DateInputProps
   onChange: (text: string, date: Date | null) => void;
 }
 
+/** Forgiving parse: dd/mm/yyyy, dd-mm-yyyy, dd.mm.yyyy, ddmmyyyy, ddmmyy, dd/mm/yy. */
+function parseLoose(text: string): Date | null {
+  const t = text.trim();
+  if (!t) return null;
+  const strict = parseDdMmYyyy(t);
+  if (strict) return strict;
+  const digits = t.replace(/\D/g, "");
+  let dd: number, mm: number, yyyy: number;
+  if (digits.length === 8) {
+    dd = +digits.slice(0, 2);
+    mm = +digits.slice(2, 4);
+    yyyy = +digits.slice(4);
+  } else if (digits.length === 6) {
+    dd = +digits.slice(0, 2);
+    mm = +digits.slice(2, 4);
+    yyyy = 2000 + +digits.slice(4);
+  } else if (/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})$/.test(t)) {
+    const m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})$/)!;
+    dd = +m[1];
+    mm = +m[2];
+    yyyy = 2000 + +m[3];
+  } else {
+    return null;
+  }
+  const d = new Date(yyyy, mm - 1, dd);
+  return d.getFullYear() === yyyy && d.getMonth() === mm - 1 && d.getDate() === dd ? d : null;
+}
+
+function toIsoDay(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 /**
- * Text input for dd/mm/yyyy dates. Validates on blur; shows a red border when
- * the text is non-empty and not a valid dd/mm/yyyy date.
+ * Date field used across the app: dd/mm/yyyy text entry with auto-formatting
+ * on blur (accepts 12/07/2026, 12-7-26, 12072026, ...) plus a native calendar
+ * picker behind the calendar icon.
  */
 export function DateInput({ value, onChange, className, onBlur, ...props }: DateInputProps) {
   const [invalid, setInvalid] = React.useState(false);
+  const pickerRef = React.useRef<HTMLInputElement>(null);
+
+  const openPicker = () => {
+    const el = pickerRef.current;
+    if (!el) return;
+    if (typeof el.showPicker === "function") el.showPicker();
+    else el.click();
+  };
+
+  const current = parseLoose(value);
 
   return (
-    <Input
-      inputMode="numeric"
-      placeholder="dd/mm/yyyy"
-      value={value}
-      onChange={(e) => {
-        // light mask: keep digits and separators only
-        const text = e.target.value.replace(/[^\d/\-]/g, "").slice(0, 10);
-        setInvalid(false);
-        onChange(text, parseDdMmYyyy(text));
-      }}
-      onBlur={(e) => {
-        const text = e.target.value.trim();
-        if (!text) {
+    <div className="relative">
+      <Input
+        inputMode="numeric"
+        placeholder="dd/mm/yyyy"
+        value={value}
+        onChange={(e) => {
+          const text = e.target.value.replace(/[^\d/\-.]/g, "").slice(0, 10);
           setInvalid(false);
-        } else {
-          const d = parseDdMmYyyy(text);
-          if (d) {
+          onChange(text, parseLoose(text));
+        }}
+        onBlur={(e) => {
+          const text = e.target.value.trim();
+          if (!text) {
             setInvalid(false);
-            const normalized = formatDate(d);
-            if (normalized !== text) onChange(normalized, d);
           } else {
-            setInvalid(true);
+            const d = parseLoose(text);
+            if (d) {
+              setInvalid(false);
+              const normalized = formatDate(d);
+              if (normalized !== text) onChange(normalized, d);
+            } else {
+              setInvalid(true);
+            }
           }
-        }
-        onBlur?.(e);
-      }}
-      aria-invalid={invalid || undefined}
-      className={cn(invalid && "border-destructive focus-visible:ring-destructive", className)}
-      {...props}
-    />
+          onBlur?.(e);
+        }}
+        aria-invalid={invalid || undefined}
+        className={cn(
+          "pr-8",
+          invalid && "border-destructive focus-visible:ring-destructive",
+          className
+        )}
+        {...props}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label="Open calendar"
+        onClick={openPicker}
+        className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground hover:text-primary"
+        disabled={props.disabled}
+      >
+        <CalendarDays className="h-4 w-4" />
+      </button>
+      {/* invisible native date input drives the calendar popup */}
+      <input
+        ref={pickerRef}
+        type="date"
+        tabIndex={-1}
+        aria-hidden
+        value={current ? toIsoDay(current) : ""}
+        onChange={(e) => {
+          const v = e.target.value; // yyyy-mm-dd
+          if (!v) return;
+          const [y, m, d] = v.split("-").map(Number);
+          const date = new Date(y, m - 1, d);
+          setInvalid(false);
+          onChange(formatDate(date), date);
+        }}
+        className="pointer-events-none absolute bottom-0 right-0 h-0 w-0 opacity-0"
+      />
+    </div>
   );
 }

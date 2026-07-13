@@ -62,6 +62,8 @@ export interface ChalanRecord {
   remarks: string;
   isFinal: boolean;
   freight: number;
+  rate: number;
+  rateBasis: "QTY" | "ACTUAL_WT" | "CHARGE_WT" | "FIXED";
   detention: number;
   odcAmt: number;
   fineSlip: number;
@@ -132,6 +134,10 @@ export function ChalanForm({
 
   // ------- amounts -------
   const [freight, setFreight] = React.useState(record?.freight ?? 0);
+  const [rate, setRate] = React.useState(record?.rate ?? 0);
+  const [rateBasis, setRateBasis] = React.useState<"QTY" | "ACTUAL_WT" | "CHARGE_WT" | "FIXED">(
+    record?.rateBasis ?? "CHARGE_WT"
+  );
   const [detention, setDetention] = React.useState(record?.detention ?? 0);
   const [odcAmt, setOdcAmt] = React.useState(record?.odcAmt ?? 0);
   const [fineSlip, setFineSlip] = React.useState(record?.fineSlip ?? 0);
@@ -193,11 +199,12 @@ export function ChalanForm({
   const chargeWt = selected.reduce((s, r) => s + r.chargeWt, 0);
 
   const totals = computeChalan({
-    rate: 0,
-    rateBasis: "FIXED",
+    rate,
+    rateBasis,
+    qty: selected.reduce((s, r) => s + r.qty, 0),
     actualWt,
     chargeWt,
-    manualFreight: freight,
+    manualFreight: rate > 0 ? 0 : freight,
     detention,
     odcAmt,
     fineSlip,
@@ -241,6 +248,8 @@ export function ChalanForm({
     remarks,
     lrIds: selected.map((r) => r.id),
     freight,
+    rate,
+    rateBasis,
     detention,
     odcAmt,
     fineSlip,
@@ -404,7 +413,12 @@ export function ChalanForm({
           {vehicleId ? (
             <LrPicker
               rows={pending.filter((p) => !selected.some((s) => s.id === p.id))}
-              onAdd={(rows) => setSelected((prev) => [...prev, ...rows])}
+              onAdd={(rows) => {
+                setSelected((prev) => [...prev, ...rows]);
+                // adopt the LR's rate automatically if none typed yet
+                const withRate = rows.find((r) => r.rate > 0);
+                if (rate === 0 && withRate) setRate(withRate.rate);
+              }}
               title="Pending LRs for vehicle"
             />
           ) : (
@@ -425,8 +439,27 @@ export function ChalanForm({
           <CardTitle className="text-sm">Amounts</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 p-4 pt-0 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Vehicle Freight">
-            <NumInput value={freight} onChange={setFreight} />
+          <Field label="Rate">
+            <NumInput value={rate} onChange={setRate} />
+          </Field>
+          <Field label="Rate Basis">
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={rateBasis}
+              onChange={(e) => setRateBasis(e.target.value as typeof rateBasis)}
+            >
+              <option value="CHARGE_WT">Per Charge Wt</option>
+              <option value="ACTUAL_WT">Per Actual Wt</option>
+              <option value="QTY">Per Qty</option>
+              <option value="FIXED">Fixed Amount</option>
+            </select>
+          </Field>
+          <Field label={rate > 0 ? "Vehicle Freight (auto = rate × basis)" : "Vehicle Freight (manual)"}>
+            <NumInput
+              value={rate > 0 ? totals.freight : freight}
+              onChange={setFreight}
+              readOnly={rate > 0}
+            />
           </Field>
           <Field label="Booking Freight (reference — not printed)">
             <NumInput value={bookingFreight} readOnly />

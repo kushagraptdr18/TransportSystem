@@ -90,6 +90,19 @@ export async function randomUniqueDocNumber(
   return String(Date.now()).slice(-Math.max(digits, 9));
 }
 
+
+/** Max numeric LR number in this firm+FY plus one (LR numbering is sequential). */
+export async function nextLrNumber(
+  tx: Tx,
+  args: { firmId: string; fyId: string }
+): Promise<string> {
+  const rows = await tx.$queryRaw<{ max: bigint | null }[]>`
+    SELECT MAX(NULLIF(regexp_replace("lrNo", '\\D', '', 'g'), '')::bigint) AS max
+    FROM "Lr" WHERE "firmId" = ${args.firmId} AND "fyId" = ${args.fyId}`;
+  const max = rows[0]?.max ? Number(rows[0].max) : 0;
+  return String(max + 1);
+}
+
 /** Peek at the next number without consuming it (for form prefill). */
 export async function peekDocNumber(
   tx: Tx,

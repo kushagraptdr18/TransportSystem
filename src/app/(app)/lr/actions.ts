@@ -7,7 +7,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
-import { randomUniqueDocNumber, syncSequenceTo } from "@/lib/sequences";
+import { nextLrNumber, syncSequenceTo } from "@/lib/sequences";
 import { stateCodeFromGstin } from "@/lib/calc/gst";
 import { computeLrTotals, itemAmount } from "@/components/lr/lr-calc";
 
@@ -115,14 +115,7 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
 
       let lrNo = data.lrNo;
       if (!data.id && !lrNo) {
-        lrNo = await randomUniqueDocNumber(async (n) =>
-          Boolean(
-            await tx.lr.findFirst({
-              where: { firmId: session.firmId, fyId: session.fyId, lrNo: n },
-              select: { id: true },
-            })
-          )
-        );
+        lrNo = await nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId });
       }
 
       const lrData = {
@@ -256,6 +249,10 @@ export async function deleteLr(id: string): Promise<{ ok: true } | { ok: false; 
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.lr.findUniqueOrThrow({ where: { id } });
+      // cascade: detach from every dependent module so the LR vanishes there too
+      await tx.chalanLr.deleteMany({ where: { lrId: id } });
+      await tx.invoiceLr.deleteMany({ where: { lrId: id } });
+      await tx.pod.deleteMany({ where: { lrId: id } });
       await tx.lr.update({ where: { id }, data: { deletedAt: new Date() } });
       await audit(tx, session, { entity: "Lr", entityId: id, action: "DELETE", before });
     });

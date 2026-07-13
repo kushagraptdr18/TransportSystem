@@ -1,6 +1,6 @@
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
-import { randomUniqueDocNumber } from "@/lib/sequences";
+import { nextLrNumber } from "@/lib/sequences";
 import { formatDate } from "@/lib/utils";
 import type { MasterOption } from "@/components/data/master-combobox";
 import type { LrFormValues, PartyDetail } from "@/components/lr/lr-form";
@@ -49,14 +49,7 @@ export async function loadLrFormData(editId?: string): Promise<LrFormData> {
           where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
           orderBy: { name: "asc" },
         }),
-        randomUniqueDocNumber(async (n) =>
-          Boolean(
-            await tx.lr.findFirst({
-              where: { firmId: session.firmId, fyId: session.fyId, lrNo: n },
-              select: { id: true },
-            })
-          )
-        ),
+        nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId }),
         editId
           ? tx.lr.findFirst({
               where: { id: editId, deletedAt: null },
@@ -195,7 +188,7 @@ export async function loadLrFormData(editId?: string): Promise<LrFormData> {
       vehicleOptions: vehicles.map((veh) => ({
         value: veh.id,
         label: veh.number,
-        meta: veh.isOwn ? "Own vehicle" : veh.owner?.name,
+        meta: veh.isOwn ? `Owned${veh.ownerNames ? " — " + veh.ownerNames : ""}` : `Broker — ${veh.owner?.name ?? "?"}`,
       })),
       productOptions: products.map((p) => ({ value: p.id, label: p.name, meta: p.group.name })),
       bankOptions: banks.map((p) => ({ value: p.id, label: p.name })),
