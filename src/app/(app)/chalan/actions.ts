@@ -53,6 +53,12 @@ export async function getPendingLrsForVehicle(
     chargeWt: lr.items.reduce((s, i) => s + toNum(i.chargeWt), 0),
     freight: toNum(lr.freight),
     rate: lr.items.length ? Math.max(...lr.items.map((i) => toNum(i.rate))) : 0,
+    rateBasis: (lr.items.find((i) => toNum(i.rate) > 0)?.rateBasis ?? "CHARGE_WT") as
+      | "QTY"
+      | "ACTUAL_WT"
+      | "CHARGE_WT"
+      | "FIXED",
+    remarks: lr.remarks ?? "",
   }));
 }
 

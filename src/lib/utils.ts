@@ -26,6 +26,8 @@ export function formatMoney(n: number | string | null | undefined): string {
 }
 
 export function toNum(v: unknown): number {
-  const n = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : 0;
+  if (v === null || v === undefined || v === "") return 0;
+  // handles strings, numbers AND Prisma Decimal objects (via toString)
+  const n = typeof v === "number" ? v : parseFloat(String(v));
   return isNaN(n) ? 0 : n;
 }

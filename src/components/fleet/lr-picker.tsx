@@ -24,6 +24,8 @@ export interface PendingLrRow {
   actualWt: number;
   chargeWt: number;
   rate: number;
+  rateBasis: "QTY" | "ACTUAL_WT" | "CHARGE_WT" | "FIXED";
+  remarks: string;
   freight: number;
 }
 

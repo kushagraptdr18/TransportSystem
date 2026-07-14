@@ -415,9 +415,14 @@ export function ChalanForm({
               rows={pending.filter((p) => !selected.some((s) => s.id === p.id))}
               onAdd={(rows) => {
                 setSelected((prev) => [...prev, ...rows]);
-                // adopt the LR's rate automatically if none typed yet
+                // adopt rate, basis and remarks from the LR when not typed yet
                 const withRate = rows.find((r) => r.rate > 0);
-                if (rate === 0 && withRate) setRate(withRate.rate);
+                if (rate === 0 && withRate) {
+                  setRate(withRate.rate);
+                  setRateBasis(withRate.rateBasis);
+                }
+                const withRemarks = rows.find((r) => r.remarks);
+                if (!remarks && withRemarks) setRemarks(withRemarks.remarks);
               }}
               title="Pending LRs for vehicle"
             />

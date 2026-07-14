@@ -252,6 +252,20 @@ export function LrForm(props: LrFormProps) {
     [form, setValue]
   );
 
+  // Re-fetch rates for every item whenever party or route changes, so the
+  // Rate Setup applies regardless of the order fields are filled in.
+  const consignorId = form.watch("consignorId");
+  const sourceCityId = form.watch("sourceCityId");
+  const destCityId = form.watch("destCityId");
+  React.useEffect(() => {
+    if (!consignorId || !sourceCityId || !destCityId) return;
+    const rows = form.getValues().items ?? [];
+    rows.forEach((row, index) => {
+      if (toNum(row.rate) === 0) void tryPrefillRate(index, row.productId || null);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [consignorId, sourceCityId, destCityId]);
+
   const onSubmit = handleSubmit(async (values) => {
     const payload = {
       id: props.lrId ?? null,
