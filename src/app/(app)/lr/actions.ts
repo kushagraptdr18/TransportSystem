@@ -7,6 +7,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
+import { toNum } from "@/lib/utils";
 import { nextLrNumber, syncSequenceTo } from "@/lib/sequences";
 import { stateCodeFromGstin } from "@/lib/calc/gst";
 import { computeLrTotals, itemAmount } from "@/components/lr/lr-calc";
@@ -261,4 +262,113 @@ export async function deleteLr(id: string): Promise<{ ok: true } | { ok: false; 
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Failed to delete LR" };
   }
+}
+
+export interface LrLifecycle {
+  booking: {
+    lrNo: string;
+    lrDate: string;
+    status: string;
+    lrType: string;
+    route: string;
+    consignor: string;
+    consignee: string;
+    vehicle: string;
+    freight: number;
+    grandTotal: number;
+    items: string;
+  };
+  chalans: {
+    chalanNo: string;
+    chalanDate: string;
+    broker: string;
+    vehicle: string;
+    driver: string;
+    freight: number;
+    unloadDate: string | null;
+  }[];
+  pods: {
+    docNo: string;
+    docDate: string;
+    unloadDate: string | null;
+    ackNo: string;
+    recWt: number | null;
+    shortageWt: number | null;
+    status: string;
+  }[];
+  invoices: {
+    invoiceNo: string;
+    invoiceDate: string;
+    kind: string;
+    party: string;
+    netTotal: number;
+    balance: number;
+  }[];
+}
+
+/** Complete lifecycle of one LR: booking -> chalan -> POD -> billing. */
+export async function getLrLifecycle(id: string): Promise<LrLifecycle | null> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const lr = await tx.lr.findFirst({
+      where: { id, firmId: session.firmId, deletedAt: null },
+      include: {
+        items: true,
+        chalanLrs: { include: { chalan: true } },
+        pods: true,
+        invoiceLrs: { include: { invoice: true } },
+      },
+    });
+    if (!lr) return null;
+    const [cities, parties, vehicles] = await Promise.all([
+      tx.city.findMany(),
+      tx.party.findMany(),
+      tx.vehicle.findMany(),
+    ]);
+    const cityName = (cid: string | null) => cities.find((c) => c.id === cid)?.name ?? "";
+    const partyName = (pid: string | null) => parties.find((p) => p.id === pid)?.name ?? "";
+    const vehicleNo = (vid: string | null) => vehicles.find((v) => v.id === vid)?.number ?? "";
+    const n = (v: unknown) => toNum(String(v));
+    return {
+      booking: {
+        lrNo: lr.lrNo,
+        lrDate: lr.lrDate.toISOString(),
+        status: lr.status,
+        lrType: lr.lrType,
+        route: `${cityName(lr.sourceCityId)} → ${cityName(lr.destCityId)}`,
+        consignor: partyName(lr.consignorId),
+        consignee: partyName(lr.consigneeId),
+        vehicle: (lr.vehicleId && vehicleNo(lr.vehicleId)) || lr.vehicleText || "",
+        freight: n(lr.freight),
+        grandTotal: n(lr.grandTotal),
+        items: lr.items.map((i) => i.productName).join(", "),
+      },
+      chalans: lr.chalanLrs.map(({ chalan }) => ({
+        chalanNo: chalan.chalanNo,
+        chalanDate: chalan.chalanDate.toISOString(),
+        broker: partyName(chalan.brokerId),
+        vehicle: vehicleNo(chalan.vehicleId),
+        driver: chalan.driverName ?? "",
+        freight: n(chalan.freight),
+        unloadDate: chalan.unloadDate ? chalan.unloadDate.toISOString() : null,
+      })),
+      pods: lr.pods.map((pod) => ({
+        docNo: pod.docNo,
+        docDate: pod.docDate.toISOString(),
+        unloadDate: pod.unloadDate ? pod.unloadDate.toISOString() : null,
+        ackNo: pod.ackNo ?? "",
+        recWt: pod.recWt == null ? null : n(pod.recWt),
+        shortageWt: pod.shortageWt == null ? null : n(pod.shortageWt),
+        status: pod.status,
+      })),
+      invoices: lr.invoiceLrs.map(({ invoice }) => ({
+        invoiceNo: invoice.invoiceNo,
+        invoiceDate: invoice.invoiceDate.toISOString(),
+        kind: invoice.kind,
+        party: partyName(invoice.partyId),
+        netTotal: n(invoice.netTotal),
+        balance: n(invoice.balance),
+      })),
+    };
+  });
 }

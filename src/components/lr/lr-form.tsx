@@ -232,21 +232,28 @@ export function LrForm(props: LrFormProps) {
 
   const tryPrefillRate = React.useCallback(
     async (index: number, productId: string | null) => {
-      const { consignorId, sourceCityId, destCityId } = form.getValues();
-      if (!consignorId || !sourceCityId || !destCityId) return;
-      try {
-        const rate = await lookupRate({
-          partyId: consignorId,
-          productId: productId || null,
-          sourceCityId,
-          destCityId,
-        });
-        if (rate) {
-          setValue(`items.${index}.rate`, Number(rate.rate));
-          setValue(`items.${index}.rateBasis`, rate.rateBasis as RateBasis);
+      const { consignorId, billToId, consigneeId, sourceCityId, destCityId } = form.getValues();
+      if (!sourceCityId || !destCityId) return;
+      // rate may be configured under the consignor, bill-to OR consignee party
+      const partyIds = Array.from(
+        new Set([consignorId, billToId, consigneeId].filter(Boolean))
+      ) as string[];
+      for (const partyId of partyIds) {
+        try {
+          const rate = await lookupRate({
+            partyId,
+            productId: productId || null,
+            sourceCityId,
+            destCityId,
+          });
+          if (rate) {
+            setValue(`items.${index}.rate`, Number(rate.rate));
+            setValue(`items.${index}.rateBasis`, rate.rateBasis as RateBasis);
+            return;
+          }
+        } catch {
+          // rate lookup is best-effort
         }
-      } catch {
-        // rate lookup is best-effort
       }
     },
     [form, setValue]
@@ -255,16 +262,18 @@ export function LrForm(props: LrFormProps) {
   // Re-fetch rates for every item whenever party or route changes, so the
   // Rate Setup applies regardless of the order fields are filled in.
   const consignorId = form.watch("consignorId");
+  const billToId = form.watch("billToId");
+  const consigneeId = form.watch("consigneeId");
   const sourceCityId = form.watch("sourceCityId");
   const destCityId = form.watch("destCityId");
   React.useEffect(() => {
-    if (!consignorId || !sourceCityId || !destCityId) return;
+    if ((!consignorId && !billToId && !consigneeId) || !sourceCityId || !destCityId) return;
     const rows = form.getValues().items ?? [];
     rows.forEach((row, index) => {
       if (toNum(row.rate) === 0) void tryPrefillRate(index, row.productId || null);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [consignorId, sourceCityId, destCityId]);
+  }, [consignorId, billToId, consigneeId, sourceCityId, destCityId]);
 
   const onSubmit = handleSubmit(async (values) => {
     const payload = {

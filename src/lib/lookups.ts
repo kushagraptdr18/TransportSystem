@@ -113,21 +113,39 @@ export async function createVehicleInline(input: {
   number: string;
   ownerId?: string;
   isOwn?: boolean;
+  ownerNames?: string;
   vehicleType?: string;
+  chassisNo?: string;
+  engineNo?: string;
+  permitNo?: string;
+  insuranceNo?: string;
 }): Promise<Option> {
   const s = requireSession();
-  const v = await withTenant(s.tenantId, (tx) =>
-    tx.vehicle.create({
+  const v = await withTenant(s.tenantId, async (tx) => {
+    const created = await tx.vehicle.create({
       data: {
         tenantId: s.tenantId,
         number: input.number.toUpperCase().replace(/\s+/g, ""),
-        ownerId: input.ownerId || null,
+        ownerId: input.isOwn ? null : input.ownerId || null,
         isOwn: input.isOwn ?? false,
-        vehicleType: input.vehicleType,
+        ownerNames: input.isOwn ? input.ownerNames || null : null,
+        vehicleType: input.vehicleType || null,
+        chassisNo: input.chassisNo ? input.chassisNo.toUpperCase() : null,
+        engineNo: input.engineNo ? input.engineNo.toUpperCase() : null,
+        permitNo: input.permitNo || null,
+        insuranceNo: input.insuranceNo || null,
       },
-    })
-  );
-  return { value: v.id, label: v.number, meta: input.isOwn ? "Own vehicle" : undefined };
+      include: { owner: true },
+    });
+    return created;
+  });
+  return {
+    value: v.id,
+    label: v.number,
+    meta: v.isOwn
+      ? `Owned${v.ownerNames ? " — " + v.ownerNames : ""}`
+      : `Broker — ${v.owner?.name ?? "?"}`,
+  };
 }
 
 export async function createProductInline(input: {

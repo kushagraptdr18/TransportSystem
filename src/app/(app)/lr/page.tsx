@@ -6,9 +6,9 @@ export const dynamic = "force-dynamic";
 export default async function LrEntryPage({
   searchParams,
 }: {
-  searchParams: { id?: string };
+  searchParams: { id?: string; copy?: string };
 }) {
-  const data = await loadLrFormData(searchParams.id);
+  const data = await loadLrFormData(searchParams.id, searchParams.copy);
 
   return (
     <div className="space-y-4">

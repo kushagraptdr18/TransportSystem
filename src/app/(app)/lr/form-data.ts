@@ -23,7 +23,8 @@ export interface LrFormData {
   productUnits: Record<string, string>;
 }
 
-export async function loadLrFormData(editId?: string): Promise<LrFormData> {
+export async function loadLrFormData(editId?: string, copyId?: string): Promise<LrFormData> {
+  const sourceId = editId ?? copyId;
   const session = requireSession();
 
   return withTenant(session.tenantId, async (tx) => {
@@ -50,9 +51,9 @@ export async function loadLrFormData(editId?: string): Promise<LrFormData> {
           orderBy: { name: "asc" },
         }),
         nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId }),
-        editId
+        sourceId
           ? tx.lr.findFirst({
-              where: { id: editId, deletedAt: null },
+              where: { id: sourceId, deletedAt: null },
               include: { items: true },
             })
           : Promise.resolve(null),
@@ -169,9 +170,23 @@ export async function loadLrFormData(editId?: string): Promise<LrFormData> {
           deliveryAt: "",
         };
 
+    if (existing && copyId && !editId) {
+      // "Copy to New LR": reuse everything except per-consignment identifiers
+      defaults.lrNo = nextNo ?? "1";
+      defaults.lrDateText = formatDate(new Date());
+      defaults.refLrNo = "";
+      defaults.invoiceNo = "";
+      defaults.obdNo = "";
+      defaults.refNo = "";
+      defaults.invoiceDateText = "";
+      defaults.ewayBillNo = "";
+      defaults.ewayExpiryText = "";
+    }
+
+    const isCopy = Boolean(existing && copyId && !editId);
     return {
-      mode: existing ? ("edit" as const) : ("create" as const),
-      lrId: existing?.id,
+      mode: existing && !isCopy ? ("edit" as const) : ("create" as const),
+      lrId: isCopy ? undefined : existing?.id,
       defaults,
       gstPct,
       cityOptions: cities.map((c) => ({ value: c.id, label: c.name, meta: c.state.name })),

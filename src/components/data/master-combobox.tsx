@@ -3,17 +3,7 @@
 import * as React from "react";
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Input } from "@/components/ui/input";
 
 export interface MasterOption {
   value: string;
@@ -36,20 +26,95 @@ interface MasterComboboxProps {
   className?: string;
 }
 
+/**
+ * Type-ahead autocomplete for master records: click in and type immediately,
+ * suggestions filter live, Arrow keys / Enter / Tab select, and a "+ Create
+ * new" row opens the inline-create dialog and auto-selects the result.
+ */
 export function MasterCombobox({
   options,
   value,
   onChange,
-  placeholder = "Select...",
+  placeholder = "Type to search...",
   renderCreateDialog,
   createLabel = "+ Create new",
   disabled,
   className,
 }: MasterComboboxProps) {
-  const [open, setOpen] = React.useState(false);
-  const [creating, setCreating] = React.useState(false);
+  const selected = options.find((o) => o.value === value) ?? null;
 
-  const selected = options.find((o) => o.value === value);
+  const [text, setText] = React.useState(selected?.label ?? "");
+  const [open, setOpen] = React.useState(false);
+  const [highlight, setHighlight] = React.useState(0);
+  const [creating, setCreating] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const focused = React.useRef(false);
+
+  // keep display text in sync when value/options change from outside
+  React.useEffect(() => {
+    if (!focused.current) setText(selected?.label ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, selected?.label]);
+
+  const query = text.trim().toLowerCase();
+  const showAll = !query || (selected && text === selected.label);
+  const filtered = showAll
+    ? options
+    : options.filter((o) => `${o.label} ${o.meta ?? ""}`.toLowerCase().includes(query));
+  // index === filtered.length means the "+ Create new" row
+  const createIndex = renderCreateDialog ? filtered.length : -1;
+  const lastIndex = renderCreateDialog ? filtered.length : filtered.length - 1;
+
+  const scrollTo = (idx: number) => {
+    listRef.current
+      ?.querySelector(`[data-idx="${idx}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  };
+
+  const pick = (opt: MasterOption) => {
+    onChange(opt.value);
+    setText(opt.label);
+    setOpen(false);
+  };
+
+  const openCreate = () => {
+    setOpen(false);
+    setCreating(true);
+  };
+
+  const commitHighlight = (): boolean => {
+    if (!open) return false;
+    if (highlight === createIndex && renderCreateDialog) {
+      openCreate();
+      return true;
+    }
+    const opt = filtered[highlight];
+    if (opt) {
+      pick(opt);
+      return true;
+    }
+    return false;
+  };
+
+  const handleBlur = () => {
+    focused.current = false;
+    setOpen(false);
+    const t = text.trim();
+    if (!t) {
+      if (value) onChange(null);
+      setText("");
+      return;
+    }
+    // exact label match (case-insensitive) selects; otherwise revert
+    const exact = options.find((o) => o.label.toLowerCase() === t.toLowerCase());
+    if (exact) {
+      if (exact.value !== value) onChange(exact.value);
+      setText(exact.label);
+    } else {
+      setText(selected?.label ?? "");
+    }
+  };
 
   const closeAndSelect = React.useCallback(
     (newValue: string) => {
@@ -60,73 +125,119 @@ export function MasterCombobox({
   );
 
   return (
-    <>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            role="combobox"
-            aria-expanded={open}
-            disabled={disabled}
-            className={cn("w-full justify-between font-normal", !selected && "text-muted-foreground", className)}
-          >
-            <span className="truncate">{selected ? selected.label : placeholder}</span>
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[240px] p-0" align="start">
-          <Command
-            filter={(itemValue, search) =>
-              itemValue.toLowerCase().includes(search.toLowerCase()) ? 1 : 0
+    <div className={cn("relative", className)}>
+      <Input
+        ref={inputRef}
+        role="combobox"
+        aria-expanded={open}
+        autoComplete="off"
+        disabled={disabled}
+        placeholder={placeholder}
+        value={text}
+        className="pr-8"
+        onFocus={(e) => {
+          focused.current = true;
+          e.target.select();
+          setOpen(true);
+          setHighlight(0);
+        }}
+        onBlur={handleBlur}
+        onChange={(e) => {
+          setText(e.target.value);
+          setOpen(true);
+          setHighlight(0);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (!open) setOpen(true);
+            else {
+              const next = Math.min(highlight + 1, Math.max(lastIndex, 0));
+              setHighlight(next);
+              scrollTo(next);
             }
-          >
-            <CommandInput placeholder="Search..." />
-            <CommandList>
-              <CommandEmpty>No match found.</CommandEmpty>
-              <CommandGroup>
-                {options.map((opt) => (
-                  <CommandItem
-                    key={opt.value}
-                    value={`${opt.label} ${opt.meta ?? ""}`}
-                    onSelect={() => {
-                      onChange(opt.value === value ? null : opt.value);
-                      setOpen(false);
-                    }}
-                  >
-                    <Check
-                      className={cn("h-4 w-4", value === opt.value ? "opacity-100" : "opacity-0")}
-                    />
-                    <span className="flex-1 truncate">{opt.label}</span>
-                    {opt.meta && (
-                      <span className="ml-2 truncate text-xs text-muted-foreground">{opt.meta}</span>
-                    )}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-              {renderCreateDialog && (
-                <>
-                  <CommandSeparator />
-                  <CommandGroup forceMount>
-                    <CommandItem
-                      forceMount
-                      value="__create_new__"
-                      onSelect={() => {
-                        setOpen(false);
-                        setCreating(true);
-                      }}
-                      className="text-primary"
-                    >
-                      <Plus className="h-4 w-4" />
-                      {createLabel}
-                    </CommandItem>
-                  </CommandGroup>
-                </>
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            const next = Math.max(highlight - 1, 0);
+            setHighlight(next);
+            scrollTo(next);
+          } else if (e.key === "Enter") {
+            if (open) {
+              e.preventDefault();
+              commitHighlight();
+            }
+          } else if (e.key === "Tab") {
+            // commit the highlighted suggestion, then let focus move on
+            commitHighlight();
+          } else if (e.key === "Escape") {
+            setOpen(false);
+            setText(selected?.label ?? "");
+          }
+        }}
+      />
+      <ChevronsUpDown
+        className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 opacity-50"
+        aria-hidden
+      />
+
+      {open && !disabled && (
+        <div
+          ref={listRef}
+          className="absolute z-50 mt-1 max-h-64 w-full min-w-[240px] overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+        >
+          {filtered.length === 0 && !renderCreateDialog && (
+            <div className="px-2 py-2 text-sm text-muted-foreground">No match found.</div>
+          )}
+          {filtered.map((opt, idx) => (
+            <div
+              key={opt.value}
+              data-idx={idx}
+              // mousedown fires before the input's blur, so the pick wins
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(opt);
+              }}
+              onMouseEnter={() => setHighlight(idx)}
+              className={cn(
+                "flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm",
+                idx === highlight && "bg-accent text-accent-foreground"
               )}
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
+            >
+              <Check
+                className={cn("h-4 w-4 shrink-0", value === opt.value ? "opacity-100" : "opacity-0")}
+              />
+              <span className="flex-1 truncate">{opt.label}</span>
+              {opt.meta && (
+                <span className="ml-2 max-w-[45%] truncate text-xs text-muted-foreground">
+                  {opt.meta}
+                </span>
+              )}
+            </div>
+          ))}
+          {renderCreateDialog && (
+            <div
+              data-idx={createIndex}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                openCreate();
+              }}
+              onMouseEnter={() => setHighlight(createIndex)}
+              className={cn(
+                "mt-1 flex cursor-pointer items-center gap-2 rounded-sm border-t px-2 py-1.5 text-sm text-primary",
+                highlight === createIndex && "bg-accent"
+              )}
+            >
+              <Plus className="h-4 w-4 shrink-0" />
+              {createLabel}
+              {text.trim() && !filtered.some((o) => o.label.toLowerCase() === query) && (
+                <span className="truncate font-medium">&ldquo;{text.trim()}&rdquo;</span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {creating && renderCreateDialog?.(closeAndSelect)}
-    </>
+    </div>
   );
 }

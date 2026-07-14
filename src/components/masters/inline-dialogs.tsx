@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -266,9 +265,14 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
   const { toast } = useToast();
   const [busy, setBusy] = React.useState(false);
   const [number, setNumber] = React.useState("");
-  const [isOwn, setIsOwn] = React.useState(false);
+  const [ownership, setOwnership] = React.useState<"BROKER" | "OWNED">("BROKER");
   const [ownerId, setOwnerId] = React.useState<string | null>(null);
+  const [ownerNames, setOwnerNames] = React.useState("");
   const [vehicleType, setVehicleType] = React.useState("");
+  const [chassisNo, setChassisNo] = React.useState("");
+  const [engineNo, setEngineNo] = React.useState("");
+  const [permitNo, setPermitNo] = React.useState("");
+  const [insuranceNo, setInsuranceNo] = React.useState("");
   const [owners, setOwners] = React.useState<MasterOption[]>([]);
 
   React.useEffect(() => {
@@ -280,17 +284,22 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
       toast({ variant: "destructive", title: "Vehicle number is required" });
       return;
     }
-    if (!isOwn && !ownerId) {
-      toast({ variant: "destructive", title: "Owner is required for market vehicles" });
+    if (ownership === "BROKER" && !ownerId) {
+      toast({ variant: "destructive", title: "Broker name is required for broker vehicles" });
       return;
     }
     setBusy(true);
     try {
       const opt = await createVehicleInline({
         number,
-        isOwn,
-        ownerId: isOwn ? undefined : ownerId ?? undefined,
+        isOwn: ownership === "OWNED",
+        ownerId: ownership === "BROKER" ? ownerId ?? undefined : undefined,
+        ownerNames: ownership === "OWNED" ? ownerNames || undefined : undefined,
         vehicleType: vehicleType || undefined,
+        chassisNo: chassisNo || undefined,
+        engineNo: engineNo || undefined,
+        permitNo: permitNo || undefined,
+        insuranceNo: insuranceNo || undefined,
       });
       onCreated(opt);
     } catch (e) {
@@ -306,7 +315,7 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>New Vehicle</DialogTitle>
         </DialogHeader>
@@ -314,24 +323,63 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
           <Field label="Vehicle Number *">
             <Input value={number} onChange={(e) => setNumber(e.target.value.toUpperCase())} autoFocus />
           </Field>
-          <Field label="Vehicle Type">
-            <Input value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} />
-          </Field>
-          <Field label="Own Vehicle">
-            <div className="flex h-10 items-center">
-              <Switch checked={isOwn} onCheckedChange={setIsOwn} />
+          <div className="space-y-1.5">
+            <Label className="text-xs">Ownership *</Label>
+            <div className="flex h-10 items-center gap-4">
+              {(
+                [
+                  ["BROKER", "Broker vehicle"],
+                  ["OWNED", "Owned vehicle"],
+                ] as const
+              ).map(([v, l]) => (
+                <label key={v} className="flex cursor-pointer items-center gap-1.5 text-sm">
+                  <input
+                    type="radio"
+                    checked={ownership === v}
+                    onChange={() => setOwnership(v)}
+                    className="h-4 w-4 accent-primary"
+                  />
+                  {l}
+                </label>
+              ))}
             </div>
-          </Field>
-          {!isOwn && (
-            <Field label="Owner / Broker *">
+          </div>
+          {ownership === "BROKER" && (
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label className="text-xs">Broker Name *</Label>
               <MasterCombobox
                 options={owners}
                 value={ownerId}
                 onChange={setOwnerId}
-                placeholder="Select owner..."
+                placeholder="Type to search broker..."
               />
-            </Field>
+            </div>
           )}
+          {ownership === "OWNED" && (
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label className="text-xs">Owner Name(s) — separate multiple with commas</Label>
+              <Input
+                value={ownerNames}
+                onChange={(e) => setOwnerNames(e.target.value.toUpperCase())}
+                placeholder="e.g. RAMESH PATEL, SURESH PATEL"
+              />
+            </div>
+          )}
+          <Field label="Vehicle Type">
+            <Input value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} />
+          </Field>
+          <Field label="Chassis No.">
+            <Input value={chassisNo} onChange={(e) => setChassisNo(e.target.value.toUpperCase())} />
+          </Field>
+          <Field label="Engine No.">
+            <Input value={engineNo} onChange={(e) => setEngineNo(e.target.value.toUpperCase())} />
+          </Field>
+          <Field label="Permit No.">
+            <Input value={permitNo} onChange={(e) => setPermitNo(e.target.value)} />
+          </Field>
+          <Field label="Insurance No.">
+            <Input value={insuranceNo} onChange={(e) => setInsuranceNo(e.target.value)} />
+          </Field>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>

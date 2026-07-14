@@ -52,7 +52,6 @@ export const NAV: NavGroup[] = [
       { label: "LR Entry", href: "/lr" },
       { label: "Dummy LR", href: "/lr/dummy" },
       { label: "LR Register", href: "/lr/register" },
-      { label: "Bilty Status", href: "/lr/status" },
     ],
   },
   {
