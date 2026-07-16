@@ -66,6 +66,7 @@ export default async function PodRegisterPage({
           filePath: p.filePath,
           status: p.status,
           sourceType: p.sourceType,
+          remarks: p.remarks ?? "",
         })
       );
     }),
@@ -101,7 +102,7 @@ export default async function PodRegisterPage({
           },
         ]}
       />
-      <PodRegisterTable rows={pods} />
+      <PodRegisterTable rows={pods} canDelete={session.role === "ADMIN" || session.role === "OWNER"} />
     </div>
   );
 }

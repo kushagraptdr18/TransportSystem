@@ -86,7 +86,7 @@ export interface LrFormValues {
   gstApplicable: boolean;
   advance: number;
   advanceBank: string;
-  lrType: "TO_PAY" | "TBB" | "PAID" | "FOC" | "CANCELLED";
+  lrType: "TO_PAY" | "TBB" | "PAID" | "FOC" | "CANCELLED" | "PAPER_CHANGE";
   printFreight: boolean;
   remarks: string;
   deliveryAt: string;
@@ -94,6 +94,9 @@ export interface LrFormValues {
 
 export interface LrFormProps {
   mode: "create" | "edit";
+  /** Batch mode: submit adds the LR to the parent's batch instead of saving. */
+  batchMode?: boolean;
+  onBatchAdd?: (payload: Record<string, unknown>) => void;
   isDummy: boolean;
   lrId?: string;
   defaults: LrFormValues;
@@ -331,6 +334,14 @@ export function LrForm(props: LrFormProps) {
     const check = requiredSchema.safeParse(payload);
     if (!check.success) {
       toast({ variant: "destructive", title: check.error.issues[0]?.message ?? "Invalid form" });
+      return;
+    }
+
+    if (props.batchMode && props.onBatchAdd) {
+      props.onBatchAdd(payload);
+      // keep every field for the next LR — bump only the display number
+      const n = parseInt(values.lrNo, 10);
+      if (!isNaN(n)) setValue("lrNo", String(n + 1));
       return;
     }
 
@@ -892,6 +903,7 @@ export function LrForm(props: LrFormProps) {
                 <SelectItem value="PAID">Paid</SelectItem>
                 <SelectItem value="FOC">FOC</SelectItem>
                 <SelectItem value="CANCELLED">Cancelled</SelectItem>
+                <SelectItem value="PAPER_CHANGE">Paper Change</SelectItem>
               </SelectContent>
             </Select>
           </Field>
@@ -916,7 +928,13 @@ export function LrForm(props: LrFormProps) {
             <Textarea {...register("remarks")} rows={1} className="min-h-9" />
           </Field>
           <Button type="submit" disabled={saving} className="h-9">
-            {saving ? "Saving..." : props.mode === "edit" ? "Update LR" : "Save LR"}
+            {props.batchMode
+              ? "Add Another LR"
+              : saving
+                ? "Saving..."
+                : props.mode === "edit"
+                  ? "Update LR"
+                  : "Save LR"}
           </Button>
         </CardContent>
       </Card>

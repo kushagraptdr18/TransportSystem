@@ -75,9 +75,14 @@ export default async function DashboardPage() {
       serviceDue,
       recentLrs,
     ] = await Promise.all([
-      tx.lr.count({ where: { ...scope, deletedAt: null } }),
+      tx.lr.count({ where: { ...scope, deletedAt: null, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } } }),
       tx.lr.aggregate({
-        where: { ...scope, deletedAt: null, lrDate: { gte: monthStart } },
+        where: {
+          ...scope,
+          deletedAt: null,
+          lrDate: { gte: monthStart },
+          lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
+        },
         _sum: { grandTotal: true },
       }),
       tx.loadingChalan.count({ where: { ...scope, deletedAt: null } }),
@@ -172,7 +177,12 @@ export default async function DashboardPage() {
         take: 15,
       }),
       tx.lr.findMany({
-        where: { ...scope, deletedAt: null, lrDate: { gte: addDays(today, -29) } },
+        where: {
+          ...scope,
+          deletedAt: null,
+          lrDate: { gte: addDays(today, -29) },
+          lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
+        },
         select: { lrDate: true },
       }),
     ]);

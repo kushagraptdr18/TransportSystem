@@ -50,7 +50,7 @@ export async function getVehiclePendingPodLrs(vehicleId: string): Promise<PodPen
         fyId: session.fyId,
         vehicleId,
         deletedAt: null,
-        lrType: { not: "CANCELLED" },
+        lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
         status: "ON_CHALAN", // workflow: POD only after chalan is created
         pods: { none: {} },
       },
@@ -110,6 +110,9 @@ export async function findLrForPod(
   );
   if (!lr) return { ok: false, error: `LR ${lrNo} not found.` };
   if (lr.lrType === "CANCELLED") return { ok: false, error: `LR ${lrNo} is cancelled.` };
+  if (lr.lrType === "PAPER_CHANGE") {
+    return { ok: false, error: `LR ${lrNo} is a paper-change LR — not operational.` };
+  }
   if (lr.status === "PENDING") {
     return { ok: false, error: `LR ${lrNo} has no chalan yet — create the chalan first.` };
   }
@@ -252,5 +255,100 @@ export async function savePodBatch(
       return { ok: false, error: `POD document number ${data.docNo} already exists.` };
     }
     return { ok: false, error: msg };
+  }
+}
+
+const podUpdateSchema = z.object({
+  id: z.string().min(1),
+  docDate: z.string().min(1, "Document date is required"),
+  unloadDate: z.string().nullable().optional(),
+  ackNo: z.string().optional(),
+  recWt: z.number().nullable().optional(),
+  poNumber: z.string().optional(),
+  gateEntryNo: z.string().optional(),
+  remarks: z.string().optional(),
+});
+
+/** Edit an existing POD's details (file stays as uploaded). */
+export async function updatePod(
+  input: unknown
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "pod", "edit");
+  const parsed = podUpdateSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  const data = parsed.data;
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const before = await tx.pod.findFirst({
+        where: { id: data.id, firmId: session.firmId },
+        include: { lr: { include: { items: true } } },
+      });
+      if (!before) return { ok: false as const, error: "POD not found." };
+      const actualWt =
+        before.lr?.items.reduce((s, it) => s + toNum(it.actualWt), 0) ??
+        (before.actualWt == null ? 0 : toNum(before.actualWt));
+      const recWt = data.recWt ?? null;
+      const shortageWt = recWt === null ? null : Math.round((actualWt - recWt) * 1000) / 1000;
+      const after = await tx.pod.update({
+        where: { id: data.id },
+        data: {
+          docDate: new Date(data.docDate),
+          unloadDate: data.unloadDate ? new Date(data.unloadDate) : null,
+          ackNo: data.ackNo || null,
+          recWt,
+          shortageWt,
+          poNumber: data.poNumber || null,
+          gateEntryNo: data.gateEntryNo || null,
+          remarks: data.remarks || null,
+        },
+      });
+      await audit(tx, session, {
+        entity: "Pod",
+        entityId: data.id,
+        action: "UPDATE",
+        before,
+        after,
+      });
+      return { ok: true as const };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Update failed" };
+  }
+}
+
+/** Delete a POD; the LR returns to ON_CHALAN so a fresh POD can be uploaded. */
+export async function deletePod(
+  id: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  if (session.role !== "ADMIN" && session.role !== "OWNER") {
+    return { ok: false, error: "Only Admin/Owner may delete PODs." };
+  }
+  await authorize(session, "pod", "delete");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const pod = await tx.pod.findFirst({
+        where: { id, firmId: session.firmId },
+        include: { lr: { include: { invoiceLrs: true } } },
+      });
+      if (!pod) return { ok: false as const, error: "POD not found." };
+      if (pod.lr && (pod.lr.status === "BILLED" || pod.lr.invoiceLrs.length > 0)) {
+        return {
+          ok: false as const,
+          error: `LR ${pod.lr.lrNo} is already billed — delete the bill before removing its POD.`,
+        };
+      }
+      await tx.pod.delete({ where: { id } });
+      if (pod.lrId) {
+        await tx.lr.update({ where: { id: pod.lrId }, data: { status: "ON_CHALAN" } });
+      }
+      await audit(tx, session, { entity: "Pod", entityId: id, action: "DELETE", before: pod });
+      return { ok: true as const };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Delete failed" };
   }
 }

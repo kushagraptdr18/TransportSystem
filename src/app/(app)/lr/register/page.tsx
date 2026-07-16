@@ -7,7 +7,8 @@ import { LrRegisterTable, type LrRegisterRow } from "@/components/lr/lr-register
 
 export const dynamic = "force-dynamic";
 
-const LR_TYPES = ["TO_PAY", "TBB", "PAID", "FOC", "CANCELLED"] as const;
+const LR_TYPES = ["TO_PAY", "TBB", "PAID", "FOC"] as const;
+// CANCELLED and PAPER_CHANGE live only in their dedicated reports
 const LR_STATUSES = ["PENDING", "ON_CHALAN", "ARRIVED", "DELIVERED", "BILLED"] as const;
 
 export default async function LrRegisterPage({
@@ -40,6 +41,8 @@ export default async function LrRegisterPage({
   if (searchParams.dest) where.destCityId = searchParams.dest;
   if (searchParams.lrType && (LR_TYPES as readonly string[]).includes(searchParams.lrType)) {
     where.lrType = searchParams.lrType as (typeof LR_TYPES)[number];
+  } else {
+    where.lrType = { notIn: ["CANCELLED", "PAPER_CHANGE"] };
   }
   if (searchParams.party) {
     where.AND = [

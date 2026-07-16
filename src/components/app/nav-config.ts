@@ -50,6 +50,7 @@ export const NAV: NavGroup[] = [
     icon: FileText,
     items: [
       { label: "LR Entry", href: "/lr" },
+      { label: "Multiple LR Entry", href: "/lr/multiple" },
       { label: "Dummy LR", href: "/lr/dummy" },
       { label: "LR Register", href: "/lr/register" },
     ],
@@ -131,6 +132,8 @@ export const NAV: NavGroup[] = [
     items: [
       { label: "All Registers", href: "/reports" },
       { label: "LR Register", href: "/lr/register" },
+      { label: "Cancelled LR Report", href: "/reports/cancelled-lrs" },
+      { label: "Paper Change LR Report", href: "/reports/paper-change-lrs" },
     ],
   },
   {

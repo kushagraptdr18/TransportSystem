@@ -42,6 +42,7 @@ export interface AdvanceRow {
   type: "CASH" | "BANK" | "DIESEL" | "TOLL" | "TYRE" | "SPARE_PARTS" | "REPAIR" | "OTHER";
   supplierName: string;
   bankName: string;
+  bankPartyId?: string | null;
   dieselQty: number;
   dieselRate: number;
   amount: number;
@@ -631,9 +632,12 @@ export function ChalanForm({
                 <Field label="Bank">
                   <MasterCombobox
                     options={banks}
-                    value={banks.find((b) => b.label === a.bankName)?.value ?? null}
+                    value={a.bankPartyId ?? banks.find((b) => b.label === a.bankName)?.value ?? null}
                     onChange={(v) =>
-                      setAdvance(i, { bankName: banks.find((b) => b.value === v)?.label ?? "" })
+                      setAdvance(i, {
+                        bankPartyId: v,
+                        bankName: banks.find((b) => b.value === v)?.label ?? "",
+                      })
                     }
                     placeholder="Bank..."
                   />

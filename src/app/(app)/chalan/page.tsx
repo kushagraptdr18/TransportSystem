@@ -106,6 +106,7 @@ export default async function ChalanPage({
               type: a.type,
               supplierName: a.supplierName ?? "",
               bankName: a.bankName ?? "",
+              bankPartyId: a.bankPartyId,
               dieselQty: a.dieselQty == null ? 0 : toNum(a.dieselQty),
               dieselRate: a.dieselRate == null ? 0 : toNum(a.dieselRate),
               amount: toNum(a.amount),

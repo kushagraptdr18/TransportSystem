@@ -103,7 +103,10 @@ function pendingWhere(session: { firmId: string; fyId: string }, kind: InvoiceKi
     firmId: session.firmId,
     fyId: session.fyId,
     deletedAt: null,
-    lrType: kind === "PART_TRUCK" ? ("TBB" as const) : { not: "CANCELLED" as const },
+    lrType:
+      kind === "PART_TRUCK"
+        ? ("TBB" as const)
+        : { notIn: ["CANCELLED", "PAPER_CHANGE"] as ("CANCELLED" | "PAPER_CHANGE")[] },
     status: "DELIVERED" as const, // workflow: bill only after POD confirms delivery
     invoiceLrs: { none: {} },
     OR: [{ billToId: partyId }, { billToId: null, consignorId: partyId }],
@@ -165,8 +168,8 @@ export async function resolveBulkLrs(
         errors.push({ lrNo, reason: `LR ${lrNo} belongs to a different party.` });
         continue;
       }
-      if (lr.lrType === "CANCELLED") {
-        errors.push({ lrNo, reason: `LR ${lrNo} is cancelled.` });
+      if (lr.lrType === "CANCELLED" || lr.lrType === "PAPER_CHANGE") {
+        errors.push({ lrNo, reason: `LR ${lrNo} is ${lr.lrType === "CANCELLED" ? "cancelled" : "a paper-change LR"} — not billable.` });
         continue;
       }
       if (lr.status !== "DELIVERED") {

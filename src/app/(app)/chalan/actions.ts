@@ -6,6 +6,7 @@ import { withTenant, Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { syncSequenceTo } from "@/lib/sequences";
+import { postLedger, reverseLedger } from "@/lib/ledger";
 import { computeChalan } from "@/lib/calc/chalan";
 import { toNum } from "@/lib/utils";
 import type { PendingLrRow } from "@/components/fleet/lr-picker";
@@ -23,7 +24,7 @@ export async function getPendingLrsForVehicle(
         fyId: session.fyId,
         vehicleId,
         status: "PENDING",
-        lrType: { not: "CANCELLED" },
+        lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
         deletedAt: null,
         chalanLrs: excludeChalanId
           ? { none: { chalanId: { not: excludeChalanId } } }
@@ -75,6 +76,7 @@ const advanceSchema = z.object({
   type: z.enum(["CASH", "BANK", "DIESEL", "TOLL", "TYRE", "SPARE_PARTS", "REPAIR", "OTHER"]),
   supplierName: z.string().optional().nullable(),
   bankName: z.string().optional().nullable(),
+  bankPartyId: z.string().optional().nullable(),
   dieselQty: z.number().optional().nullable(),
   dieselRate: z.number().optional().nullable(),
   amount: z.number().default(0),
@@ -286,6 +288,7 @@ export async function saveChalanAdvances(
             type: r.type,
             supplierName: r.supplierName ?? null,
             bankName: r.bankName ?? null,
+            bankPartyId: r.bankPartyId ?? null,
             dieselQty: r.dieselQty ?? null,
             dieselRate: r.dieselRate ?? null,
             amount: r.amount,
@@ -297,6 +300,29 @@ export async function saveChalanAdvances(
       const advanceTotal = rows.reduce((s, r) => s + r.amount, 0);
       const balance = toNum(chalan.grandTotal) - advanceTotal;
       await tx.chalan.update({ where: { id: chalanId }, data: { advanceTotal, balance } });
+
+      // BANK advances hit the bank book: credit the bank account (money out),
+      // debit the broker (advance recoverable against the chalan)
+      await reverseLedger(tx, "CHALAN_ADVANCE", chalanId);
+      const bankRows = rows.filter((r) => r.type === "BANK" && r.bankPartyId && r.amount > 0);
+      await postLedger(
+        tx,
+        session,
+        bankRows.flatMap((r) => {
+          const date = r.date ? new Date(r.date) : chalan.chalanDate;
+          const common = {
+            date,
+            refType: "CHALAN_ADVANCE",
+            refId: chalanId,
+            refNo: chalan.chalanNo,
+            narration: `Bank advance against chalan ${chalan.chalanNo}${r.remarks ? " — " + r.remarks : ""}`,
+          };
+          return [
+            { ...common, partyId: r.bankPartyId!, side: "CREDIT" as const, amount: r.amount },
+            { ...common, partyId: chalan.brokerId, side: "DEBIT" as const, amount: r.amount },
+          ];
+        })
+      );
       await audit(tx, session, {
         entity: "ChalanAdvance",
         entityId: chalanId,
@@ -362,6 +388,7 @@ export async function deleteChalan(
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
       await tx.chalanLr.deleteMany({ where: { chalanId } });
+      await reverseLedger(tx, "CHALAN_ADVANCE", chalanId);
       await tx.chalan.update({ where: { id: chalanId }, data: { deletedAt: new Date() } });
       await tx.lr.updateMany({
         where: { id: { in: chalan.lrs.map((l) => l.lrId) }, status: "ON_CHALAN" },

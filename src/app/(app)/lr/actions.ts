@@ -13,7 +13,7 @@ import { stateCodeFromGstin } from "@/lib/calc/gst";
 import { computeLrTotals, itemAmount } from "@/components/lr/lr-calc";
 
 const rateBasisSchema = z.enum(["QTY", "ACTUAL_WT", "CHARGE_WT", "FIXED"]);
-const lrTypeSchema = z.enum(["TO_PAY", "TBB", "PAID", "FOC", "CANCELLED"]);
+const lrTypeSchema = z.enum(["TO_PAY", "TBB", "PAID", "FOC", "CANCELLED", "PAPER_CHANGE"]);
 
 const itemSchema = z.object({
   productId: z.string().nullish(),
@@ -79,6 +79,76 @@ function toDate(s: string): Date {
   return new Date(s.includes("T") ? s : `${s}T00:00:00`);
 }
 
+type LrInput = z.infer<typeof lrSchema>;
+
+/** Map a validated LR payload + computed totals to the Lr row shape. */
+function lrRowData(
+  data: LrInput,
+  totals: ReturnType<typeof computeLrTotals>,
+  lrNo: string
+) {
+  return {
+    lrNo,
+    lrDate: toDate(data.lrDate),
+    refLrNo: data.refLrNo || null,
+    privateMarka: data.privateMarka || null,
+    isDummy: data.isDummy,
+    sourceCityId: data.sourceCityId,
+    destCityId: data.destCityId,
+    consignorId: data.consignorId,
+    consigneeId: data.consigneeId,
+    billToId: data.billToId || null,
+    vehicleId: data.isDummy ? null : data.vehicleId || null,
+    vehicleText: data.isDummy ? data.vehicleText || null : null,
+    ownerName: data.ownerName || null,
+    deliveryAt: data.deliveryAt || null,
+    remarks: data.remarks || null,
+    lrType: data.lrType,
+    printFreight: data.printFreight,
+    gstApplicable: data.gstApplicable,
+    insCompany: data.insCompany || null,
+    insPolicyNo: data.insPolicyNo || null,
+    insAmount: data.insAmount ?? null,
+    invoiceNo: data.invoiceNo || null,
+    obdNo: data.obdNo || null,
+    refNo: data.refNo || null,
+    invoiceDate: data.invoiceDate ? toDate(data.invoiceDate) : null,
+    goodsValue: data.goodsValue ?? null,
+    ewayBillNo: data.ewayBillNo || null,
+    ewayExpiry: data.ewayExpiry ? toDate(data.ewayExpiry) : null,
+    freight: data.freight,
+    hamali: data.hamali,
+    preBhada: data.preBhada,
+    biltyCharge: data.biltyCharge,
+    collCharge: data.collCharge,
+    cpc: data.cpc,
+    otherCharge: data.otherCharge,
+    total: totals.total,
+    cgstAmt: totals.cgstAmt,
+    sgstAmt: totals.sgstAmt,
+    igstAmt: totals.igstAmt,
+    advance: data.advance,
+    advanceBank: data.advanceBank || null,
+    grandTotal: totals.grandTotal,
+  };
+}
+
+function lrItemsData(tenantId: string, data: LrInput) {
+  return data.items.map((i) => ({
+    tenantId,
+    productId: i.productId || null,
+    productName: i.productName,
+    description: i.description || null,
+    qty: i.qty,
+    actualWt: i.actualWt,
+    chargeWt: i.chargeWt,
+    unit: i.unit || "MT",
+    rate: i.rate,
+    rateBasis: i.rateBasis,
+    amount: itemAmount(i),
+  }));
+}
+
 export async function saveLr(input: unknown): Promise<SaveLrResult> {
   const session = requireSession();
   const parsed = lrSchema.safeParse(input);
@@ -119,64 +189,8 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
         lrNo = await nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId });
       }
 
-      const lrData = {
-        lrNo,
-        lrDate: toDate(data.lrDate),
-        refLrNo: data.refLrNo || null,
-        privateMarka: data.privateMarka || null,
-        isDummy: data.isDummy,
-        sourceCityId: data.sourceCityId,
-        destCityId: data.destCityId,
-        consignorId: data.consignorId,
-        consigneeId: data.consigneeId,
-        billToId: data.billToId || null,
-        vehicleId: data.isDummy ? null : data.vehicleId || null,
-        vehicleText: data.isDummy ? data.vehicleText || null : null,
-        ownerName: data.ownerName || null,
-        deliveryAt: data.deliveryAt || null,
-        remarks: data.remarks || null,
-        lrType: data.lrType,
-        printFreight: data.printFreight,
-        gstApplicable: data.gstApplicable,
-        insCompany: data.insCompany || null,
-        insPolicyNo: data.insPolicyNo || null,
-        insAmount: data.insAmount ?? null,
-        invoiceNo: data.invoiceNo || null,
-        obdNo: data.obdNo || null,
-        refNo: data.refNo || null,
-        invoiceDate: data.invoiceDate ? toDate(data.invoiceDate) : null,
-        goodsValue: data.goodsValue ?? null,
-        ewayBillNo: data.ewayBillNo || null,
-        ewayExpiry: data.ewayExpiry ? toDate(data.ewayExpiry) : null,
-        freight: data.freight,
-        hamali: data.hamali,
-        preBhada: data.preBhada,
-        biltyCharge: data.biltyCharge,
-        collCharge: data.collCharge,
-        cpc: data.cpc,
-        otherCharge: data.otherCharge,
-        total: totals.total,
-        cgstAmt: totals.cgstAmt,
-        sgstAmt: totals.sgstAmt,
-        igstAmt: totals.igstAmt,
-        advance: data.advance,
-        advanceBank: data.advanceBank || null,
-        grandTotal: totals.grandTotal,
-      };
-
-      const items = data.items.map((i) => ({
-        tenantId: session.tenantId,
-        productId: i.productId || null,
-        productName: i.productName,
-        description: i.description || null,
-        qty: i.qty,
-        actualWt: i.actualWt,
-        chargeWt: i.chargeWt,
-        unit: i.unit || "MT",
-        rate: i.rate,
-        rateBasis: i.rateBasis,
-        amount: itemAmount(i),
-      }));
+      const lrData = lrRowData(data, totals, lrNo);
+      const items = lrItemsData(session.tenantId, data);
 
       let savedId: string;
       if (data.id) {
@@ -371,4 +385,99 @@ export async function getLrLifecycle(id: string): Promise<LrLifecycle | null> {
       })),
     };
   });
+}
+
+const batchSchema = z.object({
+  entries: z.array(lrSchema.omit({ id: true, lrNo: true }).extend({ lrNo: z.string().optional() })).min(1, "Add at least one LR"),
+});
+
+/**
+ * Multiple LR creation: full LR payloads saved in ONE database transaction —
+ * either every LR is created or none. Vehicle + LR date are taken from the
+ * first entry and applied to all; LR numbers are assigned sequentially
+ * (max existing + 1 onwards) at save time.
+ */
+export async function saveLrBatch(
+  input: unknown
+): Promise<{ ok: true; lrNos: string[] } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "lr", "create");
+  const parsed = batchSchema.safeParse(input);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return {
+      ok: false,
+      error: issue ? `LR ${Number(issue.path[1] ?? 0) + 1} — ${issue.message}` : "Invalid input",
+    };
+  }
+  const entries = parsed.data.entries;
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const firm = await tx.firm.findUniqueOrThrow({ where: { id: session.firmId } });
+      const igstPct = Number(firm.igstPct);
+      const gstPct = igstPct > 0 ? igstPct : Number(firm.cgstPct) + Number(firm.sgstPct);
+      const first = await nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId });
+      const base = parseInt(first, 10);
+      const commonVehicleId = entries[0].vehicleId ?? null;
+      const commonDate = entries[0].lrDate;
+      const lrNos: string[] = [];
+
+      for (let i = 0; i < entries.length; i++) {
+        const data = {
+          ...entries[i],
+          id: null,
+          lrNo: String(base + i),
+          vehicleId: commonVehicleId,
+          lrDate: commonDate,
+        };
+        const [consignor, consignee] = await Promise.all([
+          tx.party.findUniqueOrThrow({ where: { id: data.consignorId } }),
+          tx.party.findUniqueOrThrow({ where: { id: data.consigneeId } }),
+        ]);
+        const totals = computeLrTotals({
+          freight: data.freight,
+          hamali: data.hamali,
+          preBhada: data.preBhada,
+          biltyCharge: data.biltyCharge,
+          collCharge: data.collCharge,
+          cpc: data.cpc,
+          otherCharge: data.otherCharge,
+          gstApplicable: data.gstApplicable,
+          gstPct,
+          supplierStateCode: stateCodeFromGstin(consignor.gstin),
+          recipientStateCode: stateCodeFromGstin(consignee.gstin),
+          advance: data.advance,
+        });
+        const created = await tx.lr.create({
+          data: {
+            tenantId: session.tenantId,
+            firmId: session.firmId,
+            fyId: session.fyId,
+            createdById: session.userId,
+            ...lrRowData(data, totals, data.lrNo),
+            items: { create: lrItemsData(session.tenantId, data) },
+          },
+        });
+        await audit(tx, session, {
+          entity: "Lr",
+          entityId: created.id,
+          action: "CREATE",
+          after: created,
+        });
+        lrNos.push(data.lrNo);
+      }
+
+      await syncSequenceTo(tx, {
+        tenantId: session.tenantId,
+        firmId: session.firmId,
+        fyId: session.fyId,
+        docType: "LR",
+        savedNumber: lrNos[lrNos.length - 1],
+      });
+      revalidatePath("/lr/register");
+      return { ok: true as const, lrNos };
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Batch save failed" };
+  }
 }

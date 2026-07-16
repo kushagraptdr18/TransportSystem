@@ -47,6 +47,7 @@ const TYPE_VARIANT: Record<string, "default" | "secondary" | "destructive" | "ou
   PAID: "default",
   FOC: "outline",
   CANCELLED: "destructive",
+  PAPER_CHANGE: "destructive",
 };
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
