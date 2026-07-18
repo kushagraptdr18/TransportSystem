@@ -125,6 +125,12 @@ async function recomputeAndStore(
   advances: number[]
 ) {
   const lrs = await tx.lr.findMany({ where: { id: { in: data.lrIds } }, include: { items: true } });
+  const blocked = lrs.find((l) => l.lrType === "CANCELLED" || l.lrType === "PAPER_CHANGE");
+  if (blocked) {
+    throw new Error(
+      `LR ${blocked.lrNo} is ${blocked.lrType === "CANCELLED" ? "cancelled" : "a paper-change LR"} and cannot be loaded on a chalan.`
+    );
+  }
   const actualWt = lrs.reduce((s, l) => s + l.items.reduce((a, i) => a + toNum(i.actualWt), 0), 0);
   const chargeWt = lrs.reduce((s, l) => s + l.items.reduce((a, i) => a + toNum(i.chargeWt), 0), 0);
   const bookingFreight = lrs.reduce((s, l) => s + toNum(l.freight), 0);

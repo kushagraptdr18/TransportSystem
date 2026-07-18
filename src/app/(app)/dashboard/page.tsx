@@ -143,7 +143,13 @@ export default async function DashboardPage() {
         _sum: { grandTotal: true },
       }),
       tx.lr.count({
-        where: { ...scope, deletedAt: null, status: "ON_CHALAN", pods: { none: {} } },
+        where: {
+          ...scope,
+          deletedAt: null,
+          status: "ON_CHALAN",
+          pods: { none: {} },
+          lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
+        },
       }),
       tx.lr.findMany({
         where: {
@@ -151,6 +157,7 @@ export default async function DashboardPage() {
           deletedAt: null,
           ewayExpiry: { not: null, lte: addDays(today, 3) },
           status: { notIn: ["DELIVERED", "BILLED"] },
+          lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
         },
         select: { id: true, lrNo: true, lrDate: true, ewayBillNo: true, ewayExpiry: true },
         orderBy: { ewayExpiry: "asc" },

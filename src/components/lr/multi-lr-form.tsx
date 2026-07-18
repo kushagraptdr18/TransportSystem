@@ -43,9 +43,30 @@ export function MultiLrBatch(props: Omit<LrFormProps, "mode" | "isDummy">) {
   const onBatchAdd = (payload: Payload) => {
     setBatch((b) => [...b, payload]);
     toast({
-      title: `LR ${payload.lrNo} added to the batch`,
-      description: "All details carried over — change only what differs for the next LR.",
+      title: `LR ${payload.lrNo} added to the batch (not saved yet)`,
+      description:
+        "A new LR is ready with the previous details pre-filled — change only what differs, then Add LR again or Save All.",
     });
+    // bring the user back to the top so the batch + fresh form are visible
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // nothing is in the database until "Save All LRs" — warn before losing the batch
+  React.useEffect(() => {
+    if (batch.length === 0) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [batch.length]);
+
+  const discardBatch = () => {
+    if (!window.confirm(`Discard all ${batch.length} unsaved LR(s)? Nothing has been written to the database.`))
+      return;
+    setBatch([]);
+    toast({ title: "Batch discarded — no LRs were saved" });
   };
 
   const saveAll = async () => {
@@ -88,16 +109,24 @@ export function MultiLrBatch(props: Omit<LrFormProps, "mode" | "isDummy">) {
                 — vehicle &amp; date stay the same for every LR; numbers are sequential
               </span>
             </span>
-            <Button onClick={saveAll} disabled={saving || batch.length === 0}>
-              {saving ? "Saving..." : `Save All LRs (${batch.length})`}
-            </Button>
+            <span className="flex items-center gap-2">
+              {batch.length > 0 && (
+                <Button variant="outline" onClick={discardBatch} disabled={saving}>
+                  Discard Batch
+                </Button>
+              )}
+              <Button onClick={saveAll} disabled={saving || batch.length === 0}>
+                {saving ? "Saving..." : `Save All LRs (${batch.length})`}
+              </Button>
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-4 pt-1">
           {batch.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              Fill the LR form below and click <b>Add Another LR</b> — each added LR appears
-              here until you save the whole batch.
+              Fill the LR form below and click <b>Add LR</b> — each LR joins this list
+              temporarily. Nothing is saved to the database until you click
+              <b> Save All LRs</b>; closing the page discards the batch.
             </p>
           ) : (
             <Table>

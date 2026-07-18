@@ -268,6 +268,7 @@ export async function findTripSources(vehicleId: string, dateIso: string): Promi
           vehicleId,
           lrDate: range,
           deletedAt: null,
+          lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
         },
         include: { items: true },
       }),

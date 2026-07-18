@@ -301,6 +301,15 @@ export async function saveInvoice(
       if (lrs.length !== data.lrIds.length) {
         return { ok: false as const, error: "One or more selected LRs were not found." };
       }
+      const nonOperational = lrs.find(
+        (lr) => lr.lrType === "CANCELLED" || lr.lrType === "PAPER_CHANGE"
+      );
+      if (nonOperational) {
+        return {
+          ok: false as const,
+          error: `LR ${nonOperational.lrNo} is ${nonOperational.lrType === "CANCELLED" ? "cancelled" : "a paper-change LR"} and cannot be billed.`,
+        };
+      }
       for (const lr of lrs) {
         const other = lr.invoiceLrs.find((il) => il.invoiceId !== data.id);
         if (other || (lr.status === "BILLED" && !previousLrIds.includes(lr.id))) {

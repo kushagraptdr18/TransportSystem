@@ -929,7 +929,7 @@ export function LrForm(props: LrFormProps) {
           </Field>
           <Button type="submit" disabled={saving} className="h-9">
             {props.batchMode
-              ? "Add Another LR"
+              ? "Add LR"
               : saving
                 ? "Saving..."
                 : props.mode === "edit"
