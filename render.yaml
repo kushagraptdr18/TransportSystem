@@ -3,8 +3,9 @@ services:
     name: transport-tms
     runtime: node
     plan: free
-    # free plan has no preDeployCommand — run migrations as part of the build
-    buildCommand: npm ci && npx prisma generate && npx prisma migrate deploy && npm run build
+    # build regenerates the Prisma client; start applies migrations (works even
+    # if the dashboard overrides this command with a plain npm build)
+    buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /login
     envVars:
