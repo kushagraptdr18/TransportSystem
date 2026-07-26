@@ -32,6 +32,7 @@ export const NAV: NavGroup[] = [
     icon: Database,
     items: [
       { label: "Ledger / Parties", href: "/masters/parties" },
+      { label: "Bank & Cash Heads", href: "/masters/bank-cash-heads" },
       { label: "Income-Expense Heads", href: "/masters/account-heads" },
       { label: "Product Groups", href: "/masters/product-groups" },
       { label: "Products", href: "/masters/products" },
@@ -42,7 +43,6 @@ export const NAV: NavGroup[] = [
       { label: "Rate Setup", href: "/masters/rates" },
       { label: "Document Master", href: "/masters/document-master" },
       { label: "Document Registration", href: "/masters/vehicle-documents" },
-      { label: "Job Heads", href: "/masters/job-heads" },
     ],
   },
   {
@@ -51,7 +51,6 @@ export const NAV: NavGroup[] = [
     items: [
       { label: "LR Entry", href: "/lr" },
       { label: "Multiple LR Entry", href: "/lr/multiple" },
-      { label: "Dummy LR", href: "/lr/dummy" },
       { label: "LR Register", href: "/lr/register" },
     ],
   },

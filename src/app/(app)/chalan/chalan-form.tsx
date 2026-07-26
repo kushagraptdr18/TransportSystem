@@ -545,13 +545,17 @@ export function ChalanForm({
           <Field label="TDS %" className="lg:col-span-2">
             <div className="flex items-center gap-2">
               <NumInput
-                value={tdsPct}
+                value={brokerTds?.tdsMode === "DECLARATION" ? 0 : tdsPct}
                 onChange={(n) => {
                   setTdsPct(n);
                   setTdsOverridden(true);
                 }}
+                readOnly={brokerTds?.tdsMode === "DECLARATION"}
                 className="w-20"
               />
+              {brokerTds?.tdsMode === "DECLARATION" && (
+                <Badge variant="default">Declared — TDS not applicable</Badge>
+              )}
               {brokerTds && (
                 <Badge variant={tdsPct === autoTdsPct ? "secondary" : "outline"}>{tdsBadge}</Badge>
               )}

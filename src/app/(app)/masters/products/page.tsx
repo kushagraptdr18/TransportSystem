@@ -36,6 +36,7 @@ export default async function ProductsPage({
         groupName: r.group.name,
         unit: r.unit,
         hsnCode: r.hsnCode,
+        productType: r.productType,
         gstPct: Number(r.gstPct),
         type: r.type,
         className: r.className,

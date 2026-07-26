@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
-import { formatDate } from "@/lib/utils";
+import { formatDate, toNum } from "@/lib/utils";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { LrRegisterTable, type LrRegisterRow } from "@/components/lr/lr-register-table";
 
@@ -95,6 +95,10 @@ export default async function LrRegisterPage({
       freight: Number(lr.freight),
       grandTotal: Number(lr.grandTotal),
       lrType: lr.lrType,
+      obdNo: lr.obdNo ?? "",
+      invoiceNo: lr.invoiceNo ?? "",
+      refNo: lr.refNo ?? "",
+      rate: lr.items.length ? Math.max(...lr.items.map((i) => toNum(i.rate))) : 0,
       status: lr.status,
       isDummy: lr.isDummy,
     }));

@@ -188,6 +188,10 @@ export function LrForm(props: LrFormProps) {
   const [productOptions, setProductOptions] = React.useState(props.productOptions);
 
   const freightTouched = React.useRef(props.mode === "edit");
+  // rows where the user typed Charge Wt manually — stop mirroring Actual Wt there
+  const chargeWtTouched = React.useRef<Set<number>>(
+    new Set(props.mode === "edit" ? (props.defaults.items ?? []).map((_, i) => i) : [])
+  );
 
   const form = useForm<LrFormValues>({ defaultValues: props.defaults });
   const { register, setValue, watch, control, handleSubmit } = form;
@@ -374,7 +378,12 @@ export function LrForm(props: LrFormProps) {
         </CardHeader>
         <CardContent className="grid gap-3 p-4 pt-0 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="LR No *">
-            <Input {...register("lrNo")} className={inputCls} />
+            <Input
+              {...register("lrNo")}
+              className={inputCls}
+              readOnly={props.mode === "edit"}
+              title={props.mode === "edit" ? "LR number is locked after saving" : undefined}
+            />
           </Field>
           <Field label="LR Date *">
             <DateInput
@@ -730,13 +739,23 @@ export function LrForm(props: LrFormProps) {
                   <Input
                     type="number"
                     step="any"
-                    {...register(`items.${index}.actualWt`, { valueAsNumber: true })}
+                    {...register(`items.${index}.actualWt`, {
+                      valueAsNumber: true,
+                      onChange: (e) => {
+                        if (!chargeWtTouched.current.has(index)) {
+                          setValue(`items.${index}.chargeWt`, toNum(e.target.value));
+                        }
+                      },
+                    })}
                     className={numCls}
                   />
                   <Input
                     type="number"
                     step="any"
-                    {...register(`items.${index}.chargeWt`, { valueAsNumber: true })}
+                    {...register(`items.${index}.chargeWt`, {
+                      valueAsNumber: true,
+                      onChange: () => chargeWtTouched.current.add(index),
+                    })}
                     className={numCls}
                   />
                   <Input {...register(`items.${index}.unit`)} className={inputCls} />

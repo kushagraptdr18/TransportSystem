@@ -10,6 +10,7 @@ interface Row {
   name: string;
   description: string | null;
   showReminder: boolean;
+  reminderDays: number;
 }
 
 const columns: ColumnDef<Row, unknown>[] = [
@@ -39,9 +40,14 @@ export function DocumentMasterClient({ rows, canDelete }: { rows: Row[]; canDele
       fields={[
         { name: "name", label: "Name *", type: "text" },
         { name: "showReminder", label: "Show Reminder", type: "switch" },
+        {
+          name: "reminderDays",
+          label: "Remind Before Expiry (days) — 15 / 30 / 45 / 60 / 90 or custom",
+          type: "number",
+        },
         { name: "description", label: "Description", type: "textarea", span2: true },
       ]}
-      defaults={{ name: "", description: "", showReminder: true }}
+      defaults={{ name: "", description: "", showReminder: true, reminderDays: 30 }}
       toForm={(r) => ({
         name: r.name,
         description: r.description ?? "",

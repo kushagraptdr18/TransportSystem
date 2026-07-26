@@ -22,6 +22,7 @@ export interface PartyRow {
   phone: string | null;
   email: string | null;
   ownerName: string | null;
+  transportName: string | null;
   vendorCode: string | null;
   openingBalance: number;
   openingSide: string;
@@ -32,14 +33,13 @@ export interface PartyRow {
   isActive: boolean;
 }
 
+// INCOME / OFFICE / EXPENSE removed from the party master per requirements;
+// existing records with those groups still render via groupLabel.
 const GROUPS = [
   "BANK",
   "CASH",
   "CONSIGNEE_CONSIGNOR",
   "DRIVER",
-  "EXPENSE",
-  "INCOME",
-  "OFFICE",
   "OWNER_BROKER",
   "STAFF",
   "SUPPLIERS",
@@ -148,6 +148,14 @@ export function PartiesClient({
         { name: "phone", label: "Phone", type: "text" },
         { name: "email", label: "Email", type: "text" },
         { name: "ownerName", label: "Owner / Contact Person", type: "text" },
+        {
+          name: "transportName",
+          label: "Transport Name (owners / brokers)",
+          type: "text",
+          uppercase: true,
+          visibleIf: (f: FormState) => f.ledgerGroup === "OWNER_BROKER",
+          span2: true,
+        },
         { name: "openingBalance", label: "Opening Balance", type: "number" },
         {
           name: "openingSide",

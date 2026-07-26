@@ -1,6 +1,7 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import { Badge } from "@/components/ui/badge";
 import type { MasterOption } from "@/components/data/master-combobox";
 import { SimpleMaster } from "@/components/masters/simple-master";
 import { saveProduct, deleteProduct } from "@/app/(app)/masters/products/actions";
@@ -12,6 +13,7 @@ interface Row {
   groupName: string;
   unit: string | null;
   hsnCode: string | null;
+  productType: string;
   gstPct: number;
   type: string | null;
   className: string | null;
@@ -23,6 +25,16 @@ const columns: ColumnDef<Row, unknown>[] = [
   { accessorKey: "groupName", header: "Group" },
   { accessorKey: "unit", header: "Unit" },
   { accessorKey: "hsnCode", header: "HSN" },
+  {
+    accessorKey: "productType",
+    header: "Type",
+    cell: ({ row }) =>
+      row.original.productType === "ODC" ? (
+        <Badge variant="destructive">ODC</Badge>
+      ) : (
+        <Badge variant="secondary">Normal</Badge>
+      ),
+  },
   { accessorKey: "gstPct", header: "GST %", meta: { numeric: true } },
   { accessorKey: "type", header: "Type" },
 ];
@@ -61,6 +73,15 @@ export function ProductsClient({
         { name: "name", label: "Name *", type: "text", uppercase: true },
         { name: "unit", label: "Unit", type: "text" },
         { name: "hsnCode", label: "HSN Code", type: "text" },
+        {
+          name: "productType",
+          label: "Product Type",
+          type: "radio",
+          options: [
+            { value: "NORMAL", label: "Normal" },
+            { value: "ODC", label: "ODC (Over-Dimensional Cargo)" },
+          ],
+        },
         { name: "gstPct", label: "GST %", type: "number" },
         { name: "type", label: "Type", type: "text" },
         { name: "className", label: "Class", type: "text" },

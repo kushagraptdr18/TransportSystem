@@ -13,6 +13,7 @@ const schema = z.object({
   name: z.string().trim().min(1, "Name is required"),
   description: optStr,
   showReminder: z.boolean().default(true),
+  reminderDays: z.coerce.number().int().min(1).max(365).default(30),
 });
 
 export async function saveDocumentType(input: unknown): Promise<ActionResult> {
@@ -23,7 +24,7 @@ export async function saveDocumentType(input: unknown): Promise<ActionResult> {
   await authorize(session, "masters", data.id ? "edit" : "create");
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
-      const values = { name: data.name, description: data.description, showReminder: data.showReminder };
+      const values = { name: data.name, description: data.description, showReminder: data.showReminder, reminderDays: data.reminderDays };
       if (data.id) {
         const before = await tx.documentType.findUniqueOrThrow({ where: { id: data.id } });
         const row = await tx.documentType.update({ where: { id: data.id }, data: values });

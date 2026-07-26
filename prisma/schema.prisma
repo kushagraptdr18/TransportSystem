@@ -348,6 +348,7 @@ model Party {
   rcNo               String?
   licenseNo          String?
   ownerName          String?
+  transportName      String? // owners/brokers: transport trade name
   phone              String?
   mobile             String?
   email              String?
@@ -405,6 +406,7 @@ model Product {
   unit      String? // default unit, e.g. MT
   type      String?
   hsnCode   String?
+  productType String     @default("NORMAL") // NORMAL | ODC
   gstPct    Decimal      @default(0) @db.Decimal(5, 2)
   className String?
   division  String?
@@ -480,6 +482,7 @@ model DocumentType {
   name         String
   description  String?
   showReminder Boolean @default(true)
+  reminderDays Int     @default(30) // days before expiry to start reminding
 
   registrations VehicleDocument[]
 

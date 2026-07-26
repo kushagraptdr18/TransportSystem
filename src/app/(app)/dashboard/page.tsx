@@ -163,16 +163,26 @@ export default async function DashboardPage() {
         orderBy: { ewayExpiry: "asc" },
         take: 15,
       }),
-      tx.vehicleDocument.findMany({
-        where: {
-          tenantId: session.tenantId,
-          expiryDate: { not: null, lte: addDays(today, 30) },
-          docType: { showReminder: true },
-        },
-        include: { docType: true },
-        orderBy: { expiryDate: "asc" },
-        take: 15,
-      }),
+      tx.vehicleDocument
+        .findMany({
+          where: {
+            tenantId: session.tenantId,
+            expiryDate: { not: null, lte: addDays(today, 365) },
+            docType: { showReminder: true },
+          },
+          include: { docType: true },
+          orderBy: { expiryDate: "asc" },
+          take: 100,
+        })
+        .then((docs) =>
+          docs
+            .filter(
+              (d) =>
+                d.expiryDate !== null &&
+                d.expiryDate <= addDays(today, d.docType.reminderDays ?? 30)
+            )
+            .slice(0, 15)
+        ),
       tx.jobEntry.findMany({
         where: {
           ...scope,

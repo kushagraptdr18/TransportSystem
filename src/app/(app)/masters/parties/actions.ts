@@ -25,6 +25,7 @@ const schema = z.object({
   email: optStr,
   ownerName: optStr,
   vendorCode: optStr,
+  transportName: optStr,
   openingBalance: z.coerce.number().default(0),
   openingSide: z.enum(["DEBIT", "CREDIT"]).default("DEBIT"),
   tdsMode: z.enum(["TDS_APPLICABLE", "DECLARATION"]).nullable().optional(),
@@ -34,11 +35,24 @@ const schema = z.object({
   isActive: z.boolean().default(true),
 });
 
+const GSTIN_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/;
+const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const MOBILE_RE = /^[6-9][0-9]{9}$/;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export async function saveParty(input: unknown): Promise<ActionResult> {
   const session = requireSession();
   const parsed = schema.safeParse(input);
   if (!parsed.success) return zodError(parsed.error);
   const data = parsed.data;
+  if (data.gstin && !GSTIN_RE.test(data.gstin.toUpperCase()))
+    return { ok: false, error: "Invalid GSTIN format (e.g. 22AAACD1234F1ZK)." };
+  if (data.pan && !PAN_RE.test(data.pan.toUpperCase()))
+    return { ok: false, error: "Invalid PAN format (e.g. AAACD1234F)." };
+  if (data.mobile && !MOBILE_RE.test(data.mobile.replace(/\D/g, "")))
+    return { ok: false, error: "Mobile must be a valid 10-digit Indian number." };
+  if (data.email && !EMAIL_RE.test(data.email))
+    return { ok: false, error: "Invalid email address." };
   await authorize(session, "masters", data.id ? "edit" : "create");
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
@@ -57,6 +71,7 @@ export async function saveParty(input: unknown): Promise<ActionResult> {
         email: data.email,
         ownerName: data.ownerName,
         vendorCode: data.vendorCode,
+        transportName: data.ledgerGroup === "OWNER_BROKER" ? data.transportName : null,
         openingBalance: data.openingBalance,
         openingSide: data.openingSide,
         tdsMode: data.ledgerGroup === "OWNER_BROKER" ? data.tdsMode ?? "TDS_APPLICABLE" : null,

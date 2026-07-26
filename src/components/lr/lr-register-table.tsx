@@ -39,6 +39,10 @@ export interface LrRegisterRow {
   lrType: string;
   status: string;
   isDummy: boolean;
+  obdNo: string;
+  invoiceNo: string;
+  refNo: string;
+  rate: number;
 }
 
 const TYPE_VARIANT: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
@@ -103,6 +107,15 @@ export function LrRegisterTable({
       { accessorKey: "consignee", header: "Consignee" },
       { accessorKey: "billTo", header: "Billed To" },
       { accessorKey: "vehicle", header: "Vehicle" },
+      { accessorKey: "obdNo", header: "OBD No" },
+      { accessorKey: "invoiceNo", header: "Invoice No" },
+      { accessorKey: "refNo", header: "Ref No" },
+      {
+        accessorKey: "rate",
+        header: "Rate",
+        cell: ({ row }) => (row.original.rate ? formatMoney(row.original.rate) : ""),
+        meta: { numeric: true } as DataTableColumnMeta<LrRegisterRow>,
+      },
       {
         accessorKey: "qty",
         header: "Qty",
@@ -157,7 +170,7 @@ export function LrRegisterTable({
         enableSorting: false,
         cell: ({ row }) => {
           const lr = row.original;
-          const editHref = lr.isDummy ? `/lr/dummy?id=${lr.id}` : `/lr?id=${lr.id}`;
+          const editHref = `/lr?id=${lr.id}`;
           return (
             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
@@ -181,7 +194,7 @@ export function LrRegisterTable({
               </Button>
               <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
                 <Link
-                  href={lr.isDummy ? `/lr/dummy?copy=${lr.id}` : `/lr?copy=${lr.id}`}
+                  href={`/lr?copy=${lr.id}`}
                   title="Copy to New LR"
                 >
                   <Copy className="h-3.5 w-3.5" />
@@ -214,6 +227,10 @@ export function LrRegisterTable({
     { header: "Consignee", key: "consignee", width: 28 },
     { header: "Billed To", key: "billTo", width: 28 },
     { header: "Vehicle", key: "vehicle" },
+    { header: "OBD No", key: "obdNo" },
+    { header: "Invoice No", key: "invoiceNo" },
+    { header: "Ref No", key: "refNo" },
+    { header: "Rate", key: "rate", numeric: true },
     { header: "Qty", key: "qty", numeric: true },
     { header: "Actual Wt", key: "actualWt", numeric: true },
     { header: "Charge Wt", key: "chargeWt", numeric: true },

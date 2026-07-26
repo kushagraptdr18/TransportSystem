@@ -165,7 +165,7 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
           advance: 0,
           advanceBank: "",
           lrType: "TBB",
-          printFreight: true,
+          printFreight: false,
           remarks: "",
           deliveryAt: "",
         };
@@ -181,6 +181,7 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
       defaults.invoiceDateText = "";
       defaults.ewayBillNo = "";
       defaults.ewayExpiryText = "";
+      defaults.printFreight = false; // every new LR defaults to not printing freight
     }
 
     const isCopy = Boolean(existing && copyId && !editId);
