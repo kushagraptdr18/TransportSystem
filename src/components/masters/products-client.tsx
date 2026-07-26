@@ -4,7 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import type { MasterOption } from "@/components/data/master-combobox";
 import { SimpleMaster } from "@/components/masters/simple-master";
-import { saveProduct, deleteProduct } from "@/app/(app)/masters/products/actions";
+import { saveProduct, deleteProduct, importProducts } from "@/app/(app)/masters/products/actions";
 
 interface Row {
   id: string;
@@ -110,6 +110,12 @@ export function ProductsClient({
       getId={(r) => r.id}
       save={saveProduct}
       remove={deleteProduct}
+      importConfig={{
+        action: importProducts,
+        templateHeaders: ["Product", "Group", "Unit", "HSN Code", "GST %", "Product Type"],
+        templateExample: ["TMT BAR 12MM", "STEEL", "MT", "7214", "18", "NORMAL"],
+        templateName: "products",
+      }}
       canDelete={canDelete}
     />
   );

@@ -57,6 +57,8 @@ export default async function VehicleDocumentsPage({
         expiryDate: r.expiryDate ? formatDate(r.expiryDate) : "",
         expiredNow: !!r.expiryDate && r.expiryDate < today,
         remarks: r.remarks,
+        filePath: r.filePath,
+        fileName: r.fileName,
       }))}
       docTypeOptions={docTypes.map((d) => ({ value: d.id, label: d.name }))}
       vehicleOptions={vehicles.map((v) => ({ value: v.id, label: v.number }))}

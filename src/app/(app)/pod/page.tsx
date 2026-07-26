@@ -6,7 +6,11 @@ import { PodForm } from "@/components/pod/pod-form";
 
 export const dynamic = "force-dynamic";
 
-export default async function PodPage() {
+export default async function PodPage({
+  searchParams,
+}: {
+  searchParams: { vehicle?: string };
+}) {
   const session = requireSession();
   const [docNo, vehicleOptions] = await Promise.all([
     withTenant(session.tenantId, (tx) =>
@@ -15,9 +19,19 @@ export default async function PodPage() {
     getVehicleOptions(),
   ]);
 
+  // ?vehicle= may be a vehicle id OR number (from the chalan register link)
+  const initial = searchParams.vehicle?.trim();
+  const match = initial
+    ? vehicleOptions.find((v) => v.value === initial || v.label === initial)
+    : undefined;
+
   return (
     <div className="p-4">
-      <PodForm defaultDocNo={docNo ?? "1"} vehicleOptions={vehicleOptions} />
+      <PodForm
+        defaultDocNo={docNo ?? "1"}
+        vehicleOptions={vehicleOptions}
+        initialVehicleId={match?.value ?? null}
+      />
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
+import { runImport, num as importNum, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
@@ -56,4 +57,28 @@ export async function deleteDocumentType(id: string): Promise<ActionResult> {
   } catch (e) {
     return actionError(e);
   }
+}
+
+/** Excel/CSV import — see the sample template for expected columns. */
+export async function importDocumentTypes(formData: FormData): Promise<ImportSummary> {
+  const session = requireSession();
+  await authorize(session, "masters", "create");
+  const file = formData.get("file");
+  return withTenant(session.tenantId, async (tx) =>
+    runImport(file instanceof File ? file : null, ["NAME"], async (rec) => {
+      const name = rec["NAME"].toUpperCase();
+      if (!name) throw new Error("Document type name is required");
+      const values = {
+        description: rec["DESCRIPTION"] || null,
+        reminderDays: importNum(rec["REMINDER DAYS"]) || 30,
+      };
+      const existing = await tx.documentType.findFirst({ where: { name } });
+      if (existing) {
+        await tx.documentType.update({ where: { id: existing.id }, data: values });
+        return "updated";
+      }
+      await tx.documentType.create({ data: { tenantId: session.tenantId, name, ...values } });
+      return "created";
+    })
+  );
 }

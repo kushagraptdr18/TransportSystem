@@ -49,10 +49,8 @@ const LEDGER_GROUPS: LedgerGroup[] = [
   "CASH",
   "CONSIGNEE_CONSIGNOR",
   "DRIVER",
-  "EXPENSE",
-  "INCOME",
-  "OFFICE",
   "OWNER_BROKER",
+  "RELATIVE",
   "STAFF",
   "SUPPLIERS",
 ];
@@ -265,9 +263,9 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
   const { toast } = useToast();
   const [busy, setBusy] = React.useState(false);
   const [number, setNumber] = React.useState("");
-  const [ownership, setOwnership] = React.useState<"BROKER" | "OWNED">("BROKER");
+  const [ownership, setOwnership] = React.useState<"OWNER" | "BROKER" | "RELATIVE">("OWNER");
   const [ownerId, setOwnerId] = React.useState<string | null>(null);
-  const [ownerNames, setOwnerNames] = React.useState("");
+  const [relatives, setRelatives] = React.useState<MasterOption[]>([]);
   const [vehicleType, setVehicleType] = React.useState("");
   const [chassisNo, setChassisNo] = React.useState("");
   const [engineNo, setEngineNo] = React.useState("");
@@ -276,7 +274,10 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
   const [owners, setOwners] = React.useState<MasterOption[]>([]);
 
   React.useEffect(() => {
-    if (open) getPartyOptions(["OWNER_BROKER"]).then(setOwners).catch(() => setOwners([]));
+    if (open) {
+      getPartyOptions(["OWNER_BROKER"]).then(setOwners).catch(() => setOwners([]));
+      getPartyOptions(["RELATIVE"]).then(setRelatives).catch(() => setRelatives([]));
+    }
   }, [open]);
 
   const submit = async () => {
@@ -284,17 +285,16 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
       toast({ variant: "destructive", title: "Vehicle number is required" });
       return;
     }
-    if (ownership === "BROKER" && !ownerId) {
-      toast({ variant: "destructive", title: "Broker name is required for broker vehicles" });
+    if (!ownerId) {
+      toast({ variant: "destructive", title: "Select the owner / broker / relative name" });
       return;
     }
     setBusy(true);
     try {
       const opt = await createVehicleInline({
         number,
-        isOwn: ownership === "OWNED",
-        ownerId: ownership === "BROKER" ? ownerId ?? undefined : undefined,
-        ownerNames: ownership === "OWNED" ? ownerNames || undefined : undefined,
+        ownershipType: ownership,
+        ownerId: ownerId ?? undefined,
         vehicleType: vehicleType || undefined,
         chassisNo: chassisNo || undefined,
         engineNo: engineNo || undefined,
@@ -328,8 +328,9 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
             <div className="flex h-10 items-center gap-4">
               {(
                 [
-                  ["BROKER", "Broker vehicle"],
-                  ["OWNED", "Owned vehicle"],
+                  ["OWNER", "Owner"],
+                  ["BROKER", "Broker"],
+                  ["RELATIVE", "Relative"],
                 ] as const
               ).map(([v, l]) => (
                 <label key={v} className="flex cursor-pointer items-center gap-1.5 text-sm">
@@ -344,27 +345,17 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
               ))}
             </div>
           </div>
-          {ownership === "BROKER" && (
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label className="text-xs">Broker Name *</Label>
-              <MasterCombobox
-                options={owners}
-                value={ownerId}
-                onChange={setOwnerId}
-                placeholder="Type to search broker..."
-              />
-            </div>
-          )}
-          {ownership === "OWNED" && (
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label className="text-xs">Owner Name(s) — separate multiple with commas</Label>
-              <Input
-                value={ownerNames}
-                onChange={(e) => setOwnerNames(e.target.value.toUpperCase())}
-                placeholder="e.g. RAMESH PATEL, SURESH PATEL"
-              />
-            </div>
-          )}
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label className="text-xs">
+              {ownership === "RELATIVE" ? "Relative Name *" : ownership === "BROKER" ? "Broker Name *" : "Owner Name *"}
+            </Label>
+            <MasterCombobox
+              options={ownership === "RELATIVE" ? relatives : owners}
+              value={ownerId}
+              onChange={setOwnerId}
+              placeholder="Type to search..."
+            />
+          </div>
           <Field label="Vehicle Type">
             <Input value={vehicleType} onChange={(e) => setVehicleType(e.target.value)} />
           </Field>

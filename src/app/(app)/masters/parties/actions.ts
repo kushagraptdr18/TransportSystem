@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { LedgerGroup } from "@prisma/client";
 import { requireSession } from "@/lib/session";
+import { runImport, num as importNum, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
@@ -112,4 +113,64 @@ export async function deleteParty(id: string): Promise<ActionResult> {
   } catch (e) {
     return actionError(e);
   }
+}
+
+/** Excel/CSV import — see the sample template for expected columns. */
+export async function importParties(formData: FormData): Promise<ImportSummary> {
+  const session = requireSession();
+  await authorize(session, "masters", "create");
+  const file = formData.get("file");
+  return withTenant(session.tenantId, async (tx) =>
+    runImport(file instanceof File ? file : null, ["NAME", "GROUP"], async (rec) => {
+      const name = rec["NAME"].toUpperCase();
+      if (!name) throw new Error("Party name is required");
+      const groupAliases: Record<string, string> = {
+        "OWNER": "OWNER_BROKER",
+        "BROKER": "OWNER_BROKER",
+        "OWNER/BROKER": "OWNER_BROKER",
+        "OWNER_BROKER": "OWNER_BROKER",
+        "CONSIGNOR": "CONSIGNEE_CONSIGNOR",
+        "CONSIGNEE": "CONSIGNEE_CONSIGNOR",
+        "PARTY": "CONSIGNEE_CONSIGNOR",
+        "CONSIGNEE_CONSIGNOR": "CONSIGNEE_CONSIGNOR",
+        "BANK": "BANK",
+        "CASH": "CASH",
+        "DRIVER": "DRIVER",
+        "RELATIVE": "RELATIVE",
+        "STAFF": "STAFF",
+        "SUPPLIER": "SUPPLIERS",
+        "SUPPLIERS": "SUPPLIERS",
+      };
+      const group = groupAliases[rec["GROUP"].toUpperCase().replace(/ /g, "_")];
+      if (!group) throw new Error(`unknown group "${rec["GROUP"]}"`);
+      const gstin = rec["GSTIN"]?.toUpperCase() || null;
+      const pan = rec["PAN"]?.toUpperCase() || null;
+      const mobile = rec["MOBILE"]?.replace(/\D/g, "") || null;
+      if (gstin && !GSTIN_RE.test(gstin)) throw new Error(`invalid GSTIN "${gstin}"`);
+      if (pan && !PAN_RE.test(pan)) throw new Error(`invalid PAN "${pan}"`);
+      if (mobile && !MOBILE_RE.test(mobile)) throw new Error(`invalid mobile "${rec["MOBILE"]}"`);
+      if (rec["EMAIL"] && !EMAIL_RE.test(rec["EMAIL"])) throw new Error(`invalid email "${rec["EMAIL"]}"`);
+      const values = {
+        gstin,
+        pan,
+        mobile,
+        email: rec["EMAIL"] || null,
+        address1: rec["ADDRESS"] || null,
+        transportName: group === "OWNER_BROKER" ? rec["TRANSPORT NAME"]?.toUpperCase() || null : null,
+        openingBalance: importNum(rec["OPENING BALANCE"]),
+        openingSide: rec["OPENING SIDE"]?.toUpperCase() === "CREDIT" ? ("CREDIT" as const) : ("DEBIT" as const),
+      };
+      const existing = await tx.party.findFirst({
+        where: { name, ledgerGroup: group as never },
+      });
+      if (existing) {
+        await tx.party.update({ where: { id: existing.id }, data: values });
+        return "updated";
+      }
+      await tx.party.create({
+        data: { tenantId: session.tenantId, name, ledgerGroup: group as never, ...values },
+      });
+      return "created";
+    })
+  );
 }

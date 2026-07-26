@@ -2,7 +2,7 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { SimpleMaster } from "@/components/masters/simple-master";
-import { saveProductGroup, deleteProductGroup } from "@/app/(app)/masters/product-groups/actions";
+import { saveProductGroup, deleteProductGroup, importProductGroups } from "@/app/(app)/masters/product-groups/actions";
 
 interface Row {
   id: string;
@@ -33,6 +33,12 @@ export function ProductGroupsClient({ rows, canDelete }: { rows: Row[]; canDelet
       getId={(r) => r.id}
       save={saveProductGroup}
       remove={deleteProductGroup}
+      importConfig={{
+        action: importProductGroups,
+        templateHeaders: ["Group"],
+        templateExample: ["STEEL"],
+        templateName: "product-groups",
+      }}
       canDelete={canDelete}
     />
   );

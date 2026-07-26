@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
+import { runImport, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
@@ -63,4 +64,31 @@ export async function deleteCity(id: string): Promise<ActionResult> {
   } catch (e) {
     return actionError(e);
   }
+}
+
+/** Excel/CSV import — see the sample template for expected columns. */
+export async function importCities(formData: FormData): Promise<ImportSummary> {
+  const session = requireSession();
+  await authorize(session, "masters", "create");
+  const file = formData.get("file");
+  return withTenant(session.tenantId, async (tx) =>
+    runImport(file instanceof File ? file : null, ["CITY", "STATE"], async (rec) => {
+      const name = rec["CITY"].toUpperCase();
+      if (!name) throw new Error("City name is required");
+      const state = await tx.state.findFirst({ where: { name: { equals: rec["STATE"], mode: "insensitive" } } });
+      if (!state) throw new Error(`state "${rec["STATE"]}" not found in State master`);
+      const values = {
+        district: rec["DISTRICT"] || null,
+        pincode: rec["PINCODE"] || null,
+        stdCode: rec["STD CODE"] || null,
+      };
+      const existing = await tx.city.findFirst({ where: { name, stateId: state.id } });
+      if (existing) {
+        await tx.city.update({ where: { id: existing.id }, data: values });
+        return "updated";
+      }
+      await tx.city.create({ data: { tenantId: session.tenantId, name, stateId: state.id, ...values } });
+      return "created";
+    })
+  );
 }

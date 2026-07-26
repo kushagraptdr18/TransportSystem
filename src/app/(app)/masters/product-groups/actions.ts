@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
+import { runImport, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
@@ -52,4 +53,21 @@ export async function deleteProductGroup(id: string): Promise<ActionResult> {
   } catch (e) {
     return actionError(e);
   }
+}
+
+/** Excel/CSV import — see the sample template for expected columns. */
+export async function importProductGroups(formData: FormData): Promise<ImportSummary> {
+  const session = requireSession();
+  await authorize(session, "masters", "create");
+  const file = formData.get("file");
+  return withTenant(session.tenantId, async (tx) =>
+    runImport(file instanceof File ? file : null, ["GROUP"], async (rec) => {
+      const name = rec["GROUP"].toUpperCase();
+      if (!name) throw new Error("Group name is required");
+      const existing = await tx.productGroup.findFirst({ where: { name } });
+      if (existing) return "skipped";
+      await tx.productGroup.create({ data: { tenantId: session.tenantId, name } });
+      return "created";
+    })
+  );
 }

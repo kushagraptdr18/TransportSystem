@@ -13,7 +13,7 @@ export default async function ChalanPage({
 }) {
   const session = requireSession();
 
-  const [nextNo, brokers, vehicles, banks, record] = await withTenant(
+  const [nextNo, brokers, vehicles, banks, accountHeads, record] = await withTenant(
     session.tenantId,
     async (tx) => {
       const nextNo = await randomUniqueDocNumber(async (n) =>
@@ -37,11 +37,12 @@ export default async function ChalanPage({
         where: { ledgerGroup: { in: ["BANK", "CASH"] }, isActive: true },
         orderBy: { name: "asc" },
       });
+      const accountHeads = await tx.accountHead.findMany({ orderBy: { name: "asc" } });
       const record = searchParams.id
         ? await tx.chalan.findFirst({
             where: { id: searchParams.id, deletedAt: null },
             include: {
-              lrs: { include: { lr: { include: { items: true } } } },
+              lrs: { include: { lr: { include: { items: true, pods: true } } } },
               advances: true,
             },
           })
@@ -64,6 +65,23 @@ export default async function ChalanPage({
             payableAt: record.payableAt ?? "",
             remarks: record.remarks ?? "",
             isFinal: record.isFinal,
+            paymentStatus: record.paymentStatus,
+            balRoundOff: toNum(record.balRoundOff),
+            balShortage: toNum(record.balShortage),
+            balPaidAmount: toNum(record.balPaidAmount),
+            balPaymentDate: record.balPaymentDate ? record.balPaymentDate.toISOString() : null,
+            balPaymentHeadId: record.balPaymentHeadId,
+            balPaymentMode: record.balPaymentMode ?? "BANK",
+            balRemarks: record.balRemarks ?? "",
+            podTotal: record.lrs.filter(
+              (l) => l.lr.lrType !== "CANCELLED" && l.lr.lrType !== "PAPER_CHANGE"
+            ).length,
+            podDone: record.lrs.filter(
+              (l) =>
+                l.lr.lrType !== "CANCELLED" &&
+                l.lr.lrType !== "PAPER_CHANGE" &&
+                l.lr.pods.length > 0
+            ).length,
             freight: toNum(record.freight),
             rate: toNum(record.rate),
             rateBasis: record.rateBasis,
@@ -107,6 +125,8 @@ export default async function ChalanPage({
               supplierName: a.supplierName ?? "",
               bankName: a.bankName ?? "",
               bankPartyId: a.bankPartyId,
+              headId: a.bankPartyId,
+              advanceType: a.type === "BANK" ? ("BANK_CASH" as const) : ("HEAD" as const),
               dieselQty: a.dieselQty == null ? 0 : toNum(a.dieselQty),
               dieselRate: a.dieselRate == null ? 0 : toNum(a.dieselRate),
               amount: toNum(a.amount),
@@ -116,7 +136,7 @@ export default async function ChalanPage({
           }
         : null;
 
-      return [nextNo, brokers, vehicles, banks, rec] as const;
+      return [nextNo, brokers, vehicles, banks, accountHeads, rec] as const;
     }
   );
 
@@ -137,7 +157,8 @@ export default async function ChalanPage({
         label: v.number,
         meta: v.isOwn ? `Owned${v.ownerNames ? " — " + v.ownerNames : ""}` : `Broker — ${v.owner?.name ?? "?"}`,
       }))}
-      banks={banks.map((b) => ({ value: b.id, label: b.name }))}
+      banks={banks.map((b) => ({ value: b.id, label: b.name, meta: b.ledgerGroup }))}
+      accountHeads={accountHeads.map((h) => ({ value: h.id, label: h.name, meta: h.kind }))}
       record={record}
     />
   );

@@ -24,6 +24,7 @@ import { tdsPctFromPan, type TdsMode } from "@/lib/calc/tds";
 import { formatDate, formatMoney, parseDdMmYyyy } from "@/lib/utils";
 import {
   finalizeChalan,
+  saveBalancePayment,
   getBrokerTdsInfo,
   getPendingLrsForVehicle,
   saveChalan,
@@ -43,6 +44,8 @@ export interface AdvanceRow {
   supplierName: string;
   bankName: string;
   bankPartyId?: string | null;
+  advanceType?: "HEAD" | "BANK_CASH";
+  headId?: string | null;
   dieselQty: number;
   dieselRate: number;
   amount: number;
@@ -62,6 +65,16 @@ export interface ChalanRecord {
   payableAt: string;
   remarks: string;
   isFinal: boolean;
+  paymentStatus: string;
+  balRoundOff: number;
+  balShortage: number;
+  balPaidAmount: number;
+  balPaymentDate: string | null;
+  balPaymentHeadId: string | null;
+  balPaymentMode: string;
+  balRemarks: string;
+  podTotal: number;
+  podDone: number;
   freight: number;
   rate: number;
   rateBasis: "QTY" | "ACTUAL_WT" | "CHARGE_WT" | "FIXED";
@@ -85,28 +98,20 @@ export interface ChalanRecord {
   advances: AdvanceRow[];
 }
 
-const ADVANCE_TYPES = [
-  "CASH",
-  "BANK",
-  "DIESEL",
-  "TOLL",
-  "TYRE",
-  "SPARE_PARTS",
-  "REPAIR",
-  "OTHER",
-] as const;
 
 export function ChalanForm({
   nextChalanNo,
   brokers,
   vehicles,
   banks,
+  accountHeads,
   record,
 }: {
   nextChalanNo: string;
   brokers: BrokerOption[];
   vehicles: { value: string; label: string; meta?: string }[];
-  banks: { value: string; label: string }[];
+  banks: { value: string; label: string; meta?: string }[];
+  accountHeads: { value: string; label: string; meta?: string }[];
   record: ChalanRecord | null;
 }) {
   const router = useRouter();
@@ -167,6 +172,21 @@ export function ChalanForm({
   // ------- advances -------
   const [advances, setAdvances] = React.useState<AdvanceRow[]>(record?.advances ?? []);
 
+  // ------- balance payment (PENDING -> PAID) -------
+  const [balRoundOff, setBalRoundOff] = React.useState(record?.balRoundOff ?? 0);
+  const [balShortage, setBalShortage] = React.useState(record?.balShortage ?? 0);
+  const [balDateText, setBalDateText] = React.useState(
+    record?.balPaymentDate ? formatDate(new Date(record.balPaymentDate)) : formatDate(new Date())
+  );
+  const [balHeadId, setBalHeadId] = React.useState<string | null>(record?.balPaymentHeadId ?? null);
+  const [balMode, setBalMode] = React.useState(record?.balPaymentMode ?? "BANK");
+  const [balRemarks, setBalRemarks] = React.useState(record?.balRemarks ?? "");
+  const [balSaving, setBalSaving] = React.useState(false);
+  const [paymentStatus, setPaymentStatus] = React.useState(record?.paymentStatus ?? "PENDING");
+  const podTotal = record?.podTotal ?? 0;
+  const podDone = record?.podDone ?? 0;
+  const allPodDone = podTotal > 0 && podDone >= podTotal;
+
   const [saving, setSaving] = React.useState(false);
   const isFinal = record?.isFinal ?? false;
 
@@ -219,6 +239,58 @@ export function ChalanForm({
     tdsPct,
     advances: advances.map((a) => a.amount),
   });
+
+  const balPaidPreview = Math.round((totals.balance - balRoundOff - balShortage) * 100) / 100;
+
+  const handleBalancePayment = async () => {
+    if (!id) return;
+    if (!allPodDone) {
+      toast({
+        variant: "destructive",
+        title: "POD not complete",
+        description: `POD is ${podDone}/${podTotal} — all LRs must have a confirmed POD first.`,
+      });
+      return;
+    }
+    const d = parseDdMmYyyy(balDateText);
+    if (!d) {
+      toast({ variant: "destructive", title: "Valid payment date is required" });
+      return;
+    }
+    if (!balHeadId) {
+      toast({ variant: "destructive", title: "Select the bank/cash payment head" });
+      return;
+    }
+    setBalSaving(true);
+    try {
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const res = await saveBalancePayment({
+        chalanId: id,
+        roundOff: balRoundOff,
+        shortage: balShortage,
+        paymentDate: `${d.getFullYear()}-${mm}-${dd}`,
+        paymentHeadId: balHeadId,
+        paymentMode: balMode as "CASH" | "BANK" | "UPI" | "CHEQUE" | "NEFT_RTGS",
+        remarks: balRemarks,
+      });
+      if (res.ok) {
+        setPaymentStatus("PAID");
+        toast({
+          title: "Balance settled — chalan marked PAID",
+          description: `Paid ${formatMoney(res.paidAmount)} — posted to the bank/cash book.`,
+        });
+        // redirect to the register and refresh so the new status shows immediately
+        router.push("/chalan/register");
+        router.refresh();
+      } else {
+        toast({ variant: "destructive", title: "Balance payment failed", description: res.error });
+        setBalSaving(false);
+      }
+    } catch {
+      setBalSaving(false);
+    }
+  };
 
   const autoTdsPct = tdsPctFromPan(brokerTds?.pan, brokerTds?.tdsMode);
   const tdsBadge =
@@ -415,15 +487,9 @@ export function ChalanForm({
             <LrPicker
               rows={pending.filter((p) => !selected.some((s) => s.id === p.id))}
               onAdd={(rows) => {
+                // Rate/Amount is entered manually — do NOT auto-fill from the LR.
+                // Only quantities/weights (used for display) come from the LRs.
                 setSelected((prev) => [...prev, ...rows]);
-                // adopt rate, basis and remarks from the LR when not typed yet
-                const withRate = rows.find((r) => r.rate > 0);
-                if (rate === 0 && withRate) {
-                  setRate(withRate.rate);
-                  setRateBasis(withRate.rateBasis);
-                }
-                const withRemarks = rows.find((r) => r.remarks);
-                if (!remarks && withRemarks) setRemarks(withRemarks.remarks);
               }}
               title="Pending LRs for vehicle"
             />
@@ -594,9 +660,12 @@ export function ChalanForm({
               setAdvances((prev) => [
                 ...prev,
                 {
-                  type: "CASH",
+                  type: "BANK",
+                  advanceType: "BANK_CASH",
+                  headId: null,
                   supplierName: "",
                   bankName: "",
+                  bankPartyId: null,
                   dieselQty: 0,
                   dieselRate: 0,
                   amount: 0,
@@ -614,62 +683,45 @@ export function ChalanForm({
             <div className="text-sm text-muted-foreground">Save the chalan first to add advances.</div>
           )}
           {advances.map((a, i) => (
-            <div key={i} className="grid items-end gap-2 rounded-md border p-2 sm:grid-cols-4 lg:grid-cols-8">
-              <Field label="Type">
-                <Select value={a.type} onValueChange={(v) => setAdvance(i, { type: v as AdvanceRow["type"] })}>
+            <div key={i} className="grid items-end gap-2 rounded-md border p-2 sm:grid-cols-2 lg:grid-cols-5">
+              <Field label="Advance Type">
+                <Select
+                  value={a.advanceType ?? "BANK_CASH"}
+                  onValueChange={(v) =>
+                    setAdvance(i, {
+                      advanceType: v as "HEAD" | "BANK_CASH",
+                      type: v === "BANK_CASH" ? "BANK" : "OTHER",
+                      headId: null,
+                      bankPartyId: null,
+                      bankName: "",
+                    })
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {ADVANCE_TYPES.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {t.replace("_", " ")}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="HEAD">Income / Expense Head</SelectItem>
+                    <SelectItem value="BANK_CASH">Bank / Cash Head</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Supplier">
-                <Input value={a.supplierName} onChange={(e) => setAdvance(i, { supplierName: e.target.value })} />
-              </Field>
-              {a.type === "BANK" ? (
-                <Field label="Bank">
-                  <MasterCombobox
-                    options={banks}
-                    value={a.bankPartyId ?? banks.find((b) => b.label === a.bankName)?.value ?? null}
-                    onChange={(v) =>
-                      setAdvance(i, {
-                        bankPartyId: v,
-                        bankName: banks.find((b) => b.value === v)?.label ?? "",
-                      })
-                    }
-                    placeholder="Bank..."
-                  />
-                </Field>
-              ) : (
-                <div />
-              )}
-              {a.type === "DIESEL" ? (
-                <>
-                  <Field label="Diesel Qty">
-                    <NumInput value={a.dieselQty} onChange={(n) => setAdvance(i, { dieselQty: n })} />
-                  </Field>
-                  <Field label="Rate">
-                    <NumInput value={a.dieselRate} onChange={(n) => setAdvance(i, { dieselRate: n })} />
-                  </Field>
-                </>
-              ) : (
-                <>
-                  <div />
-                  <div />
-                </>
-              )}
-              <Field label="Amount">
-                <NumInput
-                  value={a.amount}
-                  onChange={(n) => setAdvance(i, { amount: n })}
-                  readOnly={a.type === "DIESEL"}
+              <Field label={(a.advanceType ?? "BANK_CASH") === "HEAD" ? "Head" : "Bank / Cash"}>
+                <MasterCombobox
+                  options={(a.advanceType ?? "BANK_CASH") === "HEAD" ? accountHeads : banks}
+                  value={a.headId ?? a.bankPartyId ?? null}
+                  onChange={(v) => {
+                    const opts = (a.advanceType ?? "BANK_CASH") === "HEAD" ? accountHeads : banks;
+                    const label = opts.find((o) => o.value === v)?.label ?? "";
+                    // bankPartyId holds the reference id for both types; only
+                    // BANK_CASH advances (type BANK) post to the bank book.
+                    setAdvance(i, { headId: v, bankPartyId: v, bankName: label });
+                  }}
+                  placeholder="Select..."
                 />
+              </Field>
+              <Field label="Amount">
+                <NumInput value={a.amount} onChange={(n) => setAdvance(i, { amount: n })} />
               </Field>
               <Field label="Date">
                 <DateInput
@@ -677,10 +729,7 @@ export function ChalanForm({
                   onChange={(_, d) => setAdvance(i, { date: d ? d.toISOString() : null })}
                 />
               </Field>
-              <div className="flex items-end gap-2">
-                <Field label="Remarks" className="flex-1">
-                  <Input value={a.remarks} onChange={(e) => setAdvance(i, { remarks: e.target.value })} />
-                </Field>
+              <div className="flex items-end">
                 <Button
                   type="button"
                   variant="ghost"
@@ -688,7 +737,7 @@ export function ChalanForm({
                   className="text-destructive"
                   onClick={() => setAdvances((prev) => prev.filter((_, idx) => idx !== i))}
                 >
-                  ×
+                  Remove
                 </Button>
               </div>
             </div>
@@ -759,6 +808,87 @@ export function ChalanForm({
           </div>
         </CardContent>
       </Card>
+
+      {/* balance payment — available once the chalan exists */}
+      {id && (
+        <Card id="balance" className={isFinal ? "border-primary/50" : "opacity-70"}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="flex items-center justify-between text-sm">
+              <span className="flex items-center gap-2">
+                Balance Payment
+                {paymentStatus === "PAID" ? (
+                  <Badge>PAID</Badge>
+                ) : (
+                  <Badge variant="destructive">Pending Balance</Badge>
+                )}
+              </span>
+              {!isFinal ? (
+                <span className="text-xs font-normal text-muted-foreground">
+                  Finalize the chalan first to settle its balance
+                </span>
+              ) : !allPodDone ? (
+                <Badge variant="destructive">POD {podDone}/{podTotal} — complete all PODs to pay balance</Badge>
+              ) : (
+                <Badge>POD {podDone}/{podTotal} complete</Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 p-4 pt-2 sm:grid-cols-2 lg:grid-cols-4">
+            <Field label="Balance Amount">
+              <NumInput value={totals.balance} readOnly />
+            </Field>
+            <Field label="Round Off (−)">
+              <NumInput value={balRoundOff} onChange={setBalRoundOff} />
+            </Field>
+            <Field label="Shortage (−)">
+              <NumInput value={balShortage} onChange={setBalShortage} />
+            </Field>
+            <Field label="Final Paid Amount">
+              <NumInput value={balPaidPreview} readOnly />
+            </Field>
+            <Field label="Payment Date">
+              <DateInput value={balDateText} onChange={(t) => setBalDateText(t)} />
+            </Field>
+            <Field label="Payment Head (Bank / Cash)">
+              <MasterCombobox
+                options={banks}
+                value={balHeadId}
+                onChange={setBalHeadId}
+                placeholder="Select head..."
+              />
+            </Field>
+            <Field label="Payment Mode">
+              <select
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                value={balMode}
+                onChange={(e) => setBalMode(e.target.value)}
+              >
+                <option value="BANK">Bank Transfer</option>
+                <option value="CASH">Cash</option>
+                <option value="UPI">UPI</option>
+                <option value="CHEQUE">Cheque</option>
+                <option value="NEFT_RTGS">NEFT / RTGS</option>
+              </select>
+            </Field>
+            <Field label="Remarks">
+              <Input value={balRemarks} onChange={(e) => setBalRemarks(e.target.value)} />
+            </Field>
+            <div className="flex items-end sm:col-span-2 lg:col-span-4">
+              <Button
+                type="button"
+                onClick={handleBalancePayment}
+                disabled={balSaving || !isFinal || !allPodDone}
+              >
+                {balSaving
+                  ? "Saving..."
+                  : paymentStatus === "PAID"
+                    ? "Update Balance Payment"
+                    : "Save Balance Payment (mark PAID)"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </form>
   );
 }

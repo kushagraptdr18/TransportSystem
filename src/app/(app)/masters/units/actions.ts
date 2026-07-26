@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
+import { runImport, num as importNum, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
@@ -54,4 +55,25 @@ export async function deleteUnit(id: string): Promise<ActionResult> {
   } catch (e) {
     return actionError(e);
   }
+}
+
+/** Excel/CSV import — see the sample template for expected columns. */
+export async function importUnits(formData: FormData): Promise<ImportSummary> {
+  const session = requireSession();
+  await authorize(session, "masters", "create");
+  const file = formData.get("file");
+  return withTenant(session.tenantId, async (tx) =>
+    runImport(file instanceof File ? file : null, ["UNIT"], async (rec) => {
+      const name = rec["UNIT"].toUpperCase();
+      if (!name) throw new Error("Unit name is required");
+      const value = importNum(rec["VALUE"]) || 1;
+      const existing = await tx.unit.findFirst({ where: { name } });
+      if (existing) {
+        await tx.unit.update({ where: { id: existing.id }, data: { value } });
+        return "updated";
+      }
+      await tx.unit.create({ data: { tenantId: session.tenantId, name, value } });
+      return "created";
+    })
+  );
 }

@@ -3,7 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { SimpleMaster } from "@/components/masters/simple-master";
-import { saveAccountHead, deleteAccountHead } from "@/app/(app)/masters/account-heads/actions";
+import { saveAccountHead, deleteAccountHead, importAccountHeads } from "@/app/(app)/masters/account-heads/actions";
 
 interface Row {
   id: string;
@@ -64,6 +64,12 @@ export function AccountHeadsClient({ rows, canDelete }: { rows: Row[]; canDelete
       getId={(r) => r.id}
       save={saveAccountHead}
       remove={deleteAccountHead}
+      importConfig={{
+        action: importAccountHeads,
+        templateHeaders: ["Name", "Kind"],
+        templateExample: ["LOADING CHARGES", "INCOME"],
+        templateName: "account-heads",
+      }}
       canDelete={canDelete}
     />
   );

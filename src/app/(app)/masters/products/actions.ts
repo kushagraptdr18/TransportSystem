@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
+import { runImport, num as importNum, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
@@ -71,4 +72,38 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
   } catch (e) {
     return actionError(e);
   }
+}
+
+/** Excel/CSV import — see the sample template for expected columns. */
+export async function importProducts(formData: FormData): Promise<ImportSummary> {
+  const session = requireSession();
+  await authorize(session, "masters", "create");
+  const file = formData.get("file");
+  return withTenant(session.tenantId, async (tx) =>
+    runImport(file instanceof File ? file : null, ["PRODUCT"], async (rec) => {
+      const name = rec["PRODUCT"].toUpperCase();
+      if (!name) throw new Error("Product name is required");
+      const groupName = (rec["GROUP"] || "GENERAL").toUpperCase();
+      const group = await tx.productGroup.upsert({
+        where: { tenantId_name: { tenantId: session.tenantId, name: groupName } },
+        create: { tenantId: session.tenantId, name: groupName },
+        update: {},
+      });
+      const productType = rec["PRODUCT TYPE"]?.toUpperCase() === "ODC" ? "ODC" : "NORMAL";
+      const values = {
+        groupId: group.id,
+        unit: rec["UNIT"] || "MT",
+        hsnCode: rec["HSN CODE"] || null,
+        gstPct: importNum(rec["GST %"]),
+        productType,
+      };
+      const existing = await tx.product.findFirst({ where: { name } });
+      if (existing) {
+        await tx.product.update({ where: { id: existing.id }, data: values });
+        return "updated";
+      }
+      await tx.product.create({ data: { tenantId: session.tenantId, name, ...values } });
+      return "created";
+    })
+  );
 }

@@ -29,6 +29,7 @@ import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import { DateInput } from "@/components/data/date-input";
 import { ExportButton, type ExportColumn } from "@/components/data/export-button";
+import { ImportButton, type ImportConfig } from "@/components/data/import-button";
 
 export type ActionResult = { ok: true; id: string } | { ok: false; error: string };
 
@@ -75,6 +76,8 @@ interface SimpleMasterProps<T> {
   /** Extra content rendered below the fields (hints, computed values). */
   renderExtra?: (form: FormState, set: (name: string, value: unknown) => void) => React.ReactNode;
   dialogClassName?: string;
+  /** Excel/CSV import + sample template (rendered next to Export). */
+  importConfig?: ImportConfig;
 }
 
 export function SimpleMaster<T>({
@@ -95,6 +98,7 @@ export function SimpleMaster<T>({
   transform,
   renderExtra,
   dialogClassName,
+  importConfig,
 }: SimpleMasterProps<T>) {
   const router = useRouter();
   const { toast } = useToast();
@@ -290,6 +294,7 @@ export function SimpleMaster<T>({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">{title}</h1>
         <div className="flex items-center gap-2">
+          {importConfig && <ImportButton config={importConfig} />}
           <ExportButton rows={rows} columns={exportColumns} fileName={exportName} />
           <Button size="sm" onClick={openNew}>
             <Plus className="h-4 w-4" />

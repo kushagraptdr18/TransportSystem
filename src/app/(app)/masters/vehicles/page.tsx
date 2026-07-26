@@ -13,7 +13,7 @@ export default async function VehiclesPage({
   const q = searchParams.q?.trim();
   const own = searchParams.own;
 
-  const { rows, owners } = await withTenant(session.tenantId, async (tx) => {
+  const { rows, owners, relatives } = await withTenant(session.tenantId, async (tx) => {
     const rows = await tx.vehicle.findMany({
       where: {
         isActive: true,
@@ -27,7 +27,11 @@ export default async function VehiclesPage({
       where: { isActive: true, ledgerGroup: "OWNER_BROKER" },
       orderBy: { name: "asc" },
     });
-    return { rows, owners };
+    const relatives = await tx.party.findMany({
+      where: { isActive: true, ledgerGroup: "RELATIVE" },
+      orderBy: { name: "asc" },
+    });
+    return { rows, owners, relatives };
   });
 
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
@@ -37,6 +41,7 @@ export default async function VehiclesPage({
         id: r.id,
         number: r.number,
         isOwn: r.isOwn,
+        ownershipType: r.ownershipType,
         ownerId: r.ownerId,
         ownerName: r.owner?.name ?? null,
         ownerNames: r.ownerNames,
@@ -47,6 +52,7 @@ export default async function VehiclesPage({
         insuranceNo: r.insuranceNo,
       }))}
       ownerOptions={owners.map((p) => ({ value: p.id, label: p.name, meta: p.pan ?? undefined }))}
+      relativeOptions={relatives.map((p) => ({ value: p.id, label: p.name, meta: p.mobile ?? undefined }))}
       canDelete={canDelete}
     />
   );

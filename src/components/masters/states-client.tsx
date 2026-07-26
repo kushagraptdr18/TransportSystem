@@ -2,7 +2,7 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { SimpleMaster } from "@/components/masters/simple-master";
-import { saveState, deleteState } from "@/app/(app)/masters/states/actions";
+import { saveState, deleteState, importStates } from "@/app/(app)/masters/states/actions";
 
 interface Row {
   id: string;
@@ -36,6 +36,12 @@ export function StatesClient({ rows, canDelete }: { rows: Row[]; canDelete: bool
       getId={(r) => r.id}
       save={saveState}
       remove={deleteState}
+      importConfig={{
+        action: importStates,
+        templateHeaders: ["State", "GST Code"],
+        templateExample: ["CHHATTISGARH", "22"],
+        templateName: "states",
+      }}
       canDelete={canDelete}
     />
   );

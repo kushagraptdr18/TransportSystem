@@ -3,7 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { SimpleMaster } from "@/components/masters/simple-master";
-import { saveDocumentType, deleteDocumentType } from "@/app/(app)/masters/document-master/actions";
+import { saveDocumentType, deleteDocumentType, importDocumentTypes } from "@/app/(app)/masters/document-master/actions";
 
 interface Row {
   id: string;
@@ -56,6 +56,12 @@ export function DocumentMasterClient({ rows, canDelete }: { rows: Row[]; canDele
       getId={(r) => r.id}
       save={saveDocumentType}
       remove={deleteDocumentType}
+      importConfig={{
+        action: importDocumentTypes,
+        templateHeaders: ["Name", "Description", "Reminder Days"],
+        templateExample: ["INSURANCE", "Vehicle insurance", "30"],
+        templateName: "document-types",
+      }}
       canDelete={canDelete}
     />
   );

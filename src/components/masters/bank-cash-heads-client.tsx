@@ -3,7 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { SimpleMaster, type FormState } from "@/components/masters/simple-master";
-import { saveParty, deleteParty } from "@/app/(app)/masters/parties/actions";
+import { saveParty, deleteParty, importParties } from "@/app/(app)/masters/parties/actions";
 
 export interface BankCashHeadRow {
   id: string;
@@ -115,6 +115,12 @@ export function BankCashHeadsClient({
       getId={(r) => r.id}
       save={saveParty}
       remove={deleteParty}
+      importConfig={{
+        action: importParties,
+        templateHeaders: ["Name", "Group"],
+        templateExample: ["HDFC BANK", "BANK"],
+        templateName: "bank-cash-heads",
+      }}
       canDelete={canDelete}
     />
   );

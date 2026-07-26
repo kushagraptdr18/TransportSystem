@@ -27,6 +27,7 @@ enum LedgerGroup {
   INCOME
   OFFICE
   OWNER_BROKER
+  RELATIVE
   STAFF
   SUPPLIERS
 }
@@ -433,6 +434,7 @@ model Vehicle {
   ownerId          String?
   owner            Party?   @relation(fields: [ownerId], references: [id])
   isOwn            Boolean  @default(false)
+  ownershipType    String   @default("BROKER") // OWNER | BROKER | RELATIVE
   ownerNames       String? // owned vehicles: one or more owner names, comma-separated
   chassisNo        String?
   engineNo         String?
@@ -503,6 +505,8 @@ model VehicleDocument {
   effectiveDate DateTime?
   expiryDate    DateTime?
   remarks       String?
+  filePath      String? // uploaded document (pdf/jpg/png)
+  fileName      String?
 
   @@index([tenantId, expiryDate])
 }
@@ -544,6 +548,7 @@ model Lr {
   transpMode    String?
   remarks       String?
   lrType        LrType   @default(TBB)
+  cargoType     String   @default("NORMAL") // NORMAL | ODC — auto-derived from product types
   status        LrStatus @default(PENDING)
   printFreight  Boolean  @default(true)
   gstApplicable Boolean  @default(false)
@@ -676,6 +681,16 @@ model Chalan {
   unloadRemarks String?
 
   isFinal Boolean @default(false)
+
+  // balance payment lifecycle: PENDING (balance due) -> PAID
+  paymentStatus    String    @default("PENDING")
+  balRoundOff      Decimal   @default(0) @db.Decimal(12, 2)
+  balShortage      Decimal   @default(0) @db.Decimal(12, 2)
+  balPaidAmount    Decimal   @default(0) @db.Decimal(14, 2)
+  balPaymentDate   DateTime?
+  balPaymentHeadId String? // BANK/CASH party the balance was paid from
+  balPaymentMode   String? // CASH | BANK | UPI | CHEQUE | NEFT_RTGS
+  balRemarks       String?
 
   lrs      ChalanLr[]
   advances ChalanAdvance[]

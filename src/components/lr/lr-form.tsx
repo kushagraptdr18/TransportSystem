@@ -11,6 +11,7 @@ import { stateCodeFromGstin } from "@/lib/calc/gst";
 import type { RateBasis } from "@/lib/calc/rate";
 import { computeLrTotals, itemAmount, itemsFreight, RATE_BASIS_LABELS, emptyLrItem } from "./lr-calc";
 import { saveLr } from "@/app/(app)/lr/actions";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -110,6 +111,7 @@ export interface LrFormProps {
   partyDetails: Record<string, PartyDetail>;
   vehicleOwners: Record<string, string>;
   productUnits: Record<string, string>;
+  productTypes: Record<string, string>;
 }
 
 const requiredSchema = z.object({
@@ -301,6 +303,7 @@ export function LrForm(props: LrFormProps) {
       deliveryAt: values.deliveryAt || null,
       remarks: values.remarks || null,
       lrType: values.lrType,
+      cargoType,
       printFreight: values.printFreight,
       gstApplicable: values.gstApplicable,
       insCompany: values.insCompany || null,
@@ -362,6 +365,12 @@ export function LrForm(props: LrFormProps) {
       setSaving(false);
     }
   });
+
+  const cargoType = (v.items ?? []).some(
+    (it) => it.productId && props.productTypes[it.productId] === "ODC"
+  )
+    ? "ODC"
+    : "NORMAL";
 
   const inputCls = "h-9";
   const numCls = "h-9 text-right tabular-nums";
@@ -659,7 +668,12 @@ export function LrForm(props: LrFormProps) {
       {/* ---------- Items ---------- */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between p-4 pb-2">
-          <CardTitle className="text-sm">Product Details</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            Product Details
+            <Badge variant={cargoType === "ODC" ? "destructive" : "secondary"}>
+              {cargoType === "ODC" ? "ODC LR" : "Normal LR"}
+            </Badge>
+          </CardTitle>
           <Button
             type="button"
             variant="outline"
@@ -670,9 +684,10 @@ export function LrForm(props: LrFormProps) {
           </Button>
         </CardHeader>
         <CardContent className="space-y-2 overflow-x-auto p-4 pt-0">
-          <div className="min-w-[1050px]">
-            <div className="grid grid-cols-[220px_1fr_80px_90px_90px_70px_90px_130px_100px_36px] gap-1 px-1 text-xs font-medium text-muted-foreground">
+          <div className="min-w-[1120px]">
+            <div className="grid grid-cols-[200px_72px_1fr_80px_90px_90px_60px_90px_120px_100px_36px] gap-1 px-1 text-xs font-medium text-muted-foreground">
               <div>Product</div>
+              <div>Type</div>
               <div>Description</div>
               <div className="text-right">Qty</div>
               <div className="text-right">Actual Wt</div>
@@ -697,7 +712,7 @@ export function LrForm(props: LrFormProps) {
               return (
                 <div
                   key={field.id}
-                  className="grid grid-cols-[220px_1fr_80px_90px_90px_70px_90px_130px_100px_36px] items-center gap-1 px-1 py-0.5"
+                  className="grid grid-cols-[200px_72px_1fr_80px_90px_90px_60px_90px_120px_100px_36px] items-center gap-1 px-1 py-0.5"
                 >
                   <MasterCombobox
                     options={productOptions}
@@ -729,6 +744,15 @@ export function LrForm(props: LrFormProps) {
                       />
                     )}
                   />
+                  <div className="flex justify-center">
+                    {row?.productId && props.productTypes[row.productId] === "ODC" ? (
+                      <Badge variant="destructive" className="text-[10px]">ODC</Badge>
+                    ) : row?.productId ? (
+                      <Badge variant="secondary" className="text-[10px]">Normal</Badge>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </div>
                   <Input {...register(`items.${index}.description`)} className={inputCls} />
                   <Input
                     type="number"

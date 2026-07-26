@@ -3,7 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import type { MasterOption } from "@/components/data/master-combobox";
 import { SimpleMaster } from "@/components/masters/simple-master";
-import { saveCity, deleteCity } from "@/app/(app)/masters/cities/actions";
+import { saveCity, deleteCity, importCities } from "@/app/(app)/masters/cities/actions";
 
 interface Row {
   id: string;
@@ -67,6 +67,12 @@ export function CitiesClient({
       getId={(r) => r.id}
       save={saveCity}
       remove={deleteCity}
+      importConfig={{
+        action: importCities,
+        templateHeaders: ["City", "State", "District", "Pincode", "STD Code"],
+        templateExample: ["RAIPUR", "CHHATTISGARH", "RAIPUR", "492001", "0771"],
+        templateName: "cities",
+      }}
       canDelete={canDelete}
     />
   );

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
-import { withTenant } from "@/lib/db";
+import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { toNum } from "@/lib/utils";
@@ -45,6 +45,7 @@ const lrSchema = z.object({
   deliveryAt: z.string().nullish(),
   remarks: z.string().nullish(),
   lrType: lrTypeSchema.default("TBB"),
+  cargoType: z.enum(["NORMAL", "ODC"]).default("NORMAL"),
   printFreight: z.boolean().default(true),
   gstApplicable: z.boolean().default(false),
 
@@ -72,6 +73,21 @@ const lrSchema = z.object({
 
   items: z.array(itemSchema).min(1, "At least one item is required"),
 });
+
+
+/** Authoritative cargo type: ODC if any item's product is ODC in the master. */
+async function deriveCargoType(
+  tx: Tx,
+  items: { productId?: string | null }[]
+): Promise<"NORMAL" | "ODC"> {
+  const ids = items.map((i) => i.productId).filter(Boolean) as string[];
+  if (ids.length === 0) return "NORMAL";
+  const odc = await tx.product.findFirst({
+    where: { id: { in: ids }, productType: "ODC" },
+    select: { id: true },
+  });
+  return odc ? "ODC" : "NORMAL";
+}
 
 export type SaveLrResult = { ok: true; id: string } | { ok: false; error: string };
 
@@ -104,6 +120,7 @@ function lrRowData(
     deliveryAt: data.deliveryAt || null,
     remarks: data.remarks || null,
     lrType: data.lrType,
+    cargoType: data.cargoType,
     printFreight: data.printFreight,
     gstApplicable: data.gstApplicable,
     insCompany: data.insCompany || null,
@@ -191,6 +208,7 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
 
       const lrData = lrRowData(data, totals, lrNo);
       const items = lrItemsData(session.tenantId, data);
+      data.cargoType = await deriveCargoType(tx, data.items);
 
       let savedId: string;
       if (data.id) {
@@ -417,16 +435,50 @@ export async function saveLrBatch(
       const igstPct = Number(firm.igstPct);
       const gstPct = igstPct > 0 ? igstPct : Number(firm.cgstPct) + Number(firm.sgstPct);
       const first = await nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId });
-      const base = parseInt(first, 10);
+      let cursor = parseInt(first, 10);
       const commonVehicleId = entries[0].vehicleId ?? null;
       const commonDate = entries[0].lrDate;
       const lrNos: string[] = [];
+
+      // user-typed LR numbers are honoured exactly; blanks are auto-assigned
+      const used = new Set<string>();
+      const assigned: string[] = [];
+      for (let i = 0; i < entries.length; i++) {
+        const typed = entries[i].lrNo?.trim();
+        let lrNo: string;
+        if (typed) {
+          if (used.has(typed)) {
+            return { ok: false as const, error: `LR number ${typed} is used twice in this batch.` };
+          }
+          lrNo = typed;
+        } else {
+          while (used.has(String(cursor))) cursor++;
+          lrNo = String(cursor++);
+        }
+        used.add(lrNo);
+        assigned.push(lrNo);
+      }
+      const clashes = await tx.lr.findMany({
+        where: {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          lrNo: { in: assigned },
+          deletedAt: null,
+        },
+        select: { lrNo: true },
+      });
+      if (clashes.length) {
+        return {
+          ok: false as const,
+          error: `LR number ${clashes[0].lrNo} already exists — change it before saving.`,
+        };
+      }
 
       for (let i = 0; i < entries.length; i++) {
         const data = {
           ...entries[i],
           id: null,
-          lrNo: String(base + i),
+          lrNo: assigned[i],
           vehicleId: commonVehicleId,
           lrDate: commonDate,
         };
@@ -434,6 +486,7 @@ export async function saveLrBatch(
           tx.party.findUniqueOrThrow({ where: { id: data.consignorId } }),
           tx.party.findUniqueOrThrow({ where: { id: data.consigneeId } }),
         ]);
+        data.cargoType = await deriveCargoType(tx, data.items);
         const totals = computeLrTotals({
           freight: data.freight,
           hamali: data.hamali,

@@ -59,6 +59,10 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
       include: { items: true },
     });
     if (!lr) return null;
+    const prodIds = lr.items.map((i) => i.productId).filter(Boolean) as string[];
+    const products = prodIds.length
+      ? await tx.product.findMany({ where: { id: { in: prodIds } }, select: { id: true, productType: true } })
+      : [];
     const [firm, sourceCity, destCity, consignor, consignee, billTo, vehicle] = await Promise.all([
       tx.firm.findUniqueOrThrow({ where: { id: session.firmId } }),
       tx.city.findUnique({ where: { id: lr.sourceCityId } }),
@@ -68,11 +72,12 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
       lr.billToId ? tx.party.findUnique({ where: { id: lr.billToId } }) : Promise.resolve(null),
       lr.vehicleId ? tx.vehicle.findUnique({ where: { id: lr.vehicleId } }) : Promise.resolve(null),
     ]);
-    return { lr, firm, sourceCity, destCity, consignor, consignee, billTo, vehicle };
+    return { lr, firm, sourceCity, destCity, consignor, consignee, billTo, vehicle, products };
   });
 
   if (!data) notFound();
-  const { lr, firm, sourceCity, destCity, consignor, consignee, billTo, vehicle } = data;
+  const { lr, firm, sourceCity, destCity, consignor, consignee, billTo, vehicle, products } = data;
+  const productTypeById = new Map(products.map((p) => [p.id, p.productType]));
   const showAmounts = lr.printFreight;
 
   const charges: [string, number][] = [
@@ -172,6 +177,9 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                   <div className="border border-black px-2 py-0.5 text-[10px] font-bold">
                     {lr.lrType.replace("_", " ")}
                   </div>
+                  <div className="border border-black px-2 py-0.5 text-[10px] font-black">
+                    {lr.cargoType === "ODC" ? "ODC" : "NORMAL"}
+                  </div>
                 </div>
               </div>
             </div>
@@ -254,6 +262,7 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                 <thead>
                   <tr className="print-fill border-b border-black bg-neutral-100 text-left text-[9px] uppercase tracking-wider">
                     <th className="border-r border-black p-1.5">Product / Description</th>
+                    <th className="border-r border-black p-1.5">Type</th>
                     <th className="border-r border-black p-1.5 text-right">Qty</th>
                     <th className="border-r border-black p-1.5 text-right">Actual Wt</th>
                     <th className="border-r border-black p-1.5 text-right">Charge Wt</th>
@@ -274,6 +283,9 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                         {item.description && (
                           <span className="text-[10px] font-normal"> — {item.description}</span>
                         )}
+                      </td>
+                      <td className="border-r border-black p-1.5 font-semibold">
+                        {item.productId && productTypeById.get(item.productId) === "ODC" ? "ODC" : "Normal"}
                       </td>
                       <td className="border-r border-black p-1.5 text-right tabular-nums">
                         {Number(item.qty).toFixed(3)}

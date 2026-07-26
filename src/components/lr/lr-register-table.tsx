@@ -37,6 +37,7 @@ export interface LrRegisterRow {
   freight: number;
   grandTotal: number;
   lrType: string;
+  cargoType: string;
   status: string;
   isDummy: boolean;
   obdNo: string;
@@ -156,6 +157,15 @@ export function LrRegisterTable({
         ),
       },
       {
+        accessorKey: "cargoType",
+        header: "Cargo",
+        cell: ({ row }) => (
+          <Badge variant={row.original.cargoType === "ODC" ? "destructive" : "secondary"}>
+            {row.original.cargoType === "ODC" ? "ODC" : "Normal"}
+          </Badge>
+        ),
+      },
+      {
         accessorKey: "status",
         header: "Status",
         cell: ({ row }) => (
@@ -237,6 +247,7 @@ export function LrRegisterTable({
     { header: "Freight", key: "freight", numeric: true },
     { header: "Grand Total", key: "grandTotal", numeric: true },
     { header: "Type", key: "lrType" },
+    { header: "Cargo", key: "cargoType" },
     { header: "Status", key: "status" },
   ];
 

@@ -7,8 +7,10 @@ import { SimpleMaster } from "@/components/masters/simple-master";
 import {
   saveVehicleDocument,
   deleteVehicleDocument,
+  importVehicleDocuments,
 } from "@/app/(app)/masters/vehicle-documents/actions";
 import { formatDate } from "@/lib/utils";
+import { FileUploadField } from "@/components/data/file-upload-field";
 
 export interface VehicleDocRow {
   id: string;
@@ -24,6 +26,8 @@ export interface VehicleDocRow {
   expiryDate: string;
   expiredNow: boolean;
   remarks: string | null;
+  filePath: string | null;
+  fileName: string | null;
 }
 
 const columns: ColumnDef<VehicleDocRow, unknown>[] = [
@@ -40,6 +44,24 @@ const columns: ColumnDef<VehicleDocRow, unknown>[] = [
         {row.original.expiryDate}
       </span>
     ),
+  },
+  {
+    id: "doc",
+    header: "Document",
+    cell: ({ row }) =>
+      row.original.filePath ? (
+        <a
+          href={`/api/uploads/${row.original.filePath}`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-primary underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          View
+        </a>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
   },
   {
     accessorKey: "status",
@@ -113,11 +135,29 @@ export function VehicleDocumentsClient({
         },
         { name: "remarks", label: "Remarks", type: "textarea", span2: true },
       ]}
-      defaults={{ status: "DONE", entryDate: formatDate(new Date()) }}
+      defaults={{ status: "DONE", entryDate: formatDate(new Date()), filePath: null, fileName: null }}
+      renderExtra={(form, set) => (
+        <FileUploadField
+          label="Upload Document (registration copy)"
+          endpoint="/api/uploads/docreg"
+          filePath={(form.filePath as string) ?? null}
+          fileName={(form.fileName as string) ?? null}
+          onChange={(fp, fn) => {
+            set("filePath", fp);
+            set("fileName", fn);
+          }}
+        />
+      )}
       toForm={(r) => ({ ...r })}
       getId={(r) => r.id}
       save={saveVehicleDocument}
       remove={deleteVehicleDocument}
+      importConfig={{
+        action: importVehicleDocuments,
+        templateHeaders: ["Vehicle No", "Document Type", "Entry Date", "Doc No", "Effective Date", "Expiry Date", "Status", "Company", "Remarks"],
+        templateExample: ["CG04AB1234", "INSURANCE", "01/07/2026", "POL123", "01/07/2026", "30/06/2027", "DONE", "ICICI LOMBARD", ""],
+        templateName: "document-registrations",
+      }}
       canDelete={canDelete}
     />
   );

@@ -21,6 +21,7 @@ export interface LrFormData {
   partyDetails: Record<string, PartyDetail>;
   vehicleOwners: Record<string, string>;
   productUnits: Record<string, string>;
+  productTypes: Record<string, string>;
 }
 
 export async function loadLrFormData(editId?: string, copyId?: string): Promise<LrFormData> {
@@ -77,6 +78,8 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
 
     const productUnits: Record<string, string> = {};
     for (const p of products) if (p.unit) productUnits[p.id] = p.unit;
+    const productTypes: Record<string, string> = {};
+    for (const p of products) productTypes[p.id] = p.productType;
 
     const defaults: LrFormValues = existing
       ? {
@@ -211,6 +214,7 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
       partyDetails,
       vehicleOwners,
       productUnits,
+      productTypes,
     };
   });
 }

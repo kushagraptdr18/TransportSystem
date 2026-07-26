@@ -111,6 +111,7 @@ export async function createPartyInline(input: {
 
 export async function createVehicleInline(input: {
   number: string;
+  ownershipType?: "OWNER" | "BROKER" | "RELATIVE";
   ownerId?: string;
   isOwn?: boolean;
   ownerNames?: string;
@@ -126,8 +127,9 @@ export async function createVehicleInline(input: {
       data: {
         tenantId: s.tenantId,
         number: input.number.toUpperCase().replace(/\s+/g, ""),
-        ownerId: input.isOwn ? null : input.ownerId || null,
-        isOwn: input.isOwn ?? false,
+        ownershipType: input.ownershipType ?? (input.isOwn ? "OWNER" : "BROKER"),
+        ownerId: input.ownerId || null,
+        isOwn: input.ownershipType ? input.ownershipType === "OWNER" : input.isOwn ?? false,
         ownerNames: input.isOwn ? input.ownerNames || null : null,
         vehicleType: input.vehicleType || null,
         chassisNo: input.chassisNo ? input.chassisNo.toUpperCase() : null,

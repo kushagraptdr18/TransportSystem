@@ -1,5 +1,7 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
 import { withTenant, Tx } from "@/lib/db";
@@ -390,14 +392,38 @@ export async function deleteChalan(
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
         where: { id: chalanId, deletedAt: null },
-        include: { lrs: true },
+        include: { lrs: { include: { lr: { include: { invoiceLrs: true } } } } },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
+
+      // a billed LR must not be silently detached — the bill must go first
+      const billed = chalan.lrs.find(
+        (l) => l.lr.invoiceLrs.length > 0 || l.lr.status === "BILLED"
+      );
+      if (billed) {
+        return {
+          ok: false as const,
+          error: `LR ${billed.lr.lrNo} is already billed. Delete its bill before deleting this chalan.`,
+        };
+      }
+
+      const lrIds = chalan.lrs.map((l) => l.lrId);
+
+      // cascade: remove PODs raised for these LRs (POD exists only via this
+      // chalan's delivery), the chalan-LR links, and the ledger postings
+      await tx.pod.deleteMany({ where: { lrId: { in: lrIds } } });
       await tx.chalanLr.deleteMany({ where: { chalanId } });
       await reverseLedger(tx, "CHALAN_ADVANCE", chalanId);
+      await reverseLedger(tx, "CHALAN_BALANCE", chalanId);
       await tx.chalan.update({ where: { id: chalanId }, data: { deletedAt: new Date() } });
+
+      // every associated LR returns to PENDING so it can be re-loaded onto a
+      // new chalan (cancelled / paper-change LRs keep their type)
       await tx.lr.updateMany({
-        where: { id: { in: chalan.lrs.map((l) => l.lrId) }, status: "ON_CHALAN" },
+        where: {
+          id: { in: lrIds },
+          lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
+        },
         data: { status: "PENDING" },
       });
       await audit(tx, session, {
@@ -410,5 +436,115 @@ export async function deleteChalan(
     });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Delete failed" };
+  }
+}
+
+// ---------------------------------------------------------------- balance payment
+
+const balancePaymentSchema = z.object({
+  chalanId: z.string().min(1),
+  roundOff: z.number().default(0),
+  shortage: z.number().min(0).default(0),
+  paymentDate: z.string().min(1, "Payment date is required"),
+  paymentHeadId: z.string().min(1, "Payment head (bank/cash) is required"),
+  paymentMode: z.enum(["CASH", "BANK", "UPI", "CHEQUE", "NEFT_RTGS"]).default("BANK"),
+  remarks: z.string().optional().nullable(),
+});
+
+/**
+ * Settle a chalan's balance: chalan moves PENDING -> PAID, and the payment is
+ * posted to the ledger (credit the bank/cash head, debit the broker) so the
+ * bank/cash books and broker ledger update automatically.
+ */
+export async function saveBalancePayment(
+  input: unknown
+): Promise<{ ok: true; paidAmount: number } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "chalan", "edit");
+  const parsed = balancePaymentSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+  const data = parsed.data;
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const chalan = await tx.chalan.findFirst({
+        where: { id: data.chalanId, firmId: session.firmId, deletedAt: null },
+      });
+      if (!chalan) return { ok: false as const, error: "Chalan not found." };
+      if (!chalan.isFinal) {
+        return { ok: false as const, error: "Finalize the chalan before settling its balance." };
+      }
+      // all attached LRs must have a confirmed POD before balance can be paid
+      const links = await tx.chalanLr.findMany({
+        where: { chalanId: chalan.id },
+        include: { lr: { include: { pods: true } } },
+      });
+      const operational = links.filter(
+        (l) => l.lr.lrType !== "CANCELLED" && l.lr.lrType !== "PAPER_CHANGE"
+      );
+      const podDone = operational.filter((l) => l.lr.pods.length > 0).length;
+      if (operational.length > 0 && podDone < operational.length) {
+        return {
+          ok: false as const,
+          error: `POD is only ${podDone}/${operational.length} confirmed — all LRs must have a confirmed POD before balance payment.`,
+        };
+      }
+      const paidAmount =
+        Math.round((toNum(chalan.balance) - data.roundOff - data.shortage) * 100) / 100;
+      if (paidAmount < 0) {
+        return { ok: false as const, error: "Round-off + shortage exceed the balance." };
+      }
+      const paymentDate = new Date(`${data.paymentDate}T00:00:00`);
+      const after = await tx.chalan.update({
+        where: { id: chalan.id },
+        data: {
+          paymentStatus: "PAID",
+          balRoundOff: data.roundOff,
+          balShortage: data.shortage,
+          balPaidAmount: paidAmount,
+          balPaymentDate: paymentDate,
+          balPaymentHeadId: data.paymentHeadId,
+          balPaymentMode: data.paymentMode,
+          balRemarks: data.remarks || null,
+        },
+      });
+      await reverseLedger(tx, "CHALAN_BALANCE", chalan.id);
+      if (paidAmount > 0) {
+        await postLedger(tx, session, [
+          {
+            date: paymentDate,
+            partyId: data.paymentHeadId,
+            side: "CREDIT",
+            amount: paidAmount,
+            refType: "CHALAN_BALANCE",
+            refId: chalan.id,
+            refNo: chalan.chalanNo,
+            narration: `Balance payment for chalan ${chalan.chalanNo} (${data.paymentMode})`,
+          },
+          {
+            date: paymentDate,
+            partyId: chalan.brokerId,
+            side: "DEBIT",
+            amount: paidAmount,
+            refType: "CHALAN_BALANCE",
+            refId: chalan.id,
+            refNo: chalan.chalanNo,
+            narration: `Balance settled${data.remarks ? " — " + data.remarks : ""}`,
+          },
+        ]);
+      }
+      await audit(tx, session, {
+        entity: "Chalan",
+        entityId: chalan.id,
+        action: "UPDATE",
+        before: chalan,
+        after,
+      });
+      revalidatePath("/chalan/register");
+      return { ok: true as const, paidAmount };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Balance payment failed" };
   }
 }

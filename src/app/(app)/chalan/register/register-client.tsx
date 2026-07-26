@@ -26,6 +26,10 @@ export interface ChalanRegisterRow {
   advanceTotal: number;
   balance: number;
   isFinal: boolean;
+  podDone: number;
+  shortage: number;
+  paymentStatus: string;
+  balPaidAmount: number;
 }
 
 const sum = (rows: ChalanRegisterRow[], k: keyof ChalanRegisterRow) =>
@@ -96,6 +100,45 @@ export function ChalanRegisterClient({
         row.original.isFinal ? <Badge>Final</Badge> : <Badge variant="secondary">Draft</Badge>,
     },
     {
+      id: "podStatus",
+      header: "POD Status",
+      cell: ({ row }) => {
+        const { podDone, lrCount, vehicle } = row.original;
+        if (lrCount === 0) return <Badge variant="outline">—</Badge>;
+        const complete = podDone === lrCount;
+        return (
+          <Link
+            href={`/pod?vehicle=${encodeURIComponent(vehicle)}`}
+            title="Open POD for this vehicle"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Badge
+              variant={complete ? "default" : "secondary"}
+              className="cursor-pointer hover:opacity-80"
+            >
+              POD {podDone}/{lrCount}
+            </Badge>
+          </Link>
+        );
+      },
+    },
+    {
+      accessorKey: "shortage",
+      header: "Shortage",
+      cell: ({ row }) => (row.original.shortage ? formatMoney(row.original.shortage) : ""),
+      meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "shortage") },
+    },
+    {
+      accessorKey: "paymentStatus",
+      header: "Balance Payment",
+      cell: ({ row }) =>
+        row.original.paymentStatus === "PAID" ? (
+          <Badge>Paid {formatMoney(row.original.balPaidAmount)}</Badge>
+        ) : (
+          <Badge variant="destructive">Pending Balance</Badge>
+        ),
+    },
+    {
       id: "actions",
       header: "",
       enableSorting: false,
@@ -104,6 +147,14 @@ export function ChalanRegisterClient({
           <Button asChild variant="ghost" size="sm" className="h-7 px-2">
             <Link href={`/chalan?id=${row.original.id}`}>Edit</Link>
           </Button>
+          {row.original.isFinal &&
+            row.original.paymentStatus !== "PAID" &&
+            row.original.lrCount > 0 &&
+            row.original.podDone >= row.original.lrCount && (
+              <Button asChild variant="secondary" size="sm" className="h-7 px-2">
+                <Link href={`/chalan?id=${row.original.id}#balance`}>Balance Pay</Link>
+              </Button>
+            )}
           <Button asChild variant="ghost" size="sm" className="h-7 px-2">
             <Link href={`/print/chalan/${row.original.id}`} target="_blank">
               Print

@@ -4,7 +4,9 @@ import * as React from "react";
 import type { ToastActionElement, ToastProps } from "@/components/ui/toast";
 
 const TOAST_LIMIT = 3;
-const TOAST_REMOVE_DELAY = 5000;
+// auto-dismiss visible toasts after this long; REMOVE_DELAY is the exit anim
+const TOAST_AUTO_DISMISS = 2500;
+const TOAST_REMOVE_DELAY = 400;
 
 type ToasterToast = ToastProps & {
   id: string;
@@ -114,6 +116,9 @@ function toast({ ...props }: Toast) {
       },
     },
   });
+
+  // auto-dismiss after a short delay; manual close still works via onOpenChange
+  setTimeout(() => dismiss(), TOAST_AUTO_DISMISS);
 
   return { id, dismiss, update };
 }

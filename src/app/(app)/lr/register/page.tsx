@@ -95,6 +95,7 @@ export default async function LrRegisterPage({
       freight: Number(lr.freight),
       grandTotal: Number(lr.grandTotal),
       lrType: lr.lrType,
+      cargoType: lr.cargoType,
       obdNo: lr.obdNo ?? "",
       invoiceNo: lr.invoiceNo ?? "",
       refNo: lr.refNo ?? "",

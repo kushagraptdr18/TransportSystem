@@ -31,7 +31,7 @@ export default async function ChalanRegisterPage({
         ...(vehicle ? { vehicleId: vehicle } : {}),
         ...(status === "final" ? { isFinal: true } : status === "draft" ? { isFinal: false } : {}),
       },
-      include: { lrs: true },
+      include: { lrs: { include: { lr: { include: { pods: true } } } } },
       orderBy: { chalanDate: "desc" },
     });
     const brokers = await tx.party.findMany({
@@ -61,6 +61,10 @@ export default async function ChalanRegisterPage({
     advanceTotal: toNum(c.advanceTotal),
     balance: toNum(c.balance),
     isFinal: c.isFinal,
+    podDone: c.lrs.filter((l) => l.lr.pods.length > 0).length,
+    shortage: Number(c.balShortage),
+    paymentStatus: c.paymentStatus,
+    balPaidAmount: Number(c.balPaidAmount),
   }));
 
   return (

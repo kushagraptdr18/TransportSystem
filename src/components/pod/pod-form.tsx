@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { formatDate } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -84,9 +85,10 @@ const emptyLine = (): LineState => ({
 interface PodFormProps {
   defaultDocNo: string;
   vehicleOptions: MasterOption[];
+  initialVehicleId?: string | null;
 }
 
-export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles }: PodFormProps) {
+export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles, initialVehicleId }: PodFormProps) {
   const router = useRouter();
   const { toast } = useToast();
 
@@ -95,9 +97,10 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles }: PodFo
   const [docDate, setDocDate] = React.useState<Date | null>(new Date());
   const [sourceType, setSourceType] = React.useState<string>("BOOKING");
   const [vehicleOptions, setVehicleOptions] = React.useState(initialVehicles);
-  const [vehicleId, setVehicleId] = React.useState<string | null>(null);
+  const [vehicleId, setVehicleId] = React.useState<string | null>(initialVehicleId ?? null);
   const [vehicleDialogOpen, setVehicleDialogOpen] = React.useState(false);
   const [refNo, setRefNo] = React.useState("");
+
 
   const [pendingLrs, setPendingLrs] = React.useState<PodPendingLr[]>([]);
   const [loadingLrs, setLoadingLrs] = React.useState(false);
@@ -107,6 +110,11 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles }: PodFo
   const [manualLrNo, setManualLrNo] = React.useState("");
   const [warnDialog, setWarnDialog] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (initialVehicleId) void loadVehicleLrs(initialVehicleId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialVehicleId]);
 
   const loadVehicleLrs = React.useCallback(async (vid: string) => {
     setLoadingLrs(true);
@@ -289,12 +297,12 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles }: PodFo
             />
           </div>
           <div className="space-y-1.5 md:col-span-2">
-            <Label>Vehicle</Label>
+            <Label>Vehicle *</Label>
             <MasterCombobox
               options={vehicleOptions}
               value={vehicleId}
               onChange={handleVehicleChange}
-              placeholder="Select vehicle to load its LRs..."
+              placeholder="Enter vehicle number to load its pending-balance LRs..."
               renderCreateDialog={(closeAndSelect) => (
                 <VehicleInlineDialog
                   open
@@ -345,6 +353,7 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles }: PodFo
                 <TableHead>Source</TableHead>
                 <TableHead>Dest</TableHead>
                 <TableHead>Billed Party</TableHead>
+                <TableHead>Cargo Type</TableHead>
                 <TableHead className="text-right">Qty</TableHead>
                 <TableHead className="text-right">Actual Wt</TableHead>
               </TableRow>
@@ -352,7 +361,7 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles }: PodFo
             <TableBody>
               {pendingLrs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="h-16 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="h-16 text-center text-muted-foreground">
                     Select a vehicle or add an LR manually.
                   </TableCell>
                 </TableRow>
@@ -370,6 +379,11 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles }: PodFo
                     <TableCell>{lr.source}</TableCell>
                     <TableCell>{lr.dest}</TableCell>
                     <TableCell>{lr.billedParty}</TableCell>
+                    <TableCell>
+                      <Badge variant={lr.cargoType === "ODC" ? "destructive" : "secondary"}>
+                        {lr.cargoType === "ODC" ? "ODC" : "Normal"}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{lr.qty}</TableCell>
                     <TableCell className="text-right tabular-nums">{lr.actualWt}</TableCell>
                   </TableRow>

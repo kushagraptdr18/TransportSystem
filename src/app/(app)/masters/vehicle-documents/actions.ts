@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
+import { runImport, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
@@ -19,6 +20,8 @@ const schema = z.object({
   effectiveDate: optStr,
   expiryDate: optStr,
   remarks: optStr,
+  filePath: optStr,
+  fileName: optStr,
 });
 
 export async function saveVehicleDocument(input: unknown): Promise<ActionResult> {
@@ -41,6 +44,8 @@ export async function saveVehicleDocument(input: unknown): Promise<ActionResult>
         effectiveDate: parseDateInput(data.effectiveDate),
         expiryDate: parseDateInput(data.expiryDate),
         remarks: data.remarks,
+        filePath: data.filePath,
+        fileName: data.fileName,
       };
       if (data.id) {
         const before = await tx.vehicleDocument.findUniqueOrThrow({ where: { id: data.id } });
@@ -73,4 +78,47 @@ export async function deleteVehicleDocument(id: string): Promise<ActionResult> {
   } catch (e) {
     return actionError(e);
   }
+}
+
+/** Excel/CSV import — see the sample template for expected columns. */
+export async function importVehicleDocuments(formData: FormData): Promise<ImportSummary> {
+  const session = requireSession();
+  await authorize(session, "masters", "create");
+  const file = formData.get("file");
+  return withTenant(session.tenantId, async (tx) =>
+    runImport(file instanceof File ? file : null, ["VEHICLE NO", "DOCUMENT TYPE", "ENTRY DATE"], async (rec) => {
+      const vehicle = await tx.vehicle.findFirst({
+        where: { number: rec["VEHICLE NO"].toUpperCase().replace(/\s+/g, "") },
+      });
+      if (!vehicle) throw new Error(`vehicle "${rec["VEHICLE NO"]}" not found`);
+      const docType = await tx.documentType.findFirst({
+        where: { name: { equals: rec["DOCUMENT TYPE"], mode: "insensitive" } },
+      });
+      if (!docType) throw new Error(`document type "${rec["DOCUMENT TYPE"]}" not found`);
+      const entryDate = parseDateInput(rec["ENTRY DATE"]);
+      if (!entryDate) throw new Error("invalid entry date (use dd/mm/yyyy)");
+      const values = {
+        docNo: rec["DOC NO"] || null,
+        companyName: rec["COMPANY"] || null,
+        status: rec["STATUS"]?.toUpperCase() === "PENDING" ? "PENDING" : "DONE",
+        entryDate,
+        effectiveDate: parseDateInput(rec["EFFECTIVE DATE"] ?? ""),
+        expiryDate: parseDateInput(rec["EXPIRY DATE"] ?? ""),
+        remarks: rec["REMARKS"] || null,
+      };
+      const existing = rec["DOC NO"]
+        ? await tx.vehicleDocument.findFirst({
+            where: { vehicleId: vehicle.id, docTypeId: docType.id, docNo: rec["DOC NO"] },
+          })
+        : null;
+      if (existing) {
+        await tx.vehicleDocument.update({ where: { id: existing.id }, data: values });
+        return "updated";
+      }
+      await tx.vehicleDocument.create({
+        data: { tenantId: session.tenantId, vehicleId: vehicle.id, docTypeId: docType.id, ...values },
+      });
+      return "created";
+    })
+  );
 }

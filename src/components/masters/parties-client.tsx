@@ -4,7 +4,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import type { MasterOption } from "@/components/data/master-combobox";
 import { SimpleMaster, type FormState } from "@/components/masters/simple-master";
-import { saveParty, deleteParty } from "@/app/(app)/masters/parties/actions";
+import { saveParty, deleteParty, importParties } from "@/app/(app)/masters/parties/actions";
 import { formatMoney } from "@/lib/utils";
 
 export interface PartyRow {
@@ -41,6 +41,7 @@ const GROUPS = [
   "CONSIGNEE_CONSIGNOR",
   "DRIVER",
   "OWNER_BROKER",
+  "RELATIVE",
   "STAFF",
   "SUPPLIERS",
 ];
@@ -194,6 +195,12 @@ export function PartiesClient({
       getId={(r) => r.id}
       save={saveParty}
       remove={deleteParty}
+      importConfig={{
+        action: importParties,
+        templateHeaders: ["Name", "Group", "GSTIN", "PAN", "Mobile", "Email", "Address", "Transport Name", "Opening Balance", "Opening Side"],
+        templateExample: ["DEMO TRANSPORT CO", "BROKER", "", "AAACD1234F", "9876543210", "", "Transport Nagar", "DEMO ROADWAYS", "0", "DEBIT"],
+        templateName: "parties",
+      }}
       canDelete={canDelete}
       transform={(f) => ({ ...f, openingBalance: Number(f.openingBalance) || 0 })}
       dialogClassName="max-h-[90vh] overflow-y-auto sm:max-w-2xl"

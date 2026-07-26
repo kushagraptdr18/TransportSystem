@@ -214,6 +214,48 @@ export default async function ChalanPrintPage({
         </div>
       </div>
 
+      {/* balance payment settlement */}
+      {chalan.paymentStatus === "PAID" && (
+        <table className="mt-3 w-full border-collapse text-xs">
+          <thead>
+            <tr>
+              <th colSpan={6} className="border border-black bg-neutral-100 px-1 py-0.5 text-left">
+                BALANCE PAYMENT — PAID
+                {chalan.balPaymentDate ? ` on ${formatDate(chalan.balPaymentDate)}` : ""}
+                {chalan.balPaymentMode ? ` (${chalan.balPaymentMode.replace("_", "/")})` : ""}
+              </th>
+            </tr>
+            <tr>
+              {["Balance Amount", "Round Off (−)", "Shortage (−)", "Final Paid Amount", "Paid From", "Remarks"].map((h) => (
+                <th key={h} className="border border-black px-1 py-0.5 text-left">
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="border border-black px-1 py-0.5 text-right">
+                {formatMoney(toNum(chalan.balance))}
+              </td>
+              <td className="border border-black px-1 py-0.5 text-right">
+                {formatMoney(toNum(chalan.balRoundOff))}
+              </td>
+              <td className="border border-black px-1 py-0.5 text-right">
+                {formatMoney(toNum(chalan.balShortage))}
+              </td>
+              <td className="border border-black px-1 py-0.5 text-right font-bold">
+                {formatMoney(toNum(chalan.balPaidAmount))}
+              </td>
+              <td className="border border-black px-1 py-0.5">
+                {chalan.balPaymentHeadId ? partyName(chalan.balPaymentHeadId) : ""}
+              </td>
+              <td className="border border-black px-1 py-0.5">{chalan.balRemarks ?? ""}</td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+
       <div className="mt-8 flex justify-between text-xs">
         <div>Driver Signature</div>
         <div>For {firm?.name}</div>

@@ -9,6 +9,7 @@ import { syncSequenceTo } from "@/lib/sequences";
 import { toNum } from "@/lib/utils";
 
 export interface PodPendingLr {
+  cargoType?: string;
   id: string;
   lrNo: string;
   lrDate: string;
@@ -27,10 +28,12 @@ function mapLr(lr: {
   sourceCity?: { name: string } | null;
   destCity?: { name: string } | null;
   billedName: string;
+  cargoType?: string;
 }): PodPendingLr {
   return {
     id: lr.id,
     lrNo: lr.lrNo,
+    cargoType: lr.cargoType ?? "NORMAL",
     lrDate: lr.lrDate.toISOString(),
     source: lr.sourceCity?.name ?? "",
     dest: lr.destCity?.name ?? "",
@@ -38,6 +41,82 @@ function mapLr(lr: {
     qty: lr.items.reduce((s, i) => s + toNum(String(i.qty)), 0),
     actualWt: lr.items.reduce((s, i) => s + toNum(String(i.actualWt)), 0),
   };
+}
+
+export interface PodChalanOption {
+  id: string;
+  chalanNo: string;
+  chalanDate: string;
+  vehicle: string;
+  broker: string;
+  lrCount: number;
+  podDone: number;
+}
+
+/**
+ * Chalans available for POD: finalized, still Pending-Balance, and carrying at
+ * least one LR that has no POD yet. This is the entry point of the POD
+ * lifecycle — POD only happens against a chalan.
+ */
+export async function getPendingBalanceChalans(): Promise<PodChalanOption[]> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const chalans = await tx.chalan.findMany({
+      where: {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        deletedAt: null,
+        isFinal: true,
+        paymentStatus: "PENDING",
+      },
+      include: { lrs: { include: { lr: { include: { pods: true } } } } },
+      orderBy: { chalanDate: "desc" },
+    });
+    const vehicleIds = Array.from(new Set(chalans.map((c) => c.vehicleId)));
+    const brokerIds = Array.from(new Set(chalans.map((c) => c.brokerId)));
+    const [vehicles, brokers] = await Promise.all([
+      tx.vehicle.findMany({ where: { id: { in: vehicleIds } } }),
+      tx.party.findMany({ where: { id: { in: brokerIds } } }),
+    ]);
+    const vmap = new Map(vehicles.map((v) => [v.id, v.number]));
+    const bmap = new Map(brokers.map((b) => [b.id, b.name]));
+    return chalans
+      .map((c) => {
+        const lrs = c.lrs.filter(
+          (l) => l.lr.lrType !== "CANCELLED" && l.lr.lrType !== "PAPER_CHANGE"
+        );
+        return {
+          id: c.id,
+          chalanNo: c.chalanNo,
+          chalanDate: c.chalanDate.toISOString(),
+          vehicle: vmap.get(c.vehicleId) ?? "",
+          broker: bmap.get(c.brokerId) ?? "",
+          lrCount: lrs.length,
+          podDone: lrs.filter((l) => l.lr.pods.length > 0).length,
+        };
+      })
+      .filter((c) => c.lrCount > c.podDone); // only chalans with pending PODs
+  });
+}
+
+/** LRs on a chalan that still need a POD. */
+export async function getChalanPodLrs(chalanId: string): Promise<PodPendingLr[]> {
+  const session = requireSession();
+  const lrs = await withTenant(session.tenantId, (tx) =>
+    tx.lr.findMany({
+      where: {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        deletedAt: null,
+        lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
+        pods: { none: {} },
+        chalanLrs: { some: { chalanId } },
+      },
+      include: { items: true },
+      orderBy: { lrDate: "asc" },
+    })
+  );
+  return withNames(session.tenantId, lrs);
 }
 
 /** LRs on a vehicle that have no POD yet. */
@@ -51,8 +130,12 @@ export async function getVehiclePendingPodLrs(vehicleId: string): Promise<PodPen
         vehicleId,
         deletedAt: null,
         lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
-        status: "ON_CHALAN", // workflow: POD only after chalan is created
+        status: "ON_CHALAN",
         pods: { none: {} },
+        // only LRs whose chalan is finalized and still Pending-Balance
+        chalanLrs: {
+          some: { chalan: { isFinal: true, paymentStatus: "PENDING", deletedAt: null } },
+        },
       },
       include: { items: true },
       orderBy: { lrDate: "asc" },
@@ -71,6 +154,7 @@ async function withNames(
     destCityId: string;
     billToId: string | null;
     consignorId: string;
+    cargoType?: string;
     items: { qty: unknown; actualWt: unknown }[];
   }[]
 ): Promise<PodPendingLr[]> {

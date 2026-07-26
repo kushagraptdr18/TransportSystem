@@ -2,7 +2,7 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { SimpleMaster } from "@/components/masters/simple-master";
-import { saveUnit, deleteUnit } from "@/app/(app)/masters/units/actions";
+import { saveUnit, deleteUnit, importUnits } from "@/app/(app)/masters/units/actions";
 
 interface Row {
   id: string;
@@ -36,6 +36,12 @@ export function UnitsClient({ rows, canDelete }: { rows: Row[]; canDelete: boole
       getId={(r) => r.id}
       save={saveUnit}
       remove={deleteUnit}
+      importConfig={{
+        action: importUnits,
+        templateHeaders: ["Unit", "Value"],
+        templateExample: ["MT", "1"],
+        templateName: "units",
+      }}
       canDelete={canDelete}
     />
   );
