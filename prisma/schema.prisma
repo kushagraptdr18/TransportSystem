@@ -645,6 +645,8 @@ model Chalan {
   driverMobile String?
   licenseNo    String?
   payableAt    String?
+  transportName String? // editable, prefilled from the broker/owner party
+  ownerName     String? // editable, prefilled from the broker/owner party
   sourceCityId String?
   destCityId   String?
   remarks      String?

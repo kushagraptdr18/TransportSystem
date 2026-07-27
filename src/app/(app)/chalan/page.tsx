@@ -1,6 +1,6 @@
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
-import { randomUniqueDocNumber } from "@/lib/sequences";
+import { nextChalanNumber } from "@/lib/sequences";
 import { toNum } from "@/lib/utils";
 import { ChalanForm, type ChalanRecord, type BrokerOption } from "./chalan-form";
 
@@ -16,16 +16,11 @@ export default async function ChalanPage({
   const [nextNo, brokers, vehicles, banks, accountHeads, record] = await withTenant(
     session.tenantId,
     async (tx) => {
-      const nextNo = await randomUniqueDocNumber(async (n) =>
-        Boolean(
-          await tx.chalan.findFirst({
-            where: { firmId: session.firmId, fyId: session.fyId, chalanNo: n },
-            select: { id: true },
-          })
-        )
-      );
+      // sequential like LR numbers: continues from the last saved chalan; editable
+      const nextNo = await nextChalanNumber(tx, { firmId: session.firmId, fyId: session.fyId });
+      // owners, brokers and relatives share one unified list
       const brokers = await tx.party.findMany({
-        where: { ledgerGroup: "OWNER_BROKER", isActive: true },
+        where: { ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] }, isActive: true },
         orderBy: { name: "asc" },
       });
       const vehicles = await tx.vehicle.findMany({
@@ -63,6 +58,8 @@ export default async function ChalanPage({
             driverMobile: record.driverMobile ?? "",
             licenseNo: record.licenseNo ?? "",
             payableAt: record.payableAt ?? "",
+            transportName: record.transportName ?? "",
+            ownerName: record.ownerName ?? "",
             remarks: record.remarks ?? "",
             isFinal: record.isFinal,
             paymentStatus: record.paymentStatus,
@@ -82,6 +79,9 @@ export default async function ChalanPage({
                 l.lr.lrType !== "PAPER_CHANGE" &&
                 l.lr.pods.length > 0
             ).length,
+            podShortageWt: record.lrs
+              .flatMap((l) => l.lr.pods)
+              .reduce((s, p) => s + toNum(p.shortageWt), 0),
             freight: toNum(record.freight),
             rate: toNum(record.rate),
             rateBasis: record.rateBasis,
@@ -146,6 +146,8 @@ export default async function ChalanPage({
     meta: [b.gstin, b.pan].filter(Boolean).join(" · ") || undefined,
     pan: b.pan,
     tdsMode: b.tdsMode,
+    transportName: b.transportName,
+    ownerName: b.ownerName,
   }));
 
   return (

@@ -76,6 +76,12 @@ export default async function ChalanPrintPage({
           <b>Broker/Owner:</b> {broker?.name}
         </div>
         <div>
+          <b>Transport Name:</b> {chalan.transportName ?? broker?.transportName ?? ""}
+        </div>
+        <div>
+          <b>Owner Name:</b> {chalan.ownerName ?? ""}
+        </div>
+        <div>
           <b>Vehicle:</b> {vehicle?.number}
         </div>
         <div>
@@ -90,6 +96,19 @@ export default async function ChalanPrintPage({
         <div>
           <b>PAN:</b> {broker?.pan ?? ""}
         </div>
+        {toNum(chalan.rate) > 0 && (
+          <div>
+            <b>Freight Rate:</b> {formatMoney(toNum(chalan.rate))}{" "}
+            {(
+              {
+                CHARGE_WT: "per Charge Wt",
+                ACTUAL_WT: "per Actual Wt",
+                QTY: "per Qty",
+                FIXED: "(fixed)",
+              } as Record<string, string>
+            )[chalan.rateBasis] ?? ""}
+          </div>
+        )}
       </div>
 
       {/* LR list — no booking freight anywhere */}
@@ -126,6 +145,22 @@ export default async function ChalanPrintPage({
             </tr>
           ))}
         </tbody>
+        <tfoot>
+          <tr className="font-semibold">
+            <td colSpan={6} className="border border-black px-1 py-0.5">
+              Total ({chalan.lrs.length} LRs)
+            </td>
+            <td className="border border-black px-1 py-0.5 text-right">
+              {chalan.lrs.reduce(
+                (s, { lr }) => s + lr.items.reduce((a, it) => a + toNum(it.qty), 0),
+                0
+              )}
+            </td>
+            {/* totals come from the saved chalan so print always matches the record */}
+            <td className="border border-black px-1 py-0.5 text-right">{toNum(chalan.actualWt)}</td>
+            <td className="border border-black px-1 py-0.5 text-right">{toNum(chalan.chargeWt)}</td>
+          </tr>
+        </tfoot>
       </table>
 
       <div className="mt-3 flex gap-4">

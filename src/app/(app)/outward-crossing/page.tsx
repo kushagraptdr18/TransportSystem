@@ -31,7 +31,7 @@ export default async function OutwardCrossingPage({
     }
     const [rows, transporters, vehicles, cities] = await Promise.all([
       tx.outwardCrossing.findMany({ where, orderBy: [{ chalanDate: "desc" }, { ocNo: "desc" }] }),
-      tx.party.findMany({ where: { isActive: true, ledgerGroup: "OWNER_BROKER" }, orderBy: { name: "asc" } }),
+      tx.party.findMany({ where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } }, orderBy: { name: "asc" } }),
       tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
       tx.city.findMany({ orderBy: { name: "asc" } }),
     ]);

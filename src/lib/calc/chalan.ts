@@ -44,12 +44,14 @@ export function computeChalan(i: ChalanInput): ChalanTotals {
     freight + i.detention + i.odcAmt + i.fineSlip + i.otherAmt - i.ldCharge - i.shortageAmt
   );
 
+  // TDS & commission are levied on the freight amount ONLY — detention, ODC,
+  // fine slip and other charges are excluded from both bases.
   const commissionAmt =
     i.commissionPct > 0
-      ? round2((totalChalanAmt * i.commissionPct) / 100)
+      ? round2((freight * i.commissionPct) / 100)
       : round2(i.commissionAmt ?? 0);
 
-  const tdsAmt = tdsAmount(totalChalanAmt, i.tdsPct);
+  const tdsAmt = tdsAmount(freight, i.tdsPct);
 
   const grandTotal = round2(
     totalChalanAmt - commissionAmt - tdsAmt - i.mamool - i.courierCharge

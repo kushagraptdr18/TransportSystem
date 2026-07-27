@@ -37,6 +37,8 @@ export interface BrokerOption {
   meta?: string;
   pan: string | null;
   tdsMode: TdsMode | null;
+  transportName: string | null;
+  ownerName: string | null;
 }
 
 export interface AdvanceRow {
@@ -63,6 +65,8 @@ export interface ChalanRecord {
   driverMobile: string;
   licenseNo: string;
   payableAt: string;
+  transportName: string;
+  ownerName: string;
   remarks: string;
   isFinal: boolean;
   paymentStatus: string;
@@ -75,6 +79,8 @@ export interface ChalanRecord {
   balRemarks: string;
   podTotal: number;
   podDone: number;
+  /** total shortage weight recorded across the LRs' PODs */
+  podShortageWt: number;
   freight: number;
   rate: number;
   rateBasis: "QTY" | "ACTUAL_WT" | "CHARGE_WT" | "FIXED";
@@ -131,7 +137,10 @@ export function ChalanForm({
   const [driverName, setDriverName] = React.useState(record?.driverName ?? "");
   const [driverMobile, setDriverMobile] = React.useState(record?.driverMobile ?? "");
   const [licenseNo, setLicenseNo] = React.useState(record?.licenseNo ?? "");
-  const [payableAt, setPayableAt] = React.useState(record?.payableAt ?? "");
+  // new chalans default to Raigarh; editable
+  const [payableAt, setPayableAt] = React.useState(record ? record.payableAt : "Raigarh");
+  const [transportName, setTransportName] = React.useState(record?.transportName ?? "");
+  const [ownerName, setOwnerName] = React.useState(record?.ownerName ?? "");
   const [remarks, setRemarks] = React.useState(record?.remarks ?? "");
 
   // ------- LRs -------
@@ -318,6 +327,8 @@ export function ChalanForm({
     driverMobile,
     licenseNo,
     payableAt,
+    transportName,
+    ownerName,
     remarks,
     lrIds: selected.map((r) => r.id),
     freight,
@@ -344,6 +355,14 @@ export function ChalanForm({
   const handleSave = async () => {
     if (!brokerId || !vehicleId || !chalanNo || !chalanDate) {
       toast({ variant: "destructive", title: "Broker, vehicle, chalan no & date are required" });
+      return;
+    }
+    if (selected.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Select at least one LR",
+        description: "A chalan cannot be saved without LRs — pick them from the pending list.",
+      });
       return;
     }
     setSaving(true);
@@ -454,10 +473,20 @@ export function ChalanForm({
               onChange={(v) => {
                 setBrokerId(v);
                 setTdsOverridden(false);
+                // transport name auto-populates from the party master (still editable);
+                // owner name is carried silently for the print
+                const b = brokers.find((x) => x.value === v);
+                if (b) {
+                  setTransportName(b.transportName ?? "");
+                  setOwnerName(b.ownerName ?? b.label);
+                }
               }}
               ledgerGroup="OWNER_BROKER"
               placeholder="Select broker..."
             />
+          </Field>
+          <Field label="Transport Name (from master)">
+            <Input value={transportName} onChange={(e) => setTransportName(e.target.value)} onKeyDown={enterAdvances} />
           </Field>
           <Field label="Vehicle">
             <VehicleCombobox options={vehicles} value={vehicleId} onChange={setVehicleId} />
@@ -683,7 +712,7 @@ export function ChalanForm({
             <div className="text-sm text-muted-foreground">Save the chalan first to add advances.</div>
           )}
           {advances.map((a, i) => (
-            <div key={i} className="grid items-end gap-2 rounded-md border p-2 sm:grid-cols-2 lg:grid-cols-5">
+            <div key={i} className="grid items-end gap-2 rounded-md border p-2 sm:grid-cols-2 lg:grid-cols-6">
               <Field label="Advance Type">
                 <Select
                   value={a.advanceType ?? "BANK_CASH"}
@@ -727,6 +756,13 @@ export function ChalanForm({
                 <DateInput
                   value={a.date ? formatDate(new Date(a.date)) : ""}
                   onChange={(_, d) => setAdvance(i, { date: d ? d.toISOString() : null })}
+                />
+              </Field>
+              <Field label="Remarks">
+                <Input
+                  value={a.remarks}
+                  onChange={(e) => setAdvance(i, { remarks: e.target.value })}
+                  placeholder="Advance remarks..."
                 />
               </Field>
               <div className="flex items-end">
@@ -841,7 +877,14 @@ export function ChalanForm({
               <NumInput value={balRoundOff} onChange={setBalRoundOff} />
             </Field>
             <Field label="Shortage (−)">
-              <NumInput value={balShortage} onChange={setBalShortage} />
+              <div className="space-y-1">
+                <NumInput value={balShortage} onChange={setBalShortage} />
+                {(record?.podShortageWt ?? 0) > 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    POD shortage: {record?.podShortageWt} (wt) — enter the amount to deduct
+                  </div>
+                )}
+              </div>
             </Field>
             <Field label="Final Paid Amount">
               <NumInput value={balPaidPreview} readOnly />

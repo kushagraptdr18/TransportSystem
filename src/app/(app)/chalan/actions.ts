@@ -96,8 +96,10 @@ const chalanSchema = z.object({
   driverMobile: z.string().optional().nullable(),
   licenseNo: z.string().optional().nullable(),
   payableAt: z.string().optional().nullable(),
+  transportName: z.string().optional().nullable(),
+  ownerName: z.string().optional().nullable(),
   remarks: z.string().optional().nullable(),
-  lrIds: z.array(z.string()),
+  lrIds: z.array(z.string()).min(1, "Select at least one LR — a chalan cannot be saved without LRs"),
   freight: z.number().default(0), // vehicle freight (manual fallback)
   rate: z.number().default(0),
   rateBasis: z.enum(["QTY", "ACTUAL_WT", "CHARGE_WT", "FIXED"]).default("CHARGE_WT"),
@@ -181,6 +183,8 @@ async function recomputeAndStore(
       driverMobile: data.driverMobile ?? null,
       licenseNo: data.licenseNo ?? null,
       payableAt: data.payableAt ?? null,
+      transportName: data.transportName || null,
+      ownerName: data.ownerName || null,
       remarks: data.remarks ?? null,
       actualWt,
       chargeWt,
@@ -232,6 +236,21 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
           })
         : null;
       if (data.id && !existing) return { ok: false as const, error: "Chalan not found" };
+
+      // duplicate chalan numbers are not allowed within a firm + financial year
+      const clash = await tx.chalan.findFirst({
+        where: {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          chalanNo: data.chalanNo,
+          deletedAt: null,
+          ...(data.id ? { id: { not: data.id } } : {}),
+        },
+        select: { id: true },
+      });
+      if (clash) {
+        return { ok: false as const, error: `Chalan No ${data.chalanNo} already exists — use a different number.` };
+      }
 
       const advances = existing?.advances.map((a) => toNum(a.amount)) ?? [];
       const { fields } = await recomputeAndStore(tx, session, data, advances);

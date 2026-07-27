@@ -60,7 +60,7 @@ export default async function BrokerRegisterPage({
       return {
         rows: slips,
         vehicles: vehicleRows,
-        brokers: partyRows.filter((p) => p.ledgerGroup === "OWNER_BROKER"),
+        brokers: partyRows.filter((p) => p.ledgerGroup === "OWNER_BROKER" || p.ledgerGroup === "RELATIVE"),
         cityById: new Map(cityRows.map((c) => [c.id, c.name])),
         partyById: new Map(partyRows.map((p) => [p.id, p.name])),
         vehicleById: new Map(vehicleRows.map((v) => [v.id, v.number])),

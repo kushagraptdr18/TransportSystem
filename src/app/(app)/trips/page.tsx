@@ -22,7 +22,7 @@ export default async function TripEntryPage({
           orderBy: { name: "asc" },
         }),
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: "OWNER_BROKER" },
+          where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } },
           orderBy: { name: "asc" },
         }),
         tx.city.findMany({ include: { state: true }, orderBy: { name: "asc" } }),

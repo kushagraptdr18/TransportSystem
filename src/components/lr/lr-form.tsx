@@ -275,6 +275,7 @@ export function LrForm(props: LrFormProps) {
             destCityId,
           });
           if (rate) {
+            freightTouched.current = false; // recompute freight from the looked-up rate
             setValue(`items.${index}.rate`, Number(rate.rate));
             setValue(`items.${index}.rateBasis`, rate.rateBasis as RateBasis);
             return;
@@ -807,12 +808,22 @@ export function LrForm(props: LrFormProps) {
                   <Input
                     type="number"
                     step="any"
-                    {...register(`items.${index}.rate`, { valueAsNumber: true })}
+                    {...register(`items.${index}.rate`, {
+                      valueAsNumber: true,
+                      // changing a rate (also in edit mode) re-enables auto freight
+                      // so Freight and Grand Total recalculate from the new rate
+                      onChange: () => {
+                        freightTouched.current = false;
+                      },
+                    })}
                     className={numCls}
                   />
                   <Select
                     value={row?.rateBasis ?? "CHARGE_WT"}
-                    onValueChange={(val) => setValue(`items.${index}.rateBasis`, val as RateBasis)}
+                    onValueChange={(val) => {
+                      freightTouched.current = false;
+                      setValue(`items.${index}.rateBasis`, val as RateBasis);
+                    }}
                   >
                     <SelectTrigger className="h-9">
                       <SelectValue />

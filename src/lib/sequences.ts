@@ -103,6 +103,18 @@ export async function nextLrNumber(
   return String(max + 1);
 }
 
+/** Max numeric chalan number in this firm+FY plus one (sequential, like LRs). */
+export async function nextChalanNumber(
+  tx: Tx,
+  args: { firmId: string; fyId: string }
+): Promise<string> {
+  const rows = await tx.$queryRaw<{ max: bigint | null }[]>`
+    SELECT MAX(NULLIF(regexp_replace("chalanNo", '\\D', '', 'g'), '')::bigint) AS max
+    FROM "Chalan" WHERE "firmId" = ${args.firmId} AND "fyId" = ${args.fyId}`;
+  const max = rows[0]?.max ? Number(rows[0].max) : 0;
+  return String(max + 1);
+}
+
 /** Peek at the next number without consuming it (for form prefill). */
 export async function peekDocNumber(
   tx: Tx,

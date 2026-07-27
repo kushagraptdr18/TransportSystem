@@ -11,9 +11,22 @@ export default async function ChalanRegisterPage({
   searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
-  const { date_from, date_to, broker, vehicle, status } = searchParams;
+  const { date_from, date_to, q, broker, vehicle, status, payment, vtype, ownership } = searchParams;
 
   const [rows, brokers, vehicles] = await withTenant(session.tenantId, async (tx) => {
+    // vehicle-based filters (type / ownership) resolve to a vehicle-id list
+    const allVehicles = await tx.vehicle.findMany({ orderBy: { number: "asc" } });
+    const vehicleIdFilter =
+      vtype || ownership
+        ? allVehicles
+            .filter(
+              (v) =>
+                (!vtype || (v.vehicleType ?? "") === vtype) &&
+                (!ownership || v.ownershipType === ownership)
+            )
+            .map((v) => v.id)
+        : null;
+
     const chalans = await tx.chalan.findMany({
       where: {
         firmId: session.firmId,
@@ -27,21 +40,25 @@ export default async function ChalanRegisterPage({
               },
             }
           : {}),
+        ...(q ? { chalanNo: { contains: q, mode: "insensitive" } } : {}),
         ...(broker ? { brokerId: broker } : {}),
         ...(vehicle ? { vehicleId: vehicle } : {}),
+        ...(vehicleIdFilter ? { vehicleId: { in: vehicleIdFilter } } : {}),
         ...(status === "final" ? { isFinal: true } : status === "draft" ? { isFinal: false } : {}),
+        ...(payment === "paid"
+          ? { paymentStatus: "PAID" }
+          : payment === "pending"
+            ? { paymentStatus: { not: "PAID" } }
+            : {}),
       },
       include: { lrs: { include: { lr: { include: { pods: true } } } } },
       orderBy: { chalanDate: "desc" },
     });
     const brokers = await tx.party.findMany({
-      where: { ledgerGroup: "OWNER_BROKER", isActive: true },
+      where: { ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] }, isActive: true },
       orderBy: { name: "asc" },
     });
-    const vehicles = await tx.vehicle.findMany({
-      where: { isActive: true },
-      orderBy: { number: "asc" },
-    });
+    const vehicles = allVehicles.filter((v) => v.isActive);
     return [chalans, brokers, vehicles] as const;
   });
 
@@ -60,18 +77,29 @@ export default async function ChalanRegisterPage({
     commissionAmt: toNum(c.commissionAmt),
     advanceTotal: toNum(c.advanceTotal),
     balance: toNum(c.balance),
+    mamool: toNum(c.mamool),
+    courierCharge: toNum(c.courierCharge),
     isFinal: c.isFinal,
     podDone: c.lrs.filter((l) => l.lr.pods.length > 0).length,
+    // shortage weight recorded on the LRs' PODs (visible before balance payment)
+    shortageWt: c.lrs.flatMap((l) => l.lr.pods).reduce((s, p) => s + toNum(p.shortageWt), 0),
+    // shortage amount + round-off applied at balance payment (visible after)
     shortage: Number(c.balShortage),
+    roundOff: Number(c.balRoundOff),
     paymentStatus: c.paymentStatus,
     balPaidAmount: Number(c.balPaidAmount),
   }));
+
+  const vehicleTypes = Array.from(
+    new Set(vehicles.map((v) => v.vehicleType).filter((t): t is string => Boolean(t)))
+  ).sort();
 
   return (
     <ChalanRegisterClient
       rows={data}
       brokers={brokers.map((b) => ({ value: b.id, label: b.name }))}
       vehicles={vehicles.map((v) => ({ value: v.id, label: v.number }))}
+      vehicleTypes={vehicleTypes}
       canDelete={session.role === "ADMIN" || session.role === "OWNER"}
     />
   );

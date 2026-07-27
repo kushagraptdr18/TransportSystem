@@ -39,7 +39,7 @@ export default async function BrokerSlipPage({
             orderBy: { name: "asc" },
           }),
           tx.party.findMany({
-            where: { isActive: true, ledgerGroup: "OWNER_BROKER" },
+            where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } },
             orderBy: { name: "asc" },
           }),
           tx.vehicle.findMany({

@@ -32,7 +32,7 @@ export default async function LoadingChalanPage({
     const [rows, vehicles, brokers, cities] = await Promise.all([
       tx.loadingChalan.findMany({ where, orderBy: [{ chalanDate: "desc" }, { chalanNo: "desc" }] }),
       tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
-      tx.party.findMany({ where: { isActive: true, ledgerGroup: "OWNER_BROKER" }, orderBy: { name: "asc" } }),
+      tx.party.findMany({ where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } }, orderBy: { name: "asc" } }),
       tx.city.findMany({ orderBy: { name: "asc" } }),
     ]);
     return { rows, vehicles, brokers, cities };

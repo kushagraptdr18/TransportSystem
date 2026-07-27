@@ -25,9 +25,16 @@ export interface ChalanRegisterRow {
   commissionAmt: number;
   advanceTotal: number;
   balance: number;
+  mamool: number;
+  courierCharge: number;
   isFinal: boolean;
   podDone: number;
+  /** shortage weight from the LRs' PODs (before balance payment) */
+  shortageWt: number;
+  /** shortage amount deducted at balance payment (after) */
   shortage: number;
+  /** round-off applied at balance payment */
+  roundOff: number;
   paymentStatus: string;
   balPaidAmount: number;
 }
@@ -39,11 +46,13 @@ export function ChalanRegisterClient({
   rows,
   brokers,
   vehicles,
+  vehicleTypes,
   canDelete,
 }: {
   rows: ChalanRegisterRow[];
   brokers: { value: string; label: string }[];
   vehicles: { value: string; label: string }[];
+  vehicleTypes: string[];
   canDelete: boolean;
 }) {
   const router = useRouter();
@@ -123,10 +132,44 @@ export function ChalanRegisterClient({
       },
     },
     {
+      accessorKey: "mamool",
+      header: "Mamul",
+      cell: ({ row }) => (row.original.mamool ? formatMoney(row.original.mamool) : ""),
+      meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "mamool") },
+    },
+    {
+      accessorKey: "courierCharge",
+      header: "Courier",
+      cell: ({ row }) => (row.original.courierCharge ? formatMoney(row.original.courierCharge) : ""),
+      meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "courierCharge") },
+    },
+    {
+      accessorKey: "shortageWt",
+      header: "Shortage Wt",
+      cell: ({ row }) => (row.original.shortageWt ? row.original.shortageWt : ""),
+      meta: {
+        numeric: true,
+        total: (r: ChalanRegisterRow[]) =>
+          Math.round(r.reduce((s, x) => s + x.shortageWt, 0) * 1000) / 1000 || "",
+      },
+    },
+    {
       accessorKey: "shortage",
-      header: "Shortage",
-      cell: ({ row }) => (row.original.shortage ? formatMoney(row.original.shortage) : ""),
+      header: "Shortage Paid",
+      cell: ({ row }) =>
+        row.original.paymentStatus === "PAID" && row.original.shortage
+          ? formatMoney(row.original.shortage)
+          : "",
       meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "shortage") },
+    },
+    {
+      accessorKey: "roundOff",
+      header: "Round Off",
+      cell: ({ row }) =>
+        row.original.paymentStatus === "PAID" && row.original.roundOff
+          ? formatMoney(row.original.roundOff)
+          : "",
+      meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "roundOff") },
     },
     {
       accessorKey: "paymentStatus",
@@ -203,7 +246,13 @@ export function ChalanRegisterClient({
               { header: "Commission", key: "commissionAmt", numeric: true },
               { header: "Advance", key: "advanceTotal", numeric: true },
               { header: "Balance", key: "balance", numeric: true },
+              { header: "Mamul", key: "mamool", numeric: true },
+              { header: "Courier", key: "courierCharge", numeric: true },
+              { header: "Shortage Wt", key: "shortageWt", numeric: true },
+              { header: "Shortage Paid", key: "shortage", numeric: true },
+              { header: "Round Off", key: "roundOff", numeric: true },
               { header: "Status", accessor: (r) => (r.isFinal ? "FINAL" : "DRAFT") },
+              { header: "Balance Payment", accessor: (r) => (r.paymentStatus === "PAID" ? "PAID" : "PENDING") },
             ]}
           />
           <Button asChild size="sm">
@@ -213,9 +262,26 @@ export function ChalanRegisterClient({
       </div>
       <FilterBar
         filters={[
+          { type: "text", key: "q", label: "Chalan No..." },
           { type: "daterange", key: "date", label: "Date" },
-          { type: "combobox", key: "broker", label: "Broker", options: brokers },
+          { type: "combobox", key: "broker", label: "Owner / Broker / Relative", options: brokers },
           { type: "combobox", key: "vehicle", label: "Vehicle", options: vehicles },
+          {
+            type: "select",
+            key: "vtype",
+            label: "Vehicle Type",
+            options: vehicleTypes.map((t) => ({ value: t, label: t })),
+          },
+          {
+            type: "select",
+            key: "ownership",
+            label: "Ownership",
+            options: [
+              { value: "OWNER", label: "Owner" },
+              { value: "BROKER", label: "Broker" },
+              { value: "RELATIVE", label: "Relative" },
+            ],
+          },
           {
             type: "select",
             key: "status",
@@ -223,6 +289,15 @@ export function ChalanRegisterClient({
             options: [
               { value: "final", label: "Final" },
               { value: "draft", label: "Draft" },
+            ],
+          },
+          {
+            type: "select",
+            key: "payment",
+            label: "Balance Payment",
+            options: [
+              { value: "paid", label: "Paid" },
+              { value: "pending", label: "Pending" },
             ],
           },
         ]}
