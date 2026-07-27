@@ -42,10 +42,12 @@ const columns: ColumnDef<Row, unknown>[] = [
 export function ProductsClient({
   rows,
   groupOptions,
+  unitOptions,
   canDelete,
 }: {
   rows: Row[];
   groupOptions: MasterOption[];
+  unitOptions: MasterOption[];
   canDelete: boolean;
 }) {
   return (
@@ -71,7 +73,7 @@ export function ProductsClient({
       fields={[
         { name: "groupId", label: "Product Group *", type: "combobox", options: groupOptions },
         { name: "name", label: "Name *", type: "text", uppercase: true },
-        { name: "unit", label: "Unit", type: "text" },
+        { name: "unit", label: "Unit *", type: "combobox", options: unitOptions },
         { name: "hsnCode", label: "HSN Code", type: "text" },
         {
           name: "productType",
@@ -90,7 +92,7 @@ export function ProductsClient({
       defaults={{
         groupId: null,
         name: "",
-        unit: "MT",
+        unit: null,
         hsnCode: "",
         gstPct: "0",
         type: "",
@@ -100,7 +102,7 @@ export function ProductsClient({
       toForm={(r) => ({
         groupId: r.groupId,
         name: r.name,
-        unit: r.unit ?? "",
+        unit: r.unit,
         hsnCode: r.hsnCode ?? "",
         gstPct: String(r.gstPct),
         type: r.type ?? "",

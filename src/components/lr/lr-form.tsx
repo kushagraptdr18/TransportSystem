@@ -97,7 +97,12 @@ export interface LrFormProps {
   mode: "create" | "edit";
   /** Batch mode: submit adds the LR to the parent's batch instead of saving. */
   batchMode?: boolean;
-  onBatchAdd?: (payload: Record<string, unknown>) => void;
+  /** Receives the payload plus a snapshot of the raw form values (for later tray edits). */
+  onBatchAdd?: (payload: Record<string, unknown>, values: LrFormValues) => void;
+  /** Batch mode: a tray row is being edited — submit updates it instead of adding. */
+  batchEditing?: boolean;
+  /** Batch mode: hands the parent form access so tray rows can be loaded / restored. */
+  exposeFormApi?: (api: { getValues: () => LrFormValues; reset: (v: LrFormValues) => void }) => void;
   isDummy: boolean;
   lrId?: string;
   defaults: LrFormValues;
@@ -196,8 +201,22 @@ export function LrForm(props: LrFormProps) {
   );
 
   const form = useForm<LrFormValues>({ defaultValues: props.defaults });
-  const { register, setValue, watch, control, handleSubmit } = form;
+  const { register, setValue, watch, control, handleSubmit, reset, getValues } = form;
   const items = useFieldArray({ control, name: "items" });
+
+  // batch mode: let the parent load a tray row into the form / restore values
+  const { exposeFormApi } = props;
+  React.useEffect(() => {
+    exposeFormApi?.({ getValues, reset });
+  }, [exposeFormApi, getValues, reset]);
+
+  // while editing a tray row, treat weights/freight as user-set (no auto-mirroring)
+  React.useEffect(() => {
+    if (props.batchEditing) {
+      freightTouched.current = true;
+      (getValues().items ?? []).forEach((_, i) => chargeWtTouched.current.add(i));
+    }
+  }, [props.batchEditing, getValues]);
 
   const v = watch();
 
@@ -345,10 +364,12 @@ export function LrForm(props: LrFormProps) {
     }
 
     if (props.batchMode && props.onBatchAdd) {
-      props.onBatchAdd(payload);
-      // keep every field for the next LR — bump only the display number
-      const n = parseInt(values.lrNo, 10);
-      if (!isNaN(n)) setValue("lrNo", String(n + 1));
+      props.onBatchAdd(payload, structuredClone(values));
+      if (!props.batchEditing) {
+        // keep every field for the next LR — bump only the display number
+        const n = parseInt(values.lrNo, 10);
+        if (!isNaN(n)) setValue("lrNo", String(n + 1));
+      }
       return;
     }
 
@@ -972,7 +993,9 @@ export function LrForm(props: LrFormProps) {
           </Field>
           <Button type="submit" disabled={saving} className="h-9">
             {props.batchMode
-              ? "Add LR"
+              ? props.batchEditing
+                ? "Update LR in Batch"
+                : "Add LR"
               : saving
                 ? "Saving..."
                 : props.mode === "edit"

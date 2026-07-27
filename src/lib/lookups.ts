@@ -22,7 +22,14 @@ export async function getPartyOptions(groups?: LedgerGroup[]): Promise<Option[]>
   const s = requireSession();
   const parties = await withTenant(s.tenantId, (tx) =>
     tx.party.findMany({
-      where: { isActive: true, ...(groups?.length ? { ledgerGroup: { in: groups } } : {}) },
+      where: {
+        isActive: true,
+        // Bank & Cash are maintained in their own master; never offer them as parties
+        // unless a caller (getBankOptions) asks for those groups explicitly.
+        ...(groups?.length
+          ? { ledgerGroup: { in: groups } }
+          : { ledgerGroup: { notIn: ["BANK", "CASH"] } }),
+      },
       orderBy: { name: "asc" },
     })
   );
@@ -41,8 +48,14 @@ export async function getVehicleOptions(): Promise<Option[]> {
   return vehicles.map((v) => ({
     value: v.id,
     label: v.number,
-    meta: v.isOwn ? `Owned${v.ownerNames ? " — " + v.ownerNames : ""}` : `Broker — ${v.owner?.name ?? "?"}`,
+    meta: vehicleMeta(v),
   }));
+}
+
+function vehicleMeta(v: { isOwn: boolean; ownershipType: string; ownerNames: string | null; owner: { name: string } | null }) {
+  if (v.isOwn) return `Owned${v.ownerNames ? " — " + v.ownerNames : v.owner ? " — " + v.owner.name : ""}`;
+  const kind = v.ownershipType === "RELATIVE" ? "Relative" : "Broker";
+  return `${kind} — ${v.owner?.name ?? "?"}`;
 }
 
 export async function getProductOptions(): Promise<Option[]> {
@@ -69,6 +82,13 @@ export async function getUnitOptions(): Promise<Option[]> {
   const s = requireSession();
   const units = await withTenant(s.tenantId, (tx) => tx.unit.findMany({ orderBy: { name: "asc" } }));
   return units.map((u) => ({ value: u.id, label: u.name }));
+}
+
+/** Unit options keyed by NAME — for fields that store the unit name (e.g. Product.unit). */
+export async function getUnitNameOptions(): Promise<Option[]> {
+  const s = requireSession();
+  const units = await withTenant(s.tenantId, (tx) => tx.unit.findMany({ orderBy: { name: "asc" } }));
+  return units.map((u) => ({ value: u.name, label: u.name }));
 }
 
 // ---------- inline creates (the "+" pattern) ----------
@@ -141,13 +161,7 @@ export async function createVehicleInline(input: {
     });
     return created;
   });
-  return {
-    value: v.id,
-    label: v.number,
-    meta: v.isOwn
-      ? `Owned${v.ownerNames ? " — " + v.ownerNames : ""}`
-      : `Broker — ${v.owner?.name ?? "?"}`,
-  };
+  return { value: v.id, label: v.number, meta: vehicleMeta(v) };
 }
 
 export async function createProductInline(input: {
@@ -159,6 +173,13 @@ export async function createProductInline(input: {
 }): Promise<Option> {
   const s = requireSession();
   const p = await withTenant(s.tenantId, async (tx) => {
+    if (input.unit) {
+      const unit = await tx.unit.findFirst({
+        where: { name: { equals: input.unit, mode: "insensitive" } },
+      });
+      if (!unit) throw new Error(`Unit "${input.unit}" is not in the Unit Master`);
+      input.unit = unit.name;
+    }
     let groupId = input.groupId;
     if (!groupId) {
       const g = await tx.productGroup.upsert({
@@ -173,7 +194,7 @@ export async function createProductInline(input: {
         tenantId: s.tenantId,
         name: input.name.toUpperCase().trim(),
         groupId,
-        unit: input.unit ?? "MT",
+        unit: input.unit ?? null,
         hsnCode: input.hsnCode,
         gstPct: input.gstPct ?? 0,
       },

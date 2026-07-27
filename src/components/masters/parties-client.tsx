@@ -33,15 +33,14 @@ export interface PartyRow {
   isActive: boolean;
 }
 
-// INCOME / OFFICE / EXPENSE removed from the party master per requirements;
-// existing records with those groups still render via groupLabel.
+// INCOME / OFFICE / EXPENSE / RELATIVE removed from the party master per requirements
+// (relatives are just an ownership *type* on vehicles, backed by Owner/Broker parties);
+// BANK / CASH live in the dedicated Bank & Cash Heads master.
+// Existing records with removed groups still render via groupLabel.
 const GROUPS = [
-  "BANK",
-  "CASH",
   "CONSIGNEE_CONSIGNOR",
   "DRIVER",
   "OWNER_BROKER",
-  "RELATIVE",
   "STAFF",
   "SUPPLIERS",
 ];

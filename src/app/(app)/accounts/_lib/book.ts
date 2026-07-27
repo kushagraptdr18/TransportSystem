@@ -24,24 +24,25 @@ export async function ledgerBookRows(params: BookParams): Promise<{
 }> {
   const { session } = params;
   return withTenant(session.tenantId, async (tx) => {
+    // Bank & Cash live in their own books (cash-book / bank-book) — keep them out
+    // of the party ledger unless a book explicitly asks for those groups.
     const partyWhere: Prisma.PartyWhereInput = params.groups
       ? { ledgerGroup: { in: params.groups } }
-      : {};
+      : { ledgerGroup: { notIn: ["BANK", "CASH"] } };
     const parties = await tx.party.findMany({
       where: { ...partyWhere, isActive: true },
       orderBy: { name: "asc" },
       select: { id: true, name: true, ledgerGroup: true, openingBalance: true, openingSide: true },
     });
-    const partyIds = params.partyId
-      ? [params.partyId]
-      : params.groups
-        ? parties.map((p) => p.id)
-        : undefined;
+    const partyIds = params.partyId ? [params.partyId] : parties.map((p) => p.id);
 
     const where: Prisma.LedgerEntryWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
-      ...(partyIds ? { partyId: { in: partyIds } } : {}),
+      ...(params.partyId || params.groups
+        ? { partyId: { in: partyIds } }
+        : // full ledger: keep unlinked entries, drop bank/cash-party entries
+          { OR: [{ partyId: { in: partyIds } }, { partyId: null }] }),
     };
     if (params.dateFrom || params.dateTo) {
       where.date = {

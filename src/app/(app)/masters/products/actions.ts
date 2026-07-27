@@ -13,7 +13,7 @@ const schema = z.object({
   id: z.string().optional(),
   groupId: z.string().min(1, "Group is required"),
   name: z.string().trim().min(1, "Name is required"),
-  unit: optStr,
+  unit: z.string().trim().min(1, "Unit is required — select one from the Unit Master"),
   hsnCode: optStr,
   productType: z.enum(["NORMAL", "ODC"]).default("NORMAL"),
   gstPct: z.coerce.number().min(0).max(100).default(0),
@@ -30,10 +30,14 @@ export async function saveProduct(input: unknown): Promise<ActionResult> {
   await authorize(session, "masters", data.id ? "edit" : "create");
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
+      const unit = await tx.unit.findFirst({
+        where: { name: { equals: data.unit, mode: "insensitive" } },
+      });
+      if (!unit) throw new Error(`Unit "${data.unit}" is not in the Unit Master`);
       const values = {
         groupId: data.groupId,
         name: data.name.toUpperCase(),
-        unit: data.unit,
+        unit: unit.name,
         hsnCode: data.hsnCode,
         productType: data.productType,
         gstPct: data.gstPct,
@@ -90,9 +94,15 @@ export async function importProducts(formData: FormData): Promise<ImportSummary>
         update: {},
       });
       const productType = rec["PRODUCT TYPE"]?.toUpperCase() === "ODC" ? "ODC" : "NORMAL";
+      const unitName = rec["UNIT"]?.trim();
+      if (!unitName) throw new Error("Unit is required (must exist in the Unit Master)");
+      const unit = await tx.unit.findFirst({
+        where: { name: { equals: unitName, mode: "insensitive" } },
+      });
+      if (!unit) throw new Error(`unit "${unitName}" is not in the Unit Master`);
       const values = {
         groupId: group.id,
-        unit: rec["UNIT"] || "MT",
+        unit: unit.name,
         hsnCode: rec["HSN CODE"] || null,
         gstPct: importNum(rec["GST %"]),
         productType,

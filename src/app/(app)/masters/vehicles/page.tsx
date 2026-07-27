@@ -13,7 +13,7 @@ export default async function VehiclesPage({
   const q = searchParams.q?.trim();
   const own = searchParams.own;
 
-  const { rows, owners, relatives } = await withTenant(session.tenantId, async (tx) => {
+  const { rows, owners } = await withTenant(session.tenantId, async (tx) => {
     const rows = await tx.vehicle.findMany({
       where: {
         isActive: true,
@@ -23,15 +23,13 @@ export default async function VehiclesPage({
       include: { owner: true },
       orderBy: { number: "asc" },
     });
+    // unified person list — Owner / Broker / Relative are just ownership types;
+    // legacy RELATIVE-group parties remain selectable alongside OWNER_BROKER ones
     const owners = await tx.party.findMany({
-      where: { isActive: true, ledgerGroup: "OWNER_BROKER" },
+      where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } },
       orderBy: { name: "asc" },
     });
-    const relatives = await tx.party.findMany({
-      where: { isActive: true, ledgerGroup: "RELATIVE" },
-      orderBy: { name: "asc" },
-    });
-    return { rows, owners, relatives };
+    return { rows, owners };
   });
 
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
@@ -51,8 +49,7 @@ export default async function VehiclesPage({
         permitNo: r.permitNo,
         insuranceNo: r.insuranceNo,
       }))}
-      ownerOptions={owners.map((p) => ({ value: p.id, label: p.name, meta: p.pan ?? undefined }))}
-      relativeOptions={relatives.map((p) => ({ value: p.id, label: p.name, meta: p.mobile ?? undefined }))}
+      ownerOptions={owners.map((p) => ({ value: p.id, label: p.name, meta: p.pan ?? p.mobile ?? undefined }))}
       canDelete={canDelete}
     />
   );

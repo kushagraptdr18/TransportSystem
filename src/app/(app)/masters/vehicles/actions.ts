@@ -95,11 +95,14 @@ export async function importVehicles(formData: FormData): Promise<ImportSummary>
       if (!["OWNER", "BROKER", "RELATIVE"].includes(ownership)) {
         throw new Error("Ownership must be OWNER, BROKER or RELATIVE");
       }
-      const group = ownership === "RELATIVE" ? "RELATIVE" : "OWNER_BROKER";
+      // owners, brokers and relatives share one unified person list
       const person = await tx.party.findFirst({
-        where: { name: { equals: rec["NAME"], mode: "insensitive" }, ledgerGroup: group as never },
+        where: {
+          name: { equals: rec["NAME"], mode: "insensitive" },
+          ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] },
+        },
       });
-      if (!person) throw new Error(`"${rec["NAME"]}" not found in the ${ownership.toLowerCase()} list`);
+      if (!person) throw new Error(`"${rec["NAME"]}" not found in the owner / broker / relative list`);
       const values = {
         ownershipType: ownership,
         isOwn: ownership === "OWNER",

@@ -13,7 +13,7 @@ export default async function ProductsPage({
   const q = searchParams.q?.trim();
   const groupId = searchParams.groupId;
 
-  const { rows, groups } = await withTenant(session.tenantId, async (tx) => {
+  const { rows, groups, units } = await withTenant(session.tenantId, async (tx) => {
     const rows = await tx.product.findMany({
       where: {
         ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
@@ -23,7 +23,8 @@ export default async function ProductsPage({
       orderBy: { name: "asc" },
     });
     const groups = await tx.productGroup.findMany({ orderBy: { name: "asc" } });
-    return { rows, groups };
+    const units = await tx.unit.findMany({ orderBy: { name: "asc" } });
+    return { rows, groups, units };
   });
 
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
@@ -43,6 +44,7 @@ export default async function ProductsPage({
         division: r.division,
       }))}
       groupOptions={groups.map((g) => ({ value: g.id, label: g.name }))}
+      unitOptions={units.map((u) => ({ value: u.name, label: u.name }))}
       canDelete={canDelete}
     />
   );

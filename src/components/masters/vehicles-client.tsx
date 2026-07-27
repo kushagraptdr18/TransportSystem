@@ -3,7 +3,7 @@
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import type { MasterOption } from "@/components/data/master-combobox";
-import { SimpleMaster, type FormState } from "@/components/masters/simple-master";
+import { SimpleMaster } from "@/components/masters/simple-master";
 import { PartyCreateDialog } from "@/components/masters/inline-dialogs";
 import { saveVehicle, deleteVehicle, importVehicles } from "@/app/(app)/masters/vehicles/actions";
 
@@ -58,29 +58,12 @@ const columns: ColumnDef<Row, unknown>[] = [
 export function VehiclesClient({
   rows,
   ownerOptions,
-  relativeOptions,
   canDelete,
 }: {
   rows: Row[];
   ownerOptions: MasterOption[];
-  relativeOptions: MasterOption[];
   canDelete: boolean;
 }) {
-  const nameFieldFor = (types: string[], options: MasterOption[], group: string) => ({
-    name: "ownerId",
-    label: "Name *",
-    type: "combobox" as const,
-    options,
-    visibleIf: (f: FormState) => types.includes(String(f.ownershipType)),
-    createDialog: (props: Parameters<typeof PartyCreateDialog>[0]) => (
-      <PartyCreateDialog
-        {...props}
-        defaultGroup={group as "OWNER_BROKER" | "RELATIVE"}
-      />
-    ),
-    span2: true,
-  });
-
   return (
     <SimpleMaster
       title="Vehicle"
@@ -121,9 +104,17 @@ export function VehiclesClient({
             { value: "RELATIVE", label: "Relative" },
           ],
         },
-        // same form key, different source list per ownership type
-        nameFieldFor(["OWNER", "BROKER"], ownerOptions, "OWNER_BROKER"),
-        nameFieldFor(["RELATIVE"], relativeOptions, "RELATIVE"),
+        // unified list — same combobox for Owner / Broker / Relative
+        {
+          name: "ownerId",
+          label: "Name *",
+          type: "combobox",
+          options: ownerOptions,
+          createDialog: (props: Parameters<typeof PartyCreateDialog>[0]) => (
+            <PartyCreateDialog {...props} defaultGroup="OWNER_BROKER" />
+          ),
+          span2: true,
+        },
         { name: "vehicleType", label: "Vehicle Type", type: "text" },
         { name: "chassisNo", label: "Chassis No", type: "text", uppercase: true },
         { name: "engineNo", label: "Engine No", type: "text", uppercase: true },

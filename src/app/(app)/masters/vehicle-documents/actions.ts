@@ -34,6 +34,17 @@ export async function saveVehicleDocument(input: unknown): Promise<ActionResult>
   if (!entryDate) return { ok: false, error: "Invalid entry date" };
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
+      const effectiveDate = parseDateInput(data.effectiveDate);
+      let expiryDate = parseDateInput(data.expiryDate);
+      if (!expiryDate) {
+        // default from the document type's validity period (Document Master)
+        const docType = await tx.documentType.findUnique({ where: { id: data.docTypeId } });
+        const base = effectiveDate ?? entryDate;
+        if (docType?.expiryDays) {
+          expiryDate = new Date(base);
+          expiryDate.setDate(expiryDate.getDate() + docType.expiryDays);
+        }
+      }
       const values = {
         docTypeId: data.docTypeId,
         vehicleId: data.vehicleId,
@@ -41,8 +52,8 @@ export async function saveVehicleDocument(input: unknown): Promise<ActionResult>
         companyName: data.companyName,
         status: data.status,
         entryDate,
-        effectiveDate: parseDateInput(data.effectiveDate),
-        expiryDate: parseDateInput(data.expiryDate),
+        effectiveDate,
+        expiryDate,
         remarks: data.remarks,
         filePath: data.filePath,
         fileName: data.fileName,

@@ -37,8 +37,9 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
           where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" },
           orderBy: { name: "asc" },
         }),
+        // Billed To offers consignor/consignee parties only — no owners/brokers
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { in: ["CONSIGNEE_CONSIGNOR", "OWNER_BROKER"] } },
+          where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" },
           orderBy: { name: "asc" },
         }),
         tx.vehicle.findMany({

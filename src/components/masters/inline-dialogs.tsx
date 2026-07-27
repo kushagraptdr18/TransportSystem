@@ -35,6 +35,7 @@ import {
   createVehicleInline,
   getPartyOptions,
   getStateOptions,
+  getUnitNameOptions,
   type Option,
 } from "@/lib/lookups";
 
@@ -44,13 +45,12 @@ export interface InlineCreateDialogProps {
   onCreated: (option: Option) => void;
 }
 
+// Bank/Cash have their own master; Relative is a vehicle ownership *type*,
+// not a ledger group — neither is creatable as a party.
 const LEDGER_GROUPS: LedgerGroup[] = [
-  "BANK",
-  "CASH",
   "CONSIGNEE_CONSIGNOR",
   "DRIVER",
   "OWNER_BROKER",
-  "RELATIVE",
   "STAFF",
   "SUPPLIERS",
 ];
@@ -265,7 +265,6 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
   const [number, setNumber] = React.useState("");
   const [ownership, setOwnership] = React.useState<"OWNER" | "BROKER" | "RELATIVE">("OWNER");
   const [ownerId, setOwnerId] = React.useState<string | null>(null);
-  const [relatives, setRelatives] = React.useState<MasterOption[]>([]);
   const [vehicleType, setVehicleType] = React.useState("");
   const [chassisNo, setChassisNo] = React.useState("");
   const [engineNo, setEngineNo] = React.useState("");
@@ -275,8 +274,9 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
 
   React.useEffect(() => {
     if (open) {
-      getPartyOptions(["OWNER_BROKER"]).then(setOwners).catch(() => setOwners([]));
-      getPartyOptions(["RELATIVE"]).then(setRelatives).catch(() => setRelatives([]));
+      // unified list: owners, brokers and relatives are all persons here;
+      // legacy RELATIVE-group parties stay selectable
+      getPartyOptions(["OWNER_BROKER", "RELATIVE"]).then(setOwners).catch(() => setOwners([]));
     }
   }, [open]);
 
@@ -350,7 +350,7 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
               {ownership === "RELATIVE" ? "Relative Name *" : ownership === "BROKER" ? "Broker Name *" : "Owner Name *"}
             </Label>
             <MasterCombobox
-              options={ownership === "RELATIVE" ? relatives : owners}
+              options={owners}
               value={ownerId}
               onChange={setOwnerId}
               placeholder="Type to search..."
@@ -389,13 +389,22 @@ export function ProductCreateDialog({ open, onOpenChange, onCreated }: InlineCre
   const { toast } = useToast();
   const [busy, setBusy] = React.useState(false);
   const [name, setName] = React.useState("");
-  const [unit, setUnit] = React.useState("MT");
+  const [unit, setUnit] = React.useState<string | null>(null);
+  const [unitOptions, setUnitOptions] = React.useState<MasterOption[]>([]);
   const [hsnCode, setHsnCode] = React.useState("");
   const [gstPct, setGstPct] = React.useState("");
+
+  React.useEffect(() => {
+    if (open) getUnitNameOptions().then(setUnitOptions).catch(() => setUnitOptions([]));
+  }, [open]);
 
   const submit = async () => {
     if (!name.trim()) {
       toast({ variant: "destructive", title: "Product name is required" });
+      return;
+    }
+    if (!unit) {
+      toast({ variant: "destructive", title: "Select a unit from the Unit Master" });
       return;
     }
     setBusy(true);
@@ -428,8 +437,8 @@ export function ProductCreateDialog({ open, onOpenChange, onCreated }: InlineCre
           <Field label="Product Name *">
             <Input value={name} onChange={(e) => setName(e.target.value.toUpperCase())} autoFocus />
           </Field>
-          <Field label="Unit">
-            <Input value={unit} onChange={(e) => setUnit(e.target.value)} />
+          <Field label="Unit *">
+            <MasterCombobox options={unitOptions} value={unit} onChange={setUnit} placeholder="Select unit..." />
           </Field>
           <Field label="HSN Code">
             <Input value={hsnCode} onChange={(e) => setHsnCode(e.target.value)} />

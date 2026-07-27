@@ -17,7 +17,8 @@ export default async function PartiesPage({
   const q = searchParams.q?.trim();
 
   const { rows, states, cities } = await withTenant(session.tenantId, async (tx) => {
-    const where: Prisma.PartyWhereInput = {};
+    // Bank & Cash accounts belong to the Bank/Cash Heads master, not the party ledger
+    const where: Prisma.PartyWhereInput = { ledgerGroup: { notIn: ["BANK", "CASH"] } };
     if (q) {
       where.OR = [
         { name: { contains: q, mode: "insensitive" } },
@@ -26,7 +27,8 @@ export default async function PartiesPage({
         { alias: { contains: q, mode: "insensitive" } },
       ];
     }
-    if (searchParams.group) where.ledgerGroup = searchParams.group as LedgerGroup;
+    if (searchParams.group && !["BANK", "CASH"].includes(searchParams.group))
+      where.ledgerGroup = searchParams.group as LedgerGroup;
     if (searchParams.status === "active") where.isActive = true;
     if (searchParams.status === "inactive") where.isActive = false;
     const [rows, states, cities] = await Promise.all([

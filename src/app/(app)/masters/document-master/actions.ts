@@ -15,6 +15,7 @@ const schema = z.object({
   description: optStr,
   showReminder: z.boolean().default(true),
   reminderDays: z.coerce.number().int().min(1).max(365).default(30),
+  expiryDays: z.coerce.number().int().min(1, "Expiry days must be at least 1").max(3650).default(365),
 });
 
 export async function saveDocumentType(input: unknown): Promise<ActionResult> {
@@ -25,7 +26,13 @@ export async function saveDocumentType(input: unknown): Promise<ActionResult> {
   await authorize(session, "masters", data.id ? "edit" : "create");
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
-      const values = { name: data.name, description: data.description, showReminder: data.showReminder, reminderDays: data.reminderDays };
+      const values = {
+        name: data.name,
+        description: data.description,
+        showReminder: data.showReminder,
+        reminderDays: data.reminderDays,
+        expiryDays: data.expiryDays,
+      };
       if (data.id) {
         const before = await tx.documentType.findUniqueOrThrow({ where: { id: data.id } });
         const row = await tx.documentType.update({ where: { id: data.id }, data: values });
@@ -71,6 +78,7 @@ export async function importDocumentTypes(formData: FormData): Promise<ImportSum
       const values = {
         description: rec["DESCRIPTION"] || null,
         reminderDays: importNum(rec["REMINDER DAYS"]) || 30,
+        expiryDays: importNum(rec["EXPIRY DAYS"]) || 365,
       };
       const existing = await tx.documentType.findFirst({ where: { name } });
       if (existing) {
