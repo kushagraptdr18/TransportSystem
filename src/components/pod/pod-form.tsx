@@ -52,7 +52,7 @@ const SOURCE_TYPES = [
   { value: "BROKER_SLIP", label: "Broker Slip" },
 ] as const;
 
-const MIN_SIZE = 2 * 1024 * 1024;
+const MAX_SIZE = 10 * 1024 * 1024;
 
 interface LineState {
   unloadDateText: string;
@@ -159,11 +159,11 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles, initial
 
   const handleFile = async (lrId: string, file: File | null) => {
     if (!file) return;
-    if (file.size < MIN_SIZE) {
+    if (file.size > MAX_SIZE) {
       toast({
         variant: "destructive",
-        title: "File too small",
-        description: `POD file must be at least 2 MB. This file is ${(file.size / (1024 * 1024)).toFixed(2)} MB.`,
+        title: "File too large",
+        description: `POD file must be at most 10 MB. This file is ${(file.size / (1024 * 1024)).toFixed(2)} MB.`,
       });
       return;
     }
@@ -205,17 +205,7 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles, initial
       toast({ variant: "destructive", title: "Select at least one LR" });
       return;
     }
-    for (const lr of selectedLrs) {
-      const line = lines[lr.id];
-      if (!line?.filePath) {
-        toast({
-          variant: "destructive",
-          title: "POD file missing",
-          description: `Upload a POD file (min 2 MB) for LR ${lr.lrNo}.`,
-        });
-        return;
-      }
-    }
+    // attachment is optional — PODs can be completed without a document
     setSaving(true);
     try {
       const res = await savePodBatch({
@@ -234,8 +224,8 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles, initial
             poNumber: line.poNumber || undefined,
             gateEntryNo: line.gateEntryNo || undefined,
             remarks: line.remarks || undefined,
-            filePath: line.filePath,
-            fileSize: line.fileSize,
+            filePath: line.filePath || undefined,
+            fileSize: line.filePath ? line.fileSize : undefined,
           };
         }),
       });
@@ -472,7 +462,7 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles, initial
                       />
                     </div>
                     <div className="space-y-1.5 col-span-2 md:col-span-4">
-                      <Label>POD File (pdf / jpg / png, min 2 MB) *</Label>
+                      <Label>POD File (pdf / jpg / png, max 10 MB — optional)</Label>
                       <div className="flex items-center gap-3">
                         <Input
                           type="file"

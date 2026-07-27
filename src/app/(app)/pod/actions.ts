@@ -219,8 +219,9 @@ const podLineSchema = z.object({
   poNumber: z.string().optional(),
   gateEntryNo: z.string().optional(),
   remarks: z.string().optional(),
-  filePath: z.string().min(1, "POD file is required"),
-  fileSize: z.number().int(),
+  // attachment is optional — a POD can be completed without a document
+  filePath: z.string().optional().nullable(),
+  fileSize: z.number().int().optional().nullable(),
 });
 
 const podBatchSchema = z.object({
@@ -238,7 +239,7 @@ const podBatchSchema = z.object({
   lines: z.array(podLineSchema).min(1, "Select at least one LR"),
 });
 
-const MIN_SIZE = 2 * 1024 * 1024;
+const MAX_SIZE = 10 * 1024 * 1024;
 
 export async function savePodBatch(
   input: unknown
@@ -251,9 +252,11 @@ export async function savePodBatch(
   }
   const data = parsed.data;
 
+  // file checks apply only when an attachment was uploaded (attachment is optional)
   for (const line of data.lines) {
-    if (line.fileSize < MIN_SIZE) {
-      return { ok: false, error: "POD file must be at least 2 MB." };
+    if (!line.filePath) continue;
+    if ((line.fileSize ?? 0) > MAX_SIZE) {
+      return { ok: false, error: "POD file must be at most 10 MB." };
     }
     if (!line.filePath.startsWith(`${session.tenantId}/`)) {
       return { ok: false, error: "Invalid file path." };
@@ -301,8 +304,8 @@ export async function savePodBatch(
             shortageWt,
             poNumber: line.poNumber || null,
             gateEntryNo: line.gateEntryNo || null,
-            filePath: line.filePath,
-            fileSize: line.fileSize,
+            filePath: line.filePath || null,
+            fileSize: line.fileSize ?? null,
             remarks: line.remarks || null,
             status: "COMPLETED",
             createdById: session.userId,

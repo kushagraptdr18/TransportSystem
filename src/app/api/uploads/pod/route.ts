@@ -6,7 +6,7 @@ import { requireSession } from "@/lib/session";
 
 export const runtime = "nodejs";
 
-const MIN_SIZE = 2 * 1024 * 1024; // 2 MB minimum
+const MAX_SIZE = 10 * 1024 * 1024; // 10 MB maximum
 const ALLOWED_EXT: Record<string, string> = {
   "application/pdf": "pdf",
   "image/jpeg": "jpg",
@@ -42,11 +42,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (file.size < MIN_SIZE) {
+  if (file.size > MAX_SIZE) {
     return NextResponse.json(
       {
         ok: false,
-        error: `POD file must be at least 2 MB (received ${(file.size / (1024 * 1024)).toFixed(2)} MB). Please upload a higher-quality scan.`,
+        error: `POD file must be at most 10 MB (received ${(file.size / (1024 * 1024)).toFixed(2)} MB). Please upload a smaller file.`,
       },
       { status: 400 }
     );

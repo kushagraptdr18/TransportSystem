@@ -40,11 +40,28 @@ export default async function PodRegisterPage({
           ...(dateFrom || dateTo
             ? { docDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
             : {}),
-          ...(status ? { status } : {}),
+          // Pending  = the LR's chalan is still awaiting balance payment
+          // Completed = POD done AND the chalan's balance payment is finalized
+          ...(status === "PENDING"
+            ? {
+                lr: {
+                  chalanLrs: {
+                    some: { chalan: { deletedAt: null, paymentStatus: { not: "PAID" } } },
+                  },
+                },
+              }
+            : status === "COMPLETED"
+              ? {
+                  status: "COMPLETED",
+                  lr: {
+                    chalanLrs: { some: { chalan: { deletedAt: null, paymentStatus: "PAID" } } },
+                  },
+                }
+              : {}),
           ...(sourceType ? { sourceType } : {}),
           ...(vehicleId ? { vehicleId } : {}),
         },
-        include: { lr: true },
+        include: { lr: { include: { chalanLrs: { include: { chalan: true } } } } },
         orderBy: { docDate: "desc" },
       });
       const vehicleIds = Array.from(new Set(rows.map((r) => r.vehicleId).filter(Boolean))) as string[];
@@ -65,6 +82,10 @@ export default async function PodRegisterPage({
           shortageWt: p.shortageWt === null ? null : toNum(String(p.shortageWt)),
           filePath: p.filePath,
           status: p.status,
+          balancePaid:
+            (p.lr?.chalanLrs ?? []).some(
+              (cl) => !cl.chalan.deletedAt && cl.chalan.paymentStatus === "PAID"
+            ),
           sourceType: p.sourceType,
           remarks: p.remarks ?? "",
         })

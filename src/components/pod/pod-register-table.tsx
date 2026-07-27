@@ -37,6 +37,8 @@ export interface PodRegisterRow {
   shortageWt: number | null;
   filePath: string | null;
   status: string;
+  /** true when the LR's chalan balance payment is finalized */
+  balancePaid: boolean;
   sourceType: string;
   remarks: string;
 }
@@ -205,6 +207,16 @@ export function PodRegisterTable({
           {row.original.status}
         </Badge>
       ),
+    },
+    {
+      accessorKey: "balancePaid",
+      header: "Balance Payment",
+      cell: ({ row }) =>
+        row.original.balancePaid ? (
+          <Badge>Paid</Badge>
+        ) : (
+          <Badge variant="destructive">Pending</Badge>
+        ),
     },
     {
       id: "actions",
