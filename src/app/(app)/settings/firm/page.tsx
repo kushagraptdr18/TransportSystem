@@ -44,6 +44,7 @@ export default async function FirmSettingsPage() {
     cin: s(firm.cin),
     msmeNo: s(firm.msmeNo),
     ibaCode: s(firm.ibaCode),
+    vendorCode: s(firm.vendorCode),
     rcmCovered: firm.rcmCovered,
     jurisdiction: s(firm.jurisdiction),
     cgstPct: toNum(String(firm.cgstPct)),

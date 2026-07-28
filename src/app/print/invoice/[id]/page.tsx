@@ -71,9 +71,14 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
       })
     : null;
 
+  const invGstPct =
+    toNum(invoice.cgstPct) + toNum(invoice.sgstPct) || toNum(invoice.igstPct) || firmGstPct;
+
   const viewData: InvoiceViewData = {
     billNo: invoice.invoiceNo,
     billDate: formatDate(invoice.invoiceDate),
+    placeOfSupply: invoice.placeOfSupply || partyState.name || "",
+    gstPct: invGstPct,
     firm: {
       name: firm?.name ?? "",
       address: [firm?.address1, firm?.address2].filter(Boolean).join(", "),
@@ -84,6 +89,7 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
       stateName: firmState.name,
       stateCode: firmState.code,
       ibaCode: firm?.ibaCode ?? "",
+      vendorCode: firm?.vendorCode ?? "",
       rcmCovered: firm?.rcmCovered ?? true,
     },
     tdsPct: toNum(invoice.tdsPct) || 1,

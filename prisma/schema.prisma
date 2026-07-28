@@ -190,6 +190,7 @@ model Firm {
   cin                String?
   msmeNo             String?
   ibaCode            String?
+  vendorCode         String?
   // service covered under GST Reverse Charge Mechanism (shown on invoices)
   rcmCovered         Boolean  @default(true)
   jurisdiction       String?

@@ -107,6 +107,7 @@ export async function InvoiceEntryPage({
             stateCodeFromGstin(firm?.gstin) ??
             "",
           ibaCode: firm?.ibaCode ?? "",
+          vendorCode: firm?.vendorCode ?? "",
           rcmCovered: firm?.rcmCovered ?? true,
         }}
         initial={initial && initial.kind === kind ? initial : null}

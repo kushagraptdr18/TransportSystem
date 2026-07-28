@@ -27,6 +27,7 @@ export interface FirmFormValues {
   cin: string;
   msmeNo: string;
   ibaCode: string;
+  vendorCode: string;
   rcmCovered: boolean;
   jurisdiction: string;
   cgstPct: number;
@@ -242,6 +243,9 @@ export function FirmForm({
           </Field>
           <Field label="IBA Code">
             <Input {...register("ibaCode")} />
+          </Field>
+          <Field label="Vendor Code">
+            <Input {...register("vendorCode")} />
           </Field>
           <Field label="Service Covered Under GST RCM (shown on invoices)">
             <select

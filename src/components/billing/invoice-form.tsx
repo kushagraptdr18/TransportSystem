@@ -145,6 +145,7 @@ interface InvoiceFormProps {
     stateName: string;
     stateCode: string;
     ibaCode: string;
+    vendorCode: string;
     rcmCovered: boolean;
   };
   partyOptions: MasterOption[];
@@ -527,6 +528,8 @@ export function InvoiceForm({
   const previewData: InvoiceViewData = {
     billNo: invoiceNo,
     billDate: invoiceDateText,
+    placeOfSupply: placeOfSupply || partyDetail?.stateName || "",
+    gstPct: rcmPct,
     firm: firm ?? {
       name: "",
       address: "",
@@ -537,6 +540,7 @@ export function InvoiceForm({
       stateName: "",
       stateCode: "",
       ibaCode: "",
+      vendorCode: "",
       rcmCovered: true,
     },
     tdsPct,
