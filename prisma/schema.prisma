@@ -189,6 +189,9 @@ model Firm {
   pan                String?
   cin                String?
   msmeNo             String?
+  ibaCode            String?
+  // service covered under GST Reverse Charge Mechanism (shown on invoices)
+  rcmCovered         Boolean  @default(true)
   jurisdiction       String?
   cgstPct            Decimal  @default(0) @db.Decimal(5, 2)
   sgstPct            Decimal  @default(0) @db.Decimal(5, 2)
@@ -1015,6 +1018,7 @@ model Invoice {
   supplyDate    DateTime?
   transportMode String?
   reverseCharge Boolean   @default(false)
+  sacCode       String? // Service Accounting Code, default 996791 on new bills
   tcsPct        Decimal   @default(0) @db.Decimal(5, 2)
   tcsAmt        Decimal   @default(0) @db.Decimal(12, 2)
   freightExtra  Decimal   @default(0) @db.Decimal(12, 2)
@@ -1301,8 +1305,16 @@ model BrokerSlip {
   tripDays      Int?
   unloadRemarks String?
 
+  // independent rate basis per side (legacy shared `rateBasis` kept above)
+  pRateBasis RateBasis @default(CHARGE_WT)
+  vRateBasis RateBasis @default(CHARGE_WT)
+
   // informational only: POD handed over / shared — no workflow dependency
   podAttached Boolean @default(false)
+  // POD file uploaded directly from the broker register
+  podFilePath   String?
+  podFileName   String?
+  podUploadDate DateTime?
 
   // party/broker side balance RECEIVED (mirrors chalan balance payment)
   pPaymentStatus  String    @default("PENDING") // PENDING | RECEIVED

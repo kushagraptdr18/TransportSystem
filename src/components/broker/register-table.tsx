@@ -27,7 +27,9 @@ import {
   deleteBrokerSlip,
   saveBrokerBalancePayment,
   setBrokerSlipPodAttached,
+  setBrokerSlipPodFile,
 } from "@/app/(app)/broker/actions";
+import { brokerBalanceStatus } from "@/lib/broker-status";
 
 export interface BrokerRegisterRow {
   id: string;
@@ -46,16 +48,52 @@ export interface BrokerRegisterRow {
   vNetAmt: number;
   vAdvance: number;
   vBalance: number;
+  pAdvance: number;
+  pNetAmt: number;
   /** informational only — POD handed over / shared */
   podAttached: boolean;
+  podFilePath: string | null;
+  podFileName: string | null;
+  podUploadDate: string | null;
   pPaymentStatus: string; // PENDING | RECEIVED
   pPaidAmount: number;
+  pRoundOff: number;
+  pShortage: number;
+  pPaymentDate: string | null;
   vPaymentStatus: string; // PENDING | PAID
   vPaidAmount: number;
+  vRoundOff: number;
+  vShortage: number;
+  vPaymentDate: string | null;
+  unloadDate: string | null;
+  createdAt: string;
+  createdBy: string;
 }
 
+function StatusLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4 py-0.5">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium tabular-nums">{value}</span>
+    </div>
+  );
+}
+
+const statusOf = (r: BrokerRegisterRow, side: "P" | "V") =>
+  brokerBalanceStatus({
+    side,
+    paymentStatus: side === "P" ? r.pPaymentStatus : r.vPaymentStatus,
+    paidAmount: side === "P" ? r.pPaidAmount : r.vPaidAmount,
+    roundOff: side === "P" ? r.pRoundOff : r.vRoundOff,
+    shortage: side === "P" ? r.pShortage : r.vShortage,
+    balance: side === "P" ? r.pBalance : r.vBalance,
+  });
+
 const money = (
-  key: keyof Pick<BrokerRegisterRow, "pFreight" | "pBalance" | "vFreight" | "vBalance">,
+  key: keyof Pick<
+    BrokerRegisterRow,
+    "pFreight" | "pAdvance" | "pBalance" | "vFreight" | "vAdvance" | "vBalance"
+  >,
   header: string
 ): ColumnDef<BrokerRegisterRow> => ({
   accessorKey: key,
@@ -153,6 +191,44 @@ export function BrokerRegisterTable({
     }
   };
 
+  // slip status timeline dialog
+  const [statusRow, setStatusRow] = React.useState<BrokerRegisterRow | null>(null);
+  // POD upload
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const uploadRowRef = React.useRef<BrokerRegisterRow | null>(null);
+  const [uploading, setUploading] = React.useState(false);
+
+  const startPodUpload = (row: BrokerRegisterRow) => {
+    uploadRowRef.current = row;
+    fileInputRef.current?.click();
+  };
+
+  const handlePodFile = async (file: File | null) => {
+    const row = uploadRowRef.current;
+    if (!file || !row) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/uploads/pod", { method: "POST", body: fd });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error ?? "Upload failed");
+      const saved = await setBrokerSlipPodFile(row.id, json.path, file.name);
+      if (!saved.ok) throw new Error(saved.error);
+      toast({ title: `POD uploaded for slip ${row.slipNo}` });
+      router.refresh();
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "POD upload failed",
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const togglePod = async (row: BrokerRegisterRow, attached: boolean) => {
     const res = await setBrokerSlipPodAttached(row.id, attached);
     if (res.ok) {
@@ -208,6 +284,7 @@ export function BrokerRegisterTable({
       } satisfies DataTableColumnMeta<BrokerRegisterRow>,
     },
     money("pFreight", "Broker Freight"),
+    money("pAdvance", "Broker Advance"),
     money("pBalance", "Broker Balance"),
     {
       accessorKey: "pPaymentStatus",
@@ -215,7 +292,9 @@ export function BrokerRegisterTable({
       cell: ({ row }) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           {row.original.pPaymentStatus === "RECEIVED" ? (
-            <Badge>Received {formatMoney(row.original.pPaidAmount)}</Badge>
+            <Badge>
+              {statusOf(row.original, "P")} {formatMoney(row.original.pPaidAmount)}
+            </Badge>
           ) : (
             <>
               <Badge variant="destructive">Pending</Badge>
@@ -233,6 +312,7 @@ export function BrokerRegisterTable({
       ),
     },
     money("vFreight", "Owner Freight"),
+    money("vAdvance", "Owner Advance"),
     money("vBalance", "Owner Balance"),
     {
       accessorKey: "vPaymentStatus",
@@ -240,7 +320,9 @@ export function BrokerRegisterTable({
       cell: ({ row }) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
           {row.original.vPaymentStatus === "PAID" ? (
-            <Badge>Paid {formatMoney(row.original.vPaidAmount)}</Badge>
+            <Badge>
+              {statusOf(row.original, "V")} {formatMoney(row.original.vPaidAmount)}
+            </Badge>
           ) : (
             <>
               <Badge variant="destructive">Pending</Badge>
@@ -256,6 +338,48 @@ export function BrokerRegisterTable({
           )}
         </div>
       ),
+    },
+    {
+      id: "pod",
+      header: "POD",
+      cell: ({ row }) => {
+        const r = row.original;
+        return (
+          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              disabled={uploading}
+              title="Upload POD (pdf / jpg / png)"
+              onClick={() => startPodUpload(r)}
+            >
+              {r.podFilePath ? "Re-upload" : "Upload"}
+            </Button>
+            {r.podFilePath && (
+              <>
+                <a
+                  href={`/api/uploads/${r.podFilePath}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-primary underline"
+                  title="View / open the POD PDF in a new tab"
+                >
+                  View
+                </a>
+                <a
+                  href={`/api/uploads/${r.podFilePath}`}
+                  download={r.podFileName ?? "pod"}
+                  className="text-xs text-primary underline"
+                  title="Download the POD PDF"
+                >
+                  Download
+                </a>
+              </>
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: "podAttached",
@@ -274,6 +398,39 @@ export function BrokerRegisterTable({
             {row.original.podAttached ? "Yes" : "No"}
           </span>
         </div>
+      ),
+    },
+    {
+      id: "print",
+      header: "Print",
+      cell: ({ row }) => (
+        <a
+          href={`/print/broker-slip/${row.original.id}`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-primary underline"
+          onClick={(e) => e.stopPropagation()}
+          title="Two-page print: broker (receivable) + owner (payable)"
+        >
+          Print
+        </a>
+      ),
+    },
+    {
+      id: "slipStatus",
+      header: "Slip Status",
+      cell: ({ row }) => (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-6 px-2 text-xs"
+          onClick={(e) => {
+            e.stopPropagation();
+            setStatusRow(row.original);
+          }}
+        >
+          Status
+        </Button>
       ),
     },
     ...(canDelete
@@ -317,19 +474,14 @@ export function BrokerRegisterTable({
             { header: "To", key: "destination" },
             { header: "Qty", key: "qty", numeric: true },
             { header: "Broker Freight", key: "pFreight", numeric: true },
+            { header: "Broker Advance", key: "pAdvance", numeric: true },
             { header: "Broker Balance", key: "pBalance", numeric: true },
-            {
-              header: "Broker Balance Status",
-              accessor: (r) => (r.pPaymentStatus === "RECEIVED" ? "RECEIVED" : "PENDING"),
-            },
+            { header: "Broker Balance Status", accessor: (r) => statusOf(r, "P") },
             { header: "Owner Freight", key: "vFreight", numeric: true },
-            { header: "Owner Net", key: "vNetAmt", numeric: true },
-            { header: "Advance", key: "vAdvance", numeric: true },
+            { header: "Owner Advance", key: "vAdvance", numeric: true },
             { header: "Owner Balance", key: "vBalance", numeric: true },
-            {
-              header: "Owner Balance Status",
-              accessor: (r) => (r.vPaymentStatus === "PAID" ? "PAID" : "PENDING"),
-            },
+            { header: "Owner Balance Status", accessor: (r) => statusOf(r, "V") },
+            { header: "POD Uploaded", accessor: (r) => (r.podFilePath ? "YES" : "NO") },
             { header: "POD Attached", accessor: (r) => (r.podAttached ? "YES" : "NO") },
           ]}
         />
@@ -340,6 +492,153 @@ export function BrokerRegisterTable({
         emptyMessage="No broker slips found."
         onRowClick={(row) => router.push(`/broker/slip?id=${row.id}`)}
       />
+
+      {/* hidden input for register-side POD uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+        className="hidden"
+        onChange={(e) => void handlePodFile(e.target.files?.[0] ?? null)}
+      />
+
+      {/* slip status — complete lifecycle in one view */}
+      <Dialog open={!!statusRow} onOpenChange={(o) => !o && setStatusRow(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Slip Status — {statusRow?.slipNo}</DialogTitle>
+            <DialogDescription>
+              Complete lifecycle and current position of this broker slip.
+            </DialogDescription>
+          </DialogHeader>
+          {statusRow && (
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div className="rounded-md border p-3">
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                  Slip Information
+                </div>
+                <StatusLine label="Slip Created" value={formatDate(statusRow.createdAt)} />
+                <StatusLine label="Slip Date" value={formatDate(statusRow.slipDate)} />
+                <StatusLine label="Created By" value={statusRow.createdBy || "—"} />
+                <StatusLine label="Vehicle" value={statusRow.vehicle || "—"} />
+                <StatusLine
+                  label="Route"
+                  value={`${statusRow.loadStation || "?"} → ${statusRow.destination || "?"}`}
+                />
+              </div>
+              <div className="rounded-md border p-3">
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                  Delivery Information
+                </div>
+                <StatusLine
+                  label="POD Uploaded"
+                  value={
+                    statusRow.podFilePath
+                      ? `Yes${statusRow.podUploadDate ? ` — ${formatDate(statusRow.podUploadDate)}` : ""}`
+                      : "No"
+                  }
+                />
+                <StatusLine
+                  label="POD Handed Over"
+                  value={statusRow.podAttached ? "Yes" : "No"}
+                />
+                <StatusLine
+                  label="Unload Date"
+                  value={statusRow.unloadDate ? formatDate(statusRow.unloadDate) : "—"}
+                />
+                <StatusLine
+                  label="Delivery Status"
+                  value={statusRow.unloadDate || statusRow.podFilePath ? "Delivered" : "In Transit"}
+                />
+              </div>
+              <div className="rounded-md border p-3">
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                  Broker Side (Receivable)
+                </div>
+                <StatusLine label="Broker" value={statusRow.transporter || "—"} />
+                <StatusLine label="Broker Freight" value={formatMoney(statusRow.pFreight)} />
+                <StatusLine label="Advance Given" value={formatMoney(statusRow.pAdvance)} />
+                <StatusLine label="Balance Amount" value={formatMoney(statusRow.pBalance)} />
+                <StatusLine
+                  label="Payment Received"
+                  value={
+                    statusRow.pPaymentStatus === "RECEIVED"
+                      ? `${formatMoney(statusRow.pPaidAmount)}${statusRow.pPaymentDate ? ` on ${formatDate(statusRow.pPaymentDate)}` : ""}`
+                      : "—"
+                  }
+                />
+                <StatusLine label="Balance Status" value={statusOf(statusRow, "P")} />
+              </div>
+              <div className="rounded-md border p-3">
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                  Owner Side (Payable)
+                </div>
+                <StatusLine label="Owner" value={statusRow.owner || "—"} />
+                <StatusLine label="Owner Freight" value={formatMoney(statusRow.vFreight)} />
+                <StatusLine label="Advance Paid" value={formatMoney(statusRow.vAdvance)} />
+                <StatusLine label="Balance Amount" value={formatMoney(statusRow.vBalance)} />
+                <StatusLine
+                  label="Payment Made"
+                  value={
+                    statusRow.vPaymentStatus === "PAID"
+                      ? `${formatMoney(statusRow.vPaidAmount)}${statusRow.vPaymentDate ? ` on ${formatDate(statusRow.vPaymentDate)}` : ""}`
+                      : "—"
+                  }
+                />
+                <StatusLine label="Payment Status" value={statusOf(statusRow, "V")} />
+              </div>
+              <div className="rounded-md border p-3 sm:col-span-2">
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                  Financial Status
+                </div>
+                <div className="grid gap-x-8 sm:grid-cols-2">
+                  <StatusLine
+                    label="Total Broker Receivable"
+                    value={formatMoney(statusRow.pNetAmt)}
+                  />
+                  <StatusLine label="Total Owner Payable" value={formatMoney(statusRow.vNetAmt)} />
+                  <StatusLine
+                    label="Outstanding (Receivable)"
+                    value={
+                      statusRow.pPaymentStatus === "RECEIVED"
+                        ? formatMoney(0)
+                        : formatMoney(statusRow.pBalance)
+                    }
+                  />
+                  <StatusLine
+                    label="Outstanding (Payable)"
+                    value={
+                      statusRow.vPaymentStatus === "PAID"
+                        ? formatMoney(0)
+                        : formatMoney(statusRow.vBalance)
+                    }
+                  />
+                  <StatusLine
+                    label="Settlement Status"
+                    value={
+                      statusRow.pPaymentStatus === "RECEIVED" && statusRow.vPaymentStatus === "PAID"
+                        ? "Fully Settled"
+                        : statusRow.pPaymentStatus === "RECEIVED" ||
+                            statusRow.vPaymentStatus === "PAID"
+                          ? "Partially Settled"
+                          : "Unsettled"
+                    }
+                  />
+                  <StatusLine
+                    label="Margin (Broker − Owner)"
+                    value={formatMoney(statusRow.pNetAmt - statusRow.vNetAmt)}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStatusRow(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* balance received / paid — same behaviour as the chalan balance payment,
           but with NO dependency on POD status or the POD-attached flag */}

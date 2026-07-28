@@ -28,11 +28,13 @@ import {
 } from "@/components/masters/inline-dialogs";
 import type { LedgerGroup } from "@prisma/client";
 import {
-  ADVANCE_TYPES,
+  ADVANCE_HEAD_KINDS,
+  ADVANCE_HEAD_KIND_LABELS,
   advanceAmount,
   computeBrokerSide,
   computeTripKm,
   sideAdvanceTotal,
+  type AdvanceHeadKind,
   type BrokerAdvance,
 } from "@/components/broker/broker-calc";
 import { saveBrokerSlip } from "@/app/(app)/broker/actions";
@@ -74,7 +76,9 @@ export interface BrokerSlipFormData {
   actualWt: number;
   chargeWt: number;
   unit: string;
-  rateBasis: RateBasis;
+  rateBasis: RateBasis; // legacy shared basis (kept for compatibility)
+  pRateBasis: RateBasis;
+  vRateBasis: RateBasis;
   partyId?: string | null;
   p: SideValues;
   ownerId?: string | null;
@@ -105,10 +109,10 @@ const emptySide = (): SideValues => ({
 });
 
 const RATE_BASIS_OPTIONS: { value: RateBasis; label: string }[] = [
-  { value: "QTY", label: "Quantity" },
-  { value: "ACTUAL_WT", label: "Actual Weight" },
-  { value: "CHARGE_WT", label: "Guaranteed Weight" },
-  { value: "FIXED", label: "Fixed" },
+  { value: "QTY", label: "Quantity / Per Bag" },
+  { value: "ACTUAL_WT", label: "Weight (Actual) / Per Ton" },
+  { value: "CHARGE_WT", label: "Weight (Guaranteed) / Per Ton" },
+  { value: "FIXED", label: "Fixed / Per Trip" },
 ];
 
 function isoToText(iso: string): string {
@@ -168,6 +172,10 @@ interface BrokerSlipFormProps {
   vehicleOptions: MasterOption[];
   ownVehicleIds: string[];
   productOptions: MasterOption[];
+  /** Income/Expense heads (value=id, meta=INCOME|EXPENSE) for advance entry */
+  accountHeadOptions: MasterOption[];
+  /** Bank/Cash accounts (value=party id, meta=BANK|CASH) for advance entry */
+  bankCashOptions: MasterOption[];
 }
 
 export function BrokerSlipForm({
@@ -179,6 +187,8 @@ export function BrokerSlipForm({
   vehicleOptions: vehicleOptions0,
   ownVehicleIds: ownVehicleIds0,
   productOptions: productOptions0,
+  accountHeadOptions,
+  bankCashOptions,
 }: BrokerSlipFormProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -206,6 +216,8 @@ export function BrokerSlipForm({
       chargeWt: 0,
       unit: "MT",
       rateBasis: "CHARGE_WT",
+      pRateBasis: "CHARGE_WT",
+      vRateBasis: "CHARGE_WT",
       p: emptySide(),
       ownerName: "",
       v: emptySide(),
@@ -234,10 +246,11 @@ export function BrokerSlipForm({
   // live totals
   const pAdvance = sideAdvanceTotal(form.advances, "P");
   const vAdvance = sideAdvanceTotal(form.advances, "V");
-  const sideTotals = (s: SideValues, advance: number) =>
+  const sideBasis = (side: "p" | "v") => (side === "p" ? form.pRateBasis : form.vRateBasis);
+  const sideTotals = (s: SideValues, advance: number, basis: RateBasis) =>
     computeBrokerSide({
       rate: s.rate,
-      rateBasis: form.rateBasis,
+      rateBasis: basis,
       qty: form.qty,
       actualWt: form.actualWt,
       chargeWt: form.chargeWt,
@@ -255,8 +268,8 @@ export function BrokerSlipForm({
       paymentCharge: s.paymentCharge,
       advance,
     });
-  const pTotals = sideTotals(form.p, pAdvance);
-  const vTotals = sideTotals(form.v, vAdvance);
+  const pTotals = sideTotals(form.p, pAdvance, form.pRateBasis);
+  const vTotals = sideTotals(form.v, vAdvance, form.vRateBasis);
   const margin = pTotals.netAmt - vTotals.netAmt;
 
   const km = computeTripKm({
@@ -266,11 +279,11 @@ export function BrokerSlipForm({
     unloadDate: parseDdMmYyyy(unloadDateText),
   });
 
-  // freight auto from rate x basis (still editable)
-  const recomputeFreight = (side: "p" | "v", rate: number) => {
+  // freight auto from rate x that side's basis (still editable)
+  const recomputeFreight = (side: "p" | "v", rate: number, basisOverride?: RateBasis) => {
     const auto = computeBrokerSide({
       rate,
-      rateBasis: form.rateBasis,
+      rateBasis: basisOverride ?? sideBasis(side),
       qty: form.qty,
       actualWt: form.actualWt,
       chargeWt: form.chargeWt,
@@ -315,8 +328,16 @@ export function BrokerSlipForm({
   const addAdvance = () =>
     set("advances", [
       ...form.advances,
-      { side: "V", type: "CASH", amount: 0, date: null, remarks: "" },
+      { side: "V", type: "BANK", headKind: "BANK", headId: null, amount: 0, date: null, remarks: "" },
     ]);
+
+  // legacy rows (pre head-kind) fall back to a sensible kind
+  const advanceKind = (a: BrokerAdvance): AdvanceHeadKind =>
+    a.headKind ?? (a.type === "BANK" ? "BANK" : a.type === "CASH" ? "CASH" : "EXPENSE");
+  const headOptionsFor = (kind: AdvanceHeadKind): MasterOption[] =>
+    kind === "BANK" || kind === "CASH"
+      ? bankCashOptions.filter((o) => o.meta === kind)
+      : accountHeadOptions.filter((o) => o.meta === kind);
   const updateAdvance = (idx: number, patch: Partial<BrokerAdvance>) =>
     set(
       "advances",
@@ -420,7 +441,7 @@ export function BrokerSlipForm({
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center justify-between text-base">
-            <span>{isP ? "Party Side (Receivable)" : "Owner Side (Payable)"}</span>
+            <span>{isP ? "Broker Side (Receivable)" : "Owner Side (Payable)"}</span>
             {!isP && (
               <span className="flex items-center gap-2">
                 {isOwnVehicle && (
@@ -436,15 +457,16 @@ export function BrokerSlipForm({
         <CardContent className="space-y-3">
           {isP ? (
             <div className="space-y-1">
-              <Label className="text-xs">Party</Label>
-              {partyCombo(
-                form.partyId,
-                (v) => set("partyId", v),
-                partyOptions,
-                setPartyOptions,
-                "CONSIGNEE_CONSIGNOR",
-                "Select party..."
-              )}
+              <Label className="text-xs">Broker (auto — from Transporter / Broker above)</Label>
+              <Input
+                className="h-8"
+                value={
+                  brokerOptions.find((b) => b.value === form.transporterId)?.label ??
+                  "Select the Transporter / Broker in Slip Details"
+                }
+                readOnly
+                disabled
+              />
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
@@ -471,6 +493,28 @@ export function BrokerSlipForm({
           )}
 
           <div className="grid grid-cols-3 gap-2 md:grid-cols-4">
+            <div className="space-y-1">
+              <Label className="text-xs">Rate Basis</Label>
+              <Select
+                value={sideBasis(side)}
+                onValueChange={(v) => {
+                  const basis = v as RateBasis;
+                  set(isP ? "pRateBasis" : "vRateBasis", basis);
+                  if (s.rate > 0) recomputeFreight(side, s.rate, basis);
+                }}
+              >
+                <SelectTrigger className="h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RATE_BASIS_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <Num label="Rate" value={s.rate} onChange={(n) => recomputeFreight(side, n)} />
             <Num label="Freight" value={s.freight} onChange={(n) => setSide(side, { freight: n })} />
             <Num
@@ -688,24 +732,6 @@ export function BrokerSlipForm({
             <Label className="text-xs">Unit</Label>
             <Input className="h-8" value={form.unit} onChange={(e) => set("unit", e.target.value)} />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Rate Basis</Label>
-            <Select
-              value={form.rateBasis}
-              onValueChange={(v) => set("rateBasis", v as RateBasis)}
-            >
-              <SelectTrigger className="h-8">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {RATE_BASIS_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
         </CardContent>
       </Card>
 
@@ -729,105 +755,102 @@ export function BrokerSlipForm({
           {form.advances.length === 0 && (
             <p className="text-sm text-muted-foreground">No advances entered.</p>
           )}
-          {form.advances.map((a, idx) => (
-            <div key={idx} className="grid grid-cols-2 items-end gap-2 md:grid-cols-9">
-              <div className="space-y-1">
-                <Label className="text-xs">Side</Label>
-                <Select
-                  value={a.side}
-                  onValueChange={(v) => updateAdvance(idx, { side: v as "P" | "V" })}
-                >
-                  <SelectTrigger className="h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="P">Party</SelectItem>
-                    <SelectItem value="V">Owner</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Type</Label>
-                <Select
-                  value={a.type}
-                  onValueChange={(v) => updateAdvance(idx, { type: v as BrokerAdvance["type"] })}
-                >
-                  <SelectTrigger className="h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ADVANCE_TYPES.map((t) => (
-                      <SelectItem key={t} value={t}>
-                        {t.replace(/_/g, " ")}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Supplier</Label>
-                <Input
-                  className="h-8"
-                  value={a.supplierName ?? ""}
-                  onChange={(e) => updateAdvance(idx, { supplierName: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Bank</Label>
-                <Input
-                  className="h-8"
-                  value={a.bankName ?? ""}
-                  onChange={(e) => updateAdvance(idx, { bankName: e.target.value })}
-                />
-              </div>
-              <Num
-                label="Diesel Qty"
-                value={a.dieselQty ?? 0}
-                onChange={(n) => updateAdvance(idx, { dieselQty: n })}
-              />
-              <Num
-                label="Diesel Rate"
-                value={a.dieselRate ?? 0}
-                onChange={(n) => updateAdvance(idx, { dieselRate: n })}
-              />
-              <Num
-                label="Amount"
-                value={advanceAmount(a)}
-                disabled={a.type === "DIESEL" && (a.dieselQty ?? 0) > 0 && (a.dieselRate ?? 0) > 0}
-                onChange={(n) => updateAdvance(idx, { amount: n })}
-              />
-              <div className="space-y-1">
-                <Label className="text-xs">Date</Label>
-                <DateInput
-                  className="h-8"
-                  value={a.date ? isoToText(a.date) : ""}
-                  onChange={(t) => updateAdvance(idx, { date: textToIso(t) || null })}
-                />
-              </div>
-              <div className="flex items-end gap-1">
-                <div className="flex-1 space-y-1">
-                  <Label className="text-xs">Remarks</Label>
-                  <Input
-                    className="h-8"
-                    value={a.remarks ?? ""}
-                    onChange={(e) => updateAdvance(idx, { remarks: e.target.value })}
+          {form.advances.map((a, idx) => {
+            const kind = advanceKind(a);
+            return (
+              <div key={idx} className="grid grid-cols-2 items-end gap-2 md:grid-cols-6">
+                <div className="space-y-1">
+                  <Label className="text-xs">Side</Label>
+                  <Select
+                    value={a.side}
+                    onValueChange={(v) => updateAdvance(idx, { side: v as "P" | "V" })}
+                  >
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="P">Broker</SelectItem>
+                      <SelectItem value="V">Owner</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Type</Label>
+                  <Select
+                    value={kind}
+                    onValueChange={(v) => {
+                      const k = v as AdvanceHeadKind;
+                      updateAdvance(idx, {
+                        headKind: k,
+                        headId: null,
+                        bankName: "",
+                        // keep the legacy type roughly in sync for old reports
+                        type: k === "BANK" ? "BANK" : k === "CASH" ? "CASH" : "OTHER",
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ADVANCE_HEAD_KINDS.map((k) => (
+                        <SelectItem key={k} value={k}>
+                          {ADVANCE_HEAD_KIND_LABELS[k]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">{ADVANCE_HEAD_KIND_LABELS[kind]}</Label>
+                  <MasterCombobox
+                    options={headOptionsFor(kind)}
+                    value={a.headId ?? null}
+                    onChange={(v) => {
+                      const label = headOptionsFor(kind).find((o) => o.value === v)?.label ?? "";
+                      updateAdvance(idx, { headId: v, bankName: label });
+                    }}
+                    placeholder="Select from master..."
                   />
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-destructive"
-                  onClick={() => removeAdvance(idx)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <Num
+                  label="Amount"
+                  value={advanceAmount(a)}
+                  onChange={(n) => updateAdvance(idx, { amount: n })}
+                />
+                <div className="space-y-1">
+                  <Label className="text-xs">Date</Label>
+                  <DateInput
+                    className="h-8"
+                    value={a.date ? isoToText(a.date) : ""}
+                    onChange={(t) => updateAdvance(idx, { date: textToIso(t) || null })}
+                  />
+                </div>
+                <div className="flex items-end gap-1">
+                  <div className="flex-1 space-y-1">
+                    <Label className="text-xs">Remarks</Label>
+                    <Input
+                      className="h-8"
+                      value={a.remarks ?? ""}
+                      onChange={(e) => updateAdvance(idx, { remarks: e.target.value })}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 text-destructive"
+                    onClick={() => removeAdvance(idx)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {form.advances.length > 0 && (
             <div className="flex justify-end gap-6 border-t pt-2 text-sm tabular-nums">
-              <span>Party advances: {formatMoney(pAdvance)}</span>
+              <span>Broker advances: {formatMoney(pAdvance)}</span>
               <span>Owner advances: {formatMoney(vAdvance)}</span>
             </div>
           )}

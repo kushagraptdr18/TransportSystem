@@ -36,14 +36,26 @@ import { DateInput } from "@/components/data/date-input";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import { PartyCreateDialog } from "@/components/masters/inline-dialogs";
 import {
-  getPartyStateCode,
+  getPartyBillingDetails,
   getPendingLrsForParty,
   resolveBulkLrs,
   saveInvoice,
   type BillingDefaults,
   type BillingPendingLr,
   type InvoiceEditPayload,
+  type PartyBillingDetails,
 } from "@/app/(app)/billing/actions";
+import {
+  InvoicePrintView,
+  type InvoiceViewData,
+} from "@/components/billing/invoice-print-view";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ---------------------------------------------------------------- helpers
 
@@ -122,8 +134,19 @@ interface InvoiceFormProps {
   prevInvoiceNo?: string | null;
   /** Income & Expense heads for the Additional Charges "Charge Type" dropdown */
   chargeHeadOptions?: MasterOption[];
-  /** firm details for the bill preview */
-  firm?: { name: string; address: string; gstin: string; pan: string; mobile: string };
+  /** firm details for the bill preview (from Company Master) */
+  firm?: {
+    name: string;
+    address: string;
+    gstin: string;
+    pan: string;
+    mobile: string;
+    email: string;
+    stateName: string;
+    stateCode: string;
+    ibaCode: string;
+    rcmCovered: boolean;
+  };
   partyOptions: MasterOption[];
   bankOptions: MasterOption[];
   defaults: BillingDefaults;
@@ -180,6 +203,7 @@ export function InvoiceForm({
   const [reverseCharge, setReverseCharge] = React.useState(
     initial ? initial.reverseCharge : kind === "FULL_TRUCK"
   );
+  const [sacCode, setSacCode] = React.useState(initial?.sacCode || "996791");
   const [tcsPct, setTcsPct] = React.useState(initial?.tcsPct ?? 0);
   const [freightExtra, setFreightExtra] = React.useState(initial?.freightExtra ?? 0);
   const [othersExtra, setOthersExtra] = React.useState(initial?.othersExtra ?? 0);
@@ -214,14 +238,15 @@ export function InvoiceForm({
   );
   const [lines, setLines] = React.useState<LineRow[]>(initial?.lines.map((l) => ({ ...l })) ?? []);
 
-  const [partyStateCode, setPartyStateCode] = React.useState<string | null>(null);
+  const [partyDetail, setPartyDetail] = React.useState<PartyBillingDetails | null>(null);
+  const partyStateCode = partyDetail?.stateCode || null;
 
   React.useEffect(() => {
     if (!partyId) {
-      setPartyStateCode(null);
+      setPartyDetail(null);
       return;
     }
-    getPartyStateCode(partyId).then(setPartyStateCode).catch(() => setPartyStateCode(null));
+    getPartyBillingDetails(partyId).then(setPartyDetail).catch(() => setPartyDetail(null));
   }, [partyId]);
 
   const loadPending = React.useCallback(
@@ -454,6 +479,7 @@ export function InvoiceForm({
         supplyDate: textToIso(supplyDateText) || null,
         transportMode,
         reverseCharge,
+        sacCode,
         tcsPct,
         freightExtra,
         othersExtra,
@@ -477,6 +503,93 @@ export function InvoiceForm({
 
   const interstate =
     !!defaults.firmStateCode && !!partyStateCode && defaults.firmStateCode !== partyStateCode;
+
+  // informational RCM split — never added to the invoice total
+  const rcmPct = gstPct || defaults.firmGstPct;
+  const rcmInfo = rcmActive
+    ? (() => {
+        const split = gstSplit({
+          taxableValue: totals.grandTotal,
+          gstPct: rcmPct,
+          supplierStateCode: defaults.firmStateCode,
+          recipientStateCode: partyStateCode,
+        });
+        return {
+          taxableValue: totals.grandTotal,
+          pct: rcmPct,
+          cgst: split.cgst,
+          sgst: split.sgst,
+          igst: split.igst,
+        };
+      })()
+    : null;
+
+  const previewData: InvoiceViewData = {
+    billNo: invoiceNo,
+    billDate: invoiceDateText,
+    firm: firm ?? {
+      name: "",
+      address: "",
+      gstin: "",
+      pan: "",
+      mobile: "",
+      email: "",
+      stateName: "",
+      stateCode: "",
+      ibaCode: "",
+      rcmCovered: true,
+    },
+    tdsPct,
+    serviceDescription: "Goods Transport Service",
+    sacCode,
+    party: partyDetail ?? {
+      name: partyOptions.find((p) => p.value === partyId)?.label ?? "",
+      address: "",
+      gstin: "",
+      pan: "",
+      stateName: "",
+      stateCode: "",
+    },
+    lrs: selectedLrs.map((lr) => ({
+      id: lr.id,
+      lrNo: lr.lrNo,
+      lrDate: formatDate(lr.lrDate),
+      source: lr.source,
+      dest: lr.dest,
+      obdNo: lr.obdNo,
+      invoiceNo: lr.invoiceNo,
+      vehicle: lr.vehicle,
+      material: lr.material,
+      consignee: lr.consignee,
+      unloadDate: lr.unloadDate ? formatDate(lr.unloadDate) : "",
+      qty: lr.qty,
+      actualWt: lr.actualWt,
+      chargeWt: lr.chargeWt,
+      rate: lr.rate,
+      amount: lr.amount,
+    })),
+    charges: charges
+      .filter((c) => c.chargeType.trim() || c.amount !== 0)
+      .map((c) => ({
+        label: [c.chargeType || "OTHER", c.description].filter(Boolean).join(" — "),
+        relatedLrs: c.relatedLrs,
+        amount: c.amount,
+      })),
+    totals: {
+      total: totals.total,
+      grandTotal: totals.grandTotal,
+      cgstAmt: totals.cgstAmt,
+      sgstAmt: totals.sgstAmt,
+      igstAmt: totals.igstAmt,
+      netTotal: totals.netTotal,
+      advance,
+      balance: totals.balance,
+    },
+    rcm: rcmInfo,
+    gstApplied: gstApplicable && !rcmActive,
+    remarks,
+    bank: bankOptions.find((b) => b.value === bankPartyId)?.label ?? "",
+  };
 
   return (
     <div className="space-y-4">
@@ -556,6 +669,12 @@ export function InvoiceForm({
             <Label className="text-xs">Remarks</Label>
             <Input className="h-8" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
           </div>
+          {kind === "FULL_TRUCK" && (
+            <div className="space-y-1">
+              <Label className="text-xs">SAC (Service Accounting Code)</Label>
+              <Input className="h-8" value={sacCode} onChange={(e) => setSacCode(e.target.value)} />
+            </div>
+          )}
           {kind === "FULL_TRUCK" && (
             <div className="space-y-1">
               <Label className="text-xs">RCM Basis (Reverse Charge)</Label>
@@ -803,12 +922,77 @@ export function InvoiceForm({
                 </div>
                 <Num label="Amount" value={c.amount} onChange={(n) => updateCharge(idx, { amount: n })} />
                 <div className="space-y-1">
-                  <Label className="text-xs">Related LRs</Label>
-                  <Input
-                    className="h-8"
-                    value={c.relatedLrs}
-                    onChange={(e) => updateCharge(idx, { relatedLrs: e.target.value })}
-                  />
+                  <Label className="text-xs">Related LR(s)</Label>
+                  <Select
+                    value=""
+                    onValueChange={(v) => {
+                      if (v === "ALL") {
+                        updateCharge(idx, { relatedLrs: "All LRs" });
+                        return;
+                      }
+                      const current =
+                        c.relatedLrs && c.relatedLrs !== "All LRs"
+                          ? c.relatedLrs.split(",").map((s) => s.trim()).filter(Boolean)
+                          : [];
+                      if (!current.includes(v)) current.push(v);
+                      updateCharge(idx, { relatedLrs: current.join(", ") });
+                    }}
+                  >
+                    <SelectTrigger className="h-8">
+                      <SelectValue
+                        placeholder={c.relatedLrs ? c.relatedLrs : "All LRs (default)"}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">Entire Bill / All LRs</SelectItem>
+                      {selectedLrs.map((lr) => (
+                        <SelectItem key={lr.id} value={lr.lrNo}>
+                          LR {lr.lrNo}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {c.relatedLrs && (
+                    <div className="flex flex-wrap gap-1">
+                      {c.relatedLrs === "All LRs" ? (
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                          All LRs{" "}
+                          <button
+                            type="button"
+                            className="text-destructive"
+                            onClick={() => updateCharge(idx, { relatedLrs: "" })}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ) : (
+                        c.relatedLrs
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter(Boolean)
+                          .map((no) => (
+                            <span key={no} className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                              {no}{" "}
+                              <button
+                                type="button"
+                                className="text-destructive"
+                                onClick={() =>
+                                  updateCharge(idx, {
+                                    relatedLrs: c.relatedLrs
+                                      .split(",")
+                                      .map((s) => s.trim())
+                                      .filter((s) => s && s !== no)
+                                      .join(", "),
+                                  })
+                                }
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Remarks</Label>
@@ -1005,174 +1189,39 @@ export function InvoiceForm({
           <DialogHeader>
             <DialogTitle>Bill Preview — as it will be printed</DialogTitle>
           </DialogHeader>
-          <div className="border border-black p-4 text-sm">
-            <div className="border-b border-black pb-2 text-center">
-              <div className="text-lg font-bold uppercase">{firm?.name}</div>
-              <div className="text-xs">{firm?.address}</div>
-              <div className="text-xs">
-                {[
-                  firm?.mobile && `Mob: ${firm.mobile}`,
-                  firm?.gstin && `GSTIN: ${firm.gstin}`,
-                  firm?.pan && `PAN: ${firm.pan}`,
-                ]
-                  .filter(Boolean)
-                  .join(" | ")}
-              </div>
-              <div className="mt-1 font-semibold">
-                FREIGHT BILL {rcmActive ? "(GST payable under RCM by recipient)" : ""}
-              </div>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
-              <div>
-                <b>Bill No:</b> {invoiceNo}
-              </div>
-              <div>
-                <b>Date:</b> {invoiceDateText}
-              </div>
-              <div>
-                <b>Party:</b> {partyOptions.find((p) => p.value === partyId)?.label ?? ""}
-              </div>
-              {vehicleText && (
-                <div>
-                  <b>Vehicle:</b> {vehicleText}
-                </div>
-              )}
-              {subject && (
-                <div className="col-span-2">
-                  <b>Subject:</b> {subject}
-                </div>
-              )}
-            </div>
-            <table className="mt-3 w-full border-collapse text-xs">
-              <thead>
-                <tr>
-                  {["#", "LR No", "Date", "From", "To", "Vehicle", "OBD No", "Qty", "Charge Wt", "Amount", ""].map(
-                    (h) => (
-                      <th key={h} className="border border-black px-1 py-0.5 text-left">
-                        {h}
-                      </th>
-                    )
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {selectedLrs.map((lr, i) => (
-                  <tr key={lr.id}>
-                    <td className="border border-black px-1 py-0.5">{i + 1}</td>
-                    <td className="border border-black px-1 py-0.5">{lr.lrNo}</td>
-                    <td className="border border-black px-1 py-0.5">{formatDate(lr.lrDate)}</td>
-                    <td className="border border-black px-1 py-0.5">{lr.source}</td>
-                    <td className="border border-black px-1 py-0.5">{lr.dest}</td>
-                    <td className="border border-black px-1 py-0.5">{lr.vehicle}</td>
-                    <td className="border border-black px-1 py-0.5">{lr.obdNo}</td>
-                    <td className="border border-black px-1 py-0.5 text-right">{lr.qty}</td>
-                    <td className="border border-black px-1 py-0.5 text-right">{lr.chargeWt}</td>
-                    <td className="border border-black px-1 py-0.5 text-right">
-                      {formatMoney(lr.amount)}
-                    </td>
-                    <td className="border border-black px-1 py-0.5">
-                      <span className="flex gap-1">
-                        <a
-                          href={`/lr?id=${lr.id}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-primary underline"
-                          title="Edit this LR (opens in a new tab — reload pending LRs after editing)"
-                        >
-                          Edit
-                        </a>
-                        <button
-                          type="button"
-                          className="text-destructive underline"
-                          title="Remove this LR from the bill"
-                          onClick={() => toggleLr(lr.id, false)}
-                        >
-                          Remove
-                        </button>
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-                <tr className="font-semibold">
-                  <td colSpan={7} className="border border-black px-1 py-0.5">
-                    Total ({selectedLrs.length} LRs)
-                  </td>
-                  <td className="border border-black px-1 py-0.5 text-right">
-                    {selectedLrs.reduce((s, l) => s + l.qty, 0)}
-                  </td>
-                  <td className="border border-black px-1 py-0.5 text-right">
-                    {round2(selectedLrs.reduce((s, l) => s + l.chargeWt, 0))}
-                  </td>
-                  <td className="border border-black px-1 py-0.5 text-right">
-                    {formatMoney(totals.total)}
-                  </td>
-                  <td className="border border-black" />
-                </tr>
-              </tbody>
-            </table>
-            {charges.filter((c) => c.chargeType || c.amount !== 0).length > 0 && (
-              <table className="mt-2 w-full border-collapse text-xs">
-                <tbody>
-                  {charges
-                    .filter((c) => c.chargeType || c.amount !== 0)
-                    .map((c, i) => (
-                      <tr key={i}>
-                        <td className="border border-black px-1 py-0.5">
-                          {c.chargeType || "OTHER"}
-                          {c.description ? ` — ${c.description}` : ""}
-                        </td>
-                        <td className="border border-black px-1 py-0.5 text-right">
-                          {formatMoney(c.amount)}
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+          {/* identical layout to the printed invoice */}
+          <InvoicePrintView
+            data={previewData}
+            lrActions={(lr) => (
+              <span className="flex gap-1">
+                <a
+                  href={`/lr?id=${lr.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary underline"
+                  title="Edit this LR (opens in a new tab — reload pending LRs after editing)"
+                >
+                  Edit
+                </a>
+                <button
+                  type="button"
+                  className="text-destructive underline"
+                  title="Remove this LR from the bill"
+                  onClick={() => toggleLr(lr.id, false)}
+                >
+                  Remove
+                </button>
+              </span>
             )}
-            <div className="mt-2 space-y-0.5 text-xs">
-              <div className="flex justify-between">
-                <span>Grand Total (before tax)</span>
-                <b>{formatMoney(totals.grandTotal)}</b>
-              </div>
-              {rcmActive ? (
-                <div className="flex justify-between">
-                  <span>GST</span>
-                  <span>Payable by recipient under Reverse Charge Mechanism</span>
-                </div>
-              ) : (
-                gstApplicable && (
-                  <div className="flex justify-between">
-                    <span>GST (CGST + SGST / IGST)</span>
-                    <span>
-                      {formatMoney(round2(totals.cgstAmt + totals.sgstAmt + totals.igstAmt))}
-                    </span>
-                  </div>
-                )
-              )}
-              <div className="flex justify-between font-semibold">
-                <span>Net Total</span>
-                <span>{formatMoney(totals.netTotal)}</span>
-              </div>
-              {advance > 0 && (
-                <div className="flex justify-between">
-                  <span>Less: Advance</span>
-                  <span>{formatMoney(advance)}</span>
-                </div>
-              )}
-              <div className="flex justify-between border-t border-black pt-0.5 font-bold">
-                <span>Balance</span>
-                <span>{formatMoney(totals.balance)}</span>
-              </div>
-            </div>
-            <div className="mt-3 space-y-1">
-              <Label className="text-xs">Remarks (optional — printed on the bill)</Label>
-              <Textarea
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                rows={2}
-                placeholder="Add or edit bill remarks..."
-              />
-            </div>
+          />
+          <div className="space-y-1">
+            <Label className="text-xs">Remarks (optional — printed on the bill)</Label>
+            <Textarea
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+              rows={2}
+              placeholder="Add or edit bill remarks..."
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPreviewOpen(false)} disabled={saving}>

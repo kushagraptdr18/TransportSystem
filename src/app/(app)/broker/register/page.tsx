@@ -26,7 +26,7 @@ export default async function BrokerRegisterPage({
 }) {
   const session = requireSession();
 
-  const { rows, vehicles, brokers, banks, cityById, partyById, vehicleById } = await withTenant(
+  const { rows, vehicles, brokers, banks, cityById, partyById, vehicleById, userById } = await withTenant(
     session.tenantId,
     async (tx) => {
       const where: Record<string, unknown> = {
@@ -61,11 +61,12 @@ export default async function BrokerRegisterPage({
         }
       }
 
-      const [slips, vehicleRows, partyRows, cityRows] = await Promise.all([
+      const [slips, vehicleRows, partyRows, cityRows, userRows] = await Promise.all([
         tx.brokerSlip.findMany({ where, orderBy: [{ slipDate: "desc" }, { slipNo: "desc" }] }),
         tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
         tx.party.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
         tx.city.findMany(),
+        tx.user.findMany({ select: { id: true, name: true } }),
       ]);
 
       return {
@@ -76,6 +77,7 @@ export default async function BrokerRegisterPage({
         cityById: new Map(cityRows.map((c) => [c.id, c.name])),
         partyById: new Map(partyRows.map((p) => [p.id, p.name])),
         vehicleById: new Map(vehicleRows.map((v) => [v.id, v.number])),
+        userById: new Map(userRows.map((u) => [u.id, u.name])),
       };
     }
   );
@@ -97,11 +99,25 @@ export default async function BrokerRegisterPage({
     vNetAmt: Number(s.vNetAmt),
     vAdvance: Number(s.vAdvance),
     vBalance: Number(s.vBalance),
+    pAdvance: Number(s.pAdvance),
+    pNetAmt: Number(s.pNetAmt),
     podAttached: s.podAttached,
+    podFilePath: s.podFilePath,
+    podFileName: s.podFileName,
+    podUploadDate: s.podUploadDate ? s.podUploadDate.toISOString() : null,
     pPaymentStatus: s.pPaymentStatus,
     pPaidAmount: Number(s.pPaidAmount),
+    pRoundOff: Number(s.pRoundOff),
+    pShortage: Number(s.pShortage),
+    pPaymentDate: s.pPaymentDate ? s.pPaymentDate.toISOString() : null,
     vPaymentStatus: s.vPaymentStatus,
     vPaidAmount: Number(s.vPaidAmount),
+    vRoundOff: Number(s.vRoundOff),
+    vShortage: Number(s.vShortage),
+    vPaymentDate: s.vPaymentDate ? s.vPaymentDate.toISOString() : null,
+    unloadDate: s.unloadDate ? s.unloadDate.toISOString() : null,
+    createdAt: s.createdAt.toISOString(),
+    createdBy: (s.createdById && userById.get(s.createdById)) || "",
   }));
 
   const filters: FilterDef[] = [

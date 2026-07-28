@@ -21,11 +21,17 @@ export interface BillingPendingLr {
   dest: string;
   vehicle: string;
   qty: number;
+  actualWt: number;
   chargeWt: number;
   amount: number; // freight + charges
   poNumber: string;
   gateEntryNo: string;
   obdNo: string;
+  consignee: string;
+  material: string;
+  rate: number;
+  invoiceNo: string;
+  unloadDate: string | null;
 }
 
 export interface BillingDefaults {
@@ -52,6 +58,35 @@ export async function getBillingDefaults(): Promise<BillingDefaults> {
   };
 }
 
+export interface PartyBillingDetails {
+  name: string;
+  address: string;
+  gstin: string;
+  pan: string;
+  stateName: string;
+  stateCode: string;
+}
+
+/** Full Bill-To details for the invoice preview / print header. */
+export async function getPartyBillingDetails(partyId: string): Promise<PartyBillingDetails | null> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const party = await tx.party.findUnique({ where: { id: partyId } });
+    if (!party) return null;
+    const state = party.stateId
+      ? await tx.state.findUnique({ where: { id: party.stateId } })
+      : null;
+    return {
+      name: party.name,
+      address: [party.address1, party.address2].filter(Boolean).join(", "),
+      gstin: party.gstin ?? "",
+      pan: party.pan ?? "",
+      stateName: state?.name ?? "",
+      stateCode: state?.gstCode ?? stateCodeFromGstin(party.gstin) ?? "",
+    };
+  });
+}
+
 export async function getPartyStateCode(partyId: string): Promise<string | null> {
   const session = requireSession();
   const party = await withTenant(session.tenantId, (tx) =>
@@ -68,37 +103,55 @@ async function decorateLrs(
     lrDate: Date;
     sourceCityId: string;
     destCityId: string;
+    consigneeId: string;
     vehicleId: string | null;
     vehicleText: string | null;
     total: unknown;
     poNumber: string | null;
     gateEntryNo: string | null;
     obdNo: string | null;
-    items: { qty: unknown; chargeWt: unknown }[];
+    invoiceNo: string | null;
+    items: { qty: unknown; actualWt: unknown; chargeWt: unknown; productName: string; rate: unknown }[];
   }[]
 ): Promise<BillingPendingLr[]> {
   const cityIds = Array.from(new Set(lrs.flatMap((l) => [l.sourceCityId, l.destCityId])));
   const vehicleIds = Array.from(new Set(lrs.map((l) => l.vehicleId).filter(Boolean))) as string[];
-  const [cities, vehicles] = [
+  const consigneeIds = Array.from(new Set(lrs.map((l) => l.consigneeId)));
+  const lrIds = lrs.map((l) => l.id);
+  const [cities, vehicles, consignees, pods] = [
     await tx.city.findMany({ where: { id: { in: cityIds } } }),
     await tx.vehicle.findMany({ where: { id: { in: vehicleIds } } }),
+    await tx.party.findMany({ where: { id: { in: consigneeIds } } }),
+    await tx.pod.findMany({ where: { lrId: { in: lrIds } } }),
   ];
   const cmap = new Map(cities.map((c) => [c.id, c.name]));
   const vmap = new Map(vehicles.map((v) => [v.id, v.number]));
-  return lrs.map((lr) => ({
-    id: lr.id,
-    lrNo: lr.lrNo,
-    lrDate: lr.lrDate.toISOString(),
-    source: cmap.get(lr.sourceCityId) ?? "",
-    dest: cmap.get(lr.destCityId) ?? "",
-    vehicle: (lr.vehicleId && vmap.get(lr.vehicleId)) || lr.vehicleText || "",
-    qty: lr.items.reduce((s, i) => s + toNum(String(i.qty)), 0),
-    chargeWt: lr.items.reduce((s, i) => s + toNum(String(i.chargeWt)), 0),
-    amount: toNum(String(lr.total)),
-    poNumber: lr.poNumber ?? "",
-    gateEntryNo: lr.gateEntryNo ?? "",
-    obdNo: lr.obdNo ?? "",
-  }));
+  const pmap = new Map(consignees.map((p) => [p.id, p.name]));
+  const podByLr = new Map(pods.map((p) => [p.lrId, p]));
+  return lrs.map((lr) => {
+    const actualWt = lr.items.reduce((s, i) => s + toNum(String(i.actualWt)), 0);
+    const pod = podByLr.get(lr.id);
+    return {
+      id: lr.id,
+      lrNo: lr.lrNo,
+      lrDate: lr.lrDate.toISOString(),
+      source: cmap.get(lr.sourceCityId) ?? "",
+      dest: cmap.get(lr.destCityId) ?? "",
+      vehicle: (lr.vehicleId && vmap.get(lr.vehicleId)) || lr.vehicleText || "",
+      qty: lr.items.reduce((s, i) => s + toNum(String(i.qty)), 0),
+      actualWt,
+      chargeWt: lr.items.reduce((s, i) => s + toNum(String(i.chargeWt)), 0),
+      amount: toNum(String(lr.total)),
+      poNumber: lr.poNumber ?? "",
+      gateEntryNo: lr.gateEntryNo ?? "",
+      obdNo: lr.obdNo ?? "",
+      consignee: pmap.get(lr.consigneeId) ?? "",
+      material: lr.items.map((i) => i.productName).filter(Boolean).join(", "),
+      rate: lr.items.length ? Math.max(...lr.items.map((i) => toNum(String(i.rate)))) : 0,
+      invoiceNo: lr.invoiceNo ?? "",
+      unloadDate: pod?.unloadDate ? pod.unloadDate.toISOString() : null,
+    };
+  });
 }
 
 function pendingWhere(session: { firmId: string; fyId: string }, kind: InvoiceKind, partyId: string) {
@@ -239,6 +292,7 @@ const invoiceSchema = z.object({
   supplyDate: z.string().nullable().optional(),
   transportMode: z.string().optional(),
   reverseCharge: z.boolean().default(false),
+  sacCode: z.string().optional(),
   tcsPct: z.number().default(0),
   freightExtra: z.number().default(0),
   othersExtra: z.number().default(0),
@@ -470,6 +524,7 @@ export async function saveInvoice(
         supplyDate: data.supplyDate ? new Date(data.supplyDate) : null,
         transportMode: data.transportMode || null,
         reverseCharge: data.reverseCharge,
+        sacCode: data.sacCode || null,
         tcsPct: data.tcsPct,
         tcsAmt,
         freightExtra: data.freightExtra,
@@ -640,6 +695,7 @@ export interface InvoiceEditPayload {
   supplyDate: string | null;
   transportMode: string;
   reverseCharge: boolean;
+  sacCode: string;
   tcsPct: number;
   freightExtra: number;
   othersExtra: number;
@@ -693,6 +749,7 @@ export async function getInvoiceForEdit(id: string): Promise<InvoiceEditPayload 
       supplyDate: inv.supplyDate ? inv.supplyDate.toISOString() : null,
       transportMode: inv.transportMode ?? "",
       reverseCharge: inv.reverseCharge,
+      sacCode: inv.sacCode ?? "",
       tcsPct: toNum(String(inv.tcsPct)),
       freightExtra: toNum(String(inv.freightExtra)),
       othersExtra: toNum(String(inv.othersExtra)),

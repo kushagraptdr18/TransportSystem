@@ -75,9 +75,23 @@ export const ADVANCE_TYPES = [
 ] as const;
 export type BrokerAdvanceType = (typeof ADVANCE_TYPES)[number];
 
+/** Advance head kinds — sourced from the Income/Expense heads and Bank/Cash masters. */
+export const ADVANCE_HEAD_KINDS = ["INCOME", "EXPENSE", "BANK", "CASH"] as const;
+export type AdvanceHeadKind = (typeof ADVANCE_HEAD_KINDS)[number];
+
+export const ADVANCE_HEAD_KIND_LABELS: Record<AdvanceHeadKind, string> = {
+  INCOME: "Income Head",
+  EXPENSE: "Expense Head",
+  BANK: "Bank Account",
+  CASH: "Cash Account",
+};
+
 export interface BrokerAdvance {
   side: "P" | "V";
   type: BrokerAdvanceType;
+  /** master-driven head selection (new UI); legacy rows may only have type/bankName */
+  headKind?: AdvanceHeadKind | null;
+  headId?: string | null;
   supplierName?: string | null;
   bankName?: string | null;
   dieselQty?: number | null;

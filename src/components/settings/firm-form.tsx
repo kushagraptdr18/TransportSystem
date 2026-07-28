@@ -26,6 +26,8 @@ export interface FirmFormValues {
   pan: string;
   cin: string;
   msmeNo: string;
+  ibaCode: string;
+  rcmCovered: boolean;
   jurisdiction: string;
   cgstPct: number;
   sgstPct: number;
@@ -237,6 +239,19 @@ export function FirmForm({
           </Field>
           <Field label="MSME No">
             <Input {...register("msmeNo")} />
+          </Field>
+          <Field label="IBA Code">
+            <Input {...register("ibaCode")} />
+          </Field>
+          <Field label="Service Covered Under GST RCM (shown on invoices)">
+            <select
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+              value={watch("rcmCovered") ? "yes" : "no"}
+              onChange={(e) => setValue("rcmCovered", e.target.value === "yes")}
+            >
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
           </Field>
           <Field label="CGST % (default)">
             <Input type="number" step="0.01" {...register("cgstPct", { valueAsNumber: true })} />

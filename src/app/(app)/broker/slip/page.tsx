@@ -23,10 +23,9 @@ export default async function BrokerSlipPage({
 }) {
   const session = requireSession();
 
-  const { nextNo, cities, parties, brokers, vehicles, products, slip } = await withTenant(
-    session.tenantId,
-    async (tx) => {
-      const [nextNo, cityRows, partyRows, brokerRows, vehicleRows, productRows, slipRow] =
+  const { nextNo, cities, parties, brokers, vehicles, products, accountHeads, bankCash, slip } =
+    await withTenant(session.tenantId, async (tx) => {
+      const [nextNo, cityRows, partyRows, brokerRows, vehicleRows, productRows, headRows, bankRows, slipRow] =
         await Promise.all([
           peekDocNumber(tx, {
             firmId: session.firmId,
@@ -48,6 +47,11 @@ export default async function BrokerSlipPage({
             orderBy: { number: "asc" },
           }),
           tx.product.findMany({ include: { group: true }, orderBy: { name: "asc" } }),
+          tx.accountHead.findMany({ orderBy: { name: "asc" } }),
+          tx.party.findMany({
+            where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+            orderBy: { name: "asc" },
+          }),
           searchParams.id
             ? tx.brokerSlip.findFirst({
                 where: { id: searchParams.id, deletedAt: null },
@@ -74,10 +78,11 @@ export default async function BrokerSlipPage({
           isOwn: v.isOwn,
         })),
         products: productRows.map((p) => ({ value: p.id, label: p.name, meta: p.group.name })),
+        accountHeads: headRows.map((h) => ({ value: h.id, label: h.name, meta: h.kind })),
+        bankCash: bankRows.map((b) => ({ value: b.id, label: b.name, meta: b.ledgerGroup })),
         slip: slipRow,
       };
-    }
-  );
+    });
 
   const cityOptions: MasterOption[] = cities;
   const ownVehicleIds = vehicles.filter((v) => v.isOwn).map((v) => v.value);
@@ -110,6 +115,8 @@ export default async function BrokerSlipPage({
       chargeWt: n(slip.chargeWt),
       unit: slip.unit ?? "MT",
       rateBasis: slip.rateBasis,
+      pRateBasis: slip.pRateBasis ?? slip.rateBasis,
+      vRateBasis: slip.vRateBasis ?? slip.rateBasis,
       partyId: slip.partyId,
       p: {
         rate: n(slip.pRate),
@@ -172,6 +179,8 @@ export default async function BrokerSlipPage({
         vehicleOptions={vehicleOptions}
         ownVehicleIds={ownVehicleIds}
         productOptions={products}
+        accountHeadOptions={accountHeads}
+        bankCashOptions={bankCash}
       />
     </div>
   );

@@ -24,6 +24,8 @@ const rateBasisSchema = z.enum(["QTY", "ACTUAL_WT", "CHARGE_WT", "FIXED"]);
 const advanceSchema = z.object({
   side: z.enum(["P", "V"]),
   type: z.enum(ADVANCE_TYPES),
+  headKind: z.enum(["INCOME", "EXPENSE", "BANK", "CASH"]).nullish(),
+  headId: z.string().nullish(),
   supplierName: z.string().nullish(),
   bankName: z.string().nullish(),
   dieselQty: z.number().min(0).nullish(),
@@ -70,7 +72,9 @@ const brokerSlipSchema = z.object({
   actualWt: z.number().min(0).default(0),
   chargeWt: z.number().min(0).default(0),
   unit: z.string().default("MT"),
-  rateBasis: rateBasisSchema.default("CHARGE_WT"),
+  rateBasis: rateBasisSchema.default("CHARGE_WT"), // legacy shared basis
+  pRateBasis: rateBasisSchema.default("CHARGE_WT"),
+  vRateBasis: rateBasisSchema.default("CHARGE_WT"),
 
   // party side
   partyId: z.string().nullish(),
@@ -117,10 +121,10 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
     qty: data.qty,
     actualWt: data.actualWt,
     chargeWt: data.chargeWt,
-    rateBasis: data.rateBasis,
   };
   const pTotals = computeBrokerSide({
     ...base,
+    rateBasis: data.pRateBasis,
     rate: data.p.rate,
     manualFreight: data.p.freight,
     detention: data.p.detention,
@@ -138,6 +142,7 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
   });
   const vTotals = computeBrokerSide({
     ...base,
+    rateBasis: data.vRateBasis,
     rate: data.v.rate,
     manualFreight: data.v.freight,
     detention: data.v.detention,
@@ -183,8 +188,12 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
     chargeWt: data.chargeWt,
     unit: data.unit || "MT",
     rateBasis: data.rateBasis,
+    pRateBasis: data.pRateBasis,
+    vRateBasis: data.vRateBasis,
 
-    partyId: data.partyId || null,
+    // the receivable side IS the broker selected in the slip header —
+    // no separate party selection (falls back to any legacy partyId)
+    partyId: data.transporterId || data.partyId || null,
     pRate: data.p.rate,
     pFreight: pTotals.freight,
     pDetention: data.p.detention,
@@ -467,5 +476,46 @@ export async function saveBrokerBalancePayment(
     });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Balance payment failed" };
+  }
+}
+
+// ------------------------------------------------------------- POD file upload
+
+/** Attach an uploaded POD file to a broker slip (file already stored via /api/uploads/pod). */
+export async function setBrokerSlipPodFile(
+  id: string,
+  filePath: string,
+  fileName: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "broker", "edit");
+  if (!filePath.startsWith(`${session.tenantId}/`)) {
+    return { ok: false, error: "Invalid file path." };
+  }
+  try {
+    await withTenant(session.tenantId, async (tx) => {
+      const before = await tx.brokerSlip.findFirst({ where: { id, deletedAt: null } });
+      if (!before) throw new Error("Broker slip not found");
+      await tx.brokerSlip.update({
+        where: { id },
+        data: {
+          podFilePath: filePath,
+          podFileName: fileName,
+          podUploadDate: new Date(),
+          podAttached: true,
+        },
+      });
+      await audit(tx, session, {
+        entity: "BrokerSlip",
+        entityId: id,
+        action: "UPDATE",
+        before,
+        after: { podFilePath: filePath, podFileName: fileName },
+      });
+    });
+    revalidatePath("/broker/register");
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Upload failed" };
   }
 }

@@ -24,7 +24,7 @@ export async function InvoiceEntryPage({
 }) {
   const session = requireSession();
 
-  const { firm, parties, banks, suggestedNo, prevInvoiceNo, chargeHeads } = await withTenant(
+  const { firm, parties, banks, suggestedNo, prevInvoiceNo, chargeHeads, states } = await withTenant(
     session.tenantId,
     async (tx) => {
       // FULL_TRUCK: invoice no starts blank; the last saved bill no is shown for reference only
@@ -39,7 +39,7 @@ export async function InvoiceEntryPage({
                 })
               )
             );
-      const [firm, partyRows, bankRows, prevInvoice, chargeHeads] = await Promise.all([
+      const [firm, partyRows, bankRows, prevInvoice, chargeHeads, states] = await Promise.all([
         tx.firm.findUnique({ where: { id: session.firmId } }),
         tx.party.findMany({
           where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" },
@@ -55,6 +55,7 @@ export async function InvoiceEntryPage({
           select: { invoiceNo: true },
         }),
         tx.accountHead.findMany({ orderBy: { name: "asc" } }),
+        tx.state.findMany(),
       ]);
       return {
         firm,
@@ -63,6 +64,7 @@ export async function InvoiceEntryPage({
         suggestedNo,
         prevInvoiceNo: prevInvoice?.invoiceNo ?? null,
         chargeHeads,
+        states,
       };
     }
   );
@@ -98,6 +100,14 @@ export async function InvoiceEntryPage({
           gstin: firm?.gstin ?? "",
           pan: firm?.pan ?? "",
           mobile: firm?.mobile ?? "",
+          email: firm?.email ?? "",
+          stateName: states.find((s) => s.id === firm?.stateId)?.name ?? "",
+          stateCode:
+            states.find((s) => s.id === firm?.stateId)?.gstCode ??
+            stateCodeFromGstin(firm?.gstin) ??
+            "",
+          ibaCode: firm?.ibaCode ?? "",
+          rcmCovered: firm?.rcmCovered ?? true,
         }}
         initial={initial && initial.kind === kind ? initial : null}
         partyOptions={parties.map((p) => ({
