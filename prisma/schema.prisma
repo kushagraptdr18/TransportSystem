@@ -1301,6 +1301,29 @@ model BrokerSlip {
   tripDays      Int?
   unloadRemarks String?
 
+  // informational only: POD handed over / shared — no workflow dependency
+  podAttached Boolean @default(false)
+
+  // party/broker side balance RECEIVED (mirrors chalan balance payment)
+  pPaymentStatus  String    @default("PENDING") // PENDING | RECEIVED
+  pRoundOff       Decimal   @default(0) @db.Decimal(12, 2)
+  pShortage       Decimal   @default(0) @db.Decimal(12, 2)
+  pPaidAmount     Decimal   @default(0) @db.Decimal(12, 2)
+  pPaymentDate    DateTime?
+  pPaymentHeadId  String? // BANK/CASH party
+  pPaymentMode    String?
+  pPaymentRemarks String?
+
+  // owner side balance PAID (mirrors chalan balance payment)
+  vPaymentStatus  String    @default("PENDING") // PENDING | PAID
+  vRoundOff       Decimal   @default(0) @db.Decimal(12, 2)
+  vShortage       Decimal   @default(0) @db.Decimal(12, 2)
+  vPaidAmount     Decimal   @default(0) @db.Decimal(12, 2)
+  vPaymentDate    DateTime?
+  vPaymentHeadId  String? // BANK/CASH party
+  vPaymentMode    String?
+  vPaymentRemarks String?
+
   createdById String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

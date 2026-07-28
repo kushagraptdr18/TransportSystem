@@ -10,9 +10,13 @@ export const dynamic = "force-dynamic";
 interface SearchParams {
   date_from?: string;
   date_to?: string;
+  q?: string; // slip no search
   vehicle?: string;
   party?: string;
   side?: string; // PARTY | OWNER
+  pod?: string; // yes | no
+  pstatus?: string; // received | pending
+  vstatus?: string; // paid | pending
 }
 
 export default async function BrokerRegisterPage({
@@ -22,7 +26,7 @@ export default async function BrokerRegisterPage({
 }) {
   const session = requireSession();
 
-  const { rows, vehicles, brokers, cityById, partyById, vehicleById } = await withTenant(
+  const { rows, vehicles, brokers, banks, cityById, partyById, vehicleById } = await withTenant(
     session.tenantId,
     async (tx) => {
       const where: Record<string, unknown> = {
@@ -36,7 +40,14 @@ export default async function BrokerRegisterPage({
           ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
         };
       }
+      if (searchParams.q)
+        where.slipNo = { contains: searchParams.q, mode: "insensitive" };
       if (searchParams.vehicle) where.vehicleId = searchParams.vehicle;
+      if (searchParams.pod) where.podAttached = searchParams.pod === "yes";
+      if (searchParams.pstatus)
+        where.pPaymentStatus = searchParams.pstatus === "received" ? "RECEIVED" : "PENDING";
+      if (searchParams.vstatus)
+        where.vPaymentStatus = searchParams.vstatus === "paid" ? "PAID" : "PENDING";
       if (searchParams.party) {
         if (searchParams.side === "PARTY") where.partyId = searchParams.party;
         else if (searchParams.side === "OWNER") {
@@ -61,6 +72,7 @@ export default async function BrokerRegisterPage({
         rows: slips,
         vehicles: vehicleRows,
         brokers: partyRows.filter((p) => p.ledgerGroup === "OWNER_BROKER" || p.ledgerGroup === "RELATIVE"),
+        banks: partyRows.filter((p) => p.ledgerGroup === "BANK" || p.ledgerGroup === "CASH"),
         cityById: new Map(cityRows.map((c) => [c.id, c.name])),
         partyById: new Map(partyRows.map((p) => [p.id, p.name])),
         vehicleById: new Map(vehicleRows.map((v) => [v.id, v.number])),
@@ -85,9 +97,15 @@ export default async function BrokerRegisterPage({
     vNetAmt: Number(s.vNetAmt),
     vAdvance: Number(s.vAdvance),
     vBalance: Number(s.vBalance),
+    podAttached: s.podAttached,
+    pPaymentStatus: s.pPaymentStatus,
+    pPaidAmount: Number(s.pPaidAmount),
+    vPaymentStatus: s.vPaymentStatus,
+    vPaidAmount: Number(s.vPaidAmount),
   }));
 
   const filters: FilterDef[] = [
+    { type: "text", key: "q", label: "Slip No..." },
     { type: "daterange", key: "date", label: "Slip Date" },
     {
       type: "combobox",
@@ -110,6 +128,33 @@ export default async function BrokerRegisterPage({
         { value: "OWNER", label: "Owner" },
       ],
     },
+    {
+      type: "select",
+      key: "pstatus",
+      label: "Broker Balance",
+      options: [
+        { value: "received", label: "Received" },
+        { value: "pending", label: "Pending" },
+      ],
+    },
+    {
+      type: "select",
+      key: "vstatus",
+      label: "Owner Balance",
+      options: [
+        { value: "paid", label: "Paid" },
+        { value: "pending", label: "Pending" },
+      ],
+    },
+    {
+      type: "select",
+      key: "pod",
+      label: "POD Attached",
+      options: [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "No" },
+      ],
+    },
   ];
 
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
@@ -123,7 +168,11 @@ export default async function BrokerRegisterPage({
         </Button>
       </div>
       <FilterBar filters={filters} />
-      <BrokerRegisterTable data={data} canDelete={canDelete} />
+      <BrokerRegisterTable
+        data={data}
+        canDelete={canDelete}
+        bankOptions={banks.map((b) => ({ value: b.id, label: b.name, meta: b.ledgerGroup }))}
+      />
     </div>
   );
 }
