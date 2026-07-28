@@ -25,6 +25,7 @@ export interface BillingPendingLr {
   amount: number; // freight + charges
   poNumber: string;
   gateEntryNo: string;
+  obdNo: string;
 }
 
 export interface BillingDefaults {
@@ -72,6 +73,7 @@ async function decorateLrs(
     total: unknown;
     poNumber: string | null;
     gateEntryNo: string | null;
+    obdNo: string | null;
     items: { qty: unknown; chargeWt: unknown }[];
   }[]
 ): Promise<BillingPendingLr[]> {
@@ -95,6 +97,7 @@ async function decorateLrs(
     amount: toNum(String(lr.total)),
     poNumber: lr.poNumber ?? "",
     gateEntryNo: lr.gateEntryNo ?? "",
+    obdNo: lr.obdNo ?? "",
   }));
 }
 
@@ -401,10 +404,13 @@ export async function saveInvoice(
           data.kind === "MANUAL"
             ? data.lines.map((l) => round2(l.qty * l.rate))
             : lrs.map((lr) => toNum(String(lr.total)));
+        // RCM basis (Full Truck, GST-unregistered): tax liability shifts to the
+        // recipient, so no GST is added on the bill itself
+        const rcmActive = data.kind === "FULL_TRUCK" && data.reverseCharge;
         totals = computeInvoice({
           lrAmounts: baseAmounts,
           extraCharges: data.charges.map((c) => c.amount),
-          gstApplicable: data.gstApplicable,
+          gstApplicable: data.gstApplicable && !rcmActive,
           gstPct: data.gstPct,
           supplierStateCode,
           recipientStateCode,

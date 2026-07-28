@@ -10,6 +10,13 @@ import { gstSplit } from "@/lib/calc/gst";
 import { round2 } from "@/lib/calc/tds";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -111,6 +118,12 @@ interface InvoiceFormProps {
   kind: InvoiceKind;
   initial: InvoiceEditPayload | null;
   suggestedInvoiceNo?: string;
+  /** last saved bill number of this kind — informational reference only */
+  prevInvoiceNo?: string | null;
+  /** Income & Expense heads for the Additional Charges "Charge Type" dropdown */
+  chargeHeadOptions?: MasterOption[];
+  /** firm details for the bill preview */
+  firm?: { name: string; address: string; gstin: string; pan: string; mobile: string };
   partyOptions: MasterOption[];
   bankOptions: MasterOption[];
   defaults: BillingDefaults;
@@ -120,6 +133,9 @@ export function InvoiceForm({
   kind,
   initial,
   suggestedInvoiceNo,
+  prevInvoiceNo,
+  chargeHeadOptions = [],
+  firm,
   partyOptions: partyOptions0,
   bankOptions,
   defaults,
@@ -130,6 +146,7 @@ export function InvoiceForm({
   const withLines = kind === "MANUAL" || kind === "GST";
 
   const [saving, setSaving] = React.useState(false);
+  const [previewOpen, setPreviewOpen] = React.useState(false);
   const [partyOptions, setPartyOptions] = React.useState(partyOptions0);
 
   // header
@@ -159,7 +176,10 @@ export function InvoiceForm({
   const [placeOfSupply, setPlaceOfSupply] = React.useState(initial?.placeOfSupply ?? "");
   const [supplyDateText, setSupplyDateText] = React.useState(isoToText(initial?.supplyDate ?? null));
   const [transportMode, setTransportMode] = React.useState(initial?.transportMode ?? "");
-  const [reverseCharge, setReverseCharge] = React.useState(initial?.reverseCharge ?? false);
+  // FULL_TRUCK (GST-unregistered): bills are on RCM basis by default
+  const [reverseCharge, setReverseCharge] = React.useState(
+    initial ? initial.reverseCharge : kind === "FULL_TRUCK"
+  );
   const [tcsPct, setTcsPct] = React.useState(initial?.tcsPct ?? 0);
   const [freightExtra, setFreightExtra] = React.useState(initial?.freightExtra ?? 0);
   const [othersExtra, setOthersExtra] = React.useState(initial?.othersExtra ?? 0);
@@ -173,6 +193,20 @@ export function InvoiceForm({
   const [loadingLrs, setLoadingLrs] = React.useState(false);
   const [bulkText, setBulkText] = React.useState("");
   const [bulkBusy, setBulkBusy] = React.useState(false);
+  // per-column filters for the pending-LR picker (obdNo = prefix search)
+  const [lrFilters, setLrFilters] = React.useState({
+    lrNo: "",
+    date: "",
+    source: "",
+    dest: "",
+    vehicle: "",
+    obdNo: "",
+    qty: "",
+    chargeWt: "",
+    amount: "",
+  });
+  const setLrFilter = (patch: Partial<typeof lrFilters>) =>
+    setLrFilters((f) => ({ ...f, ...patch }));
 
   // charges / lines
   const [charges, setCharges] = React.useState<ChargeRow[]>(
@@ -232,7 +266,7 @@ export function InvoiceForm({
   };
 
   const toggleAll = (checked: boolean) => {
-    setSelectedLrIds(checked ? new Set(pendingLrs.map((l) => l.id)) : new Set());
+    setSelectedLrIds(checked ? new Set(visibleLrs.map((l) => l.id)) : new Set());
   };
 
   const addBulk = async () => {
@@ -284,6 +318,25 @@ export function InvoiceForm({
     setLines((l) => l.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
   const removeLine = (idx: number) => setLines((l) => l.filter((_, i) => i !== idx));
 
+  const rcmActive = kind === "FULL_TRUCK" && reverseCharge;
+
+  const contains = (v: string | number, q: string) =>
+    !q || String(v).toLowerCase().includes(q.trim().toLowerCase());
+  const visibleLrs = pendingLrs.filter(
+    (lr) =>
+      contains(lr.lrNo, lrFilters.lrNo) &&
+      contains(formatDate(lr.lrDate), lrFilters.date) &&
+      contains(lr.source, lrFilters.source) &&
+      contains(lr.dest, lrFilters.dest) &&
+      contains(lr.vehicle, lrFilters.vehicle) &&
+      // OBD: prefix search — matches from the beginning of the OBD number
+      (!lrFilters.obdNo ||
+        lr.obdNo.toLowerCase().startsWith(lrFilters.obdNo.trim().toLowerCase())) &&
+      contains(lr.qty, lrFilters.qty) &&
+      contains(lr.chargeWt, lrFilters.chargeWt) &&
+      contains(lr.amount, lrFilters.amount)
+  );
+
   // ---------------------------------------------------------------- totals (mirror of server calc)
   const selectedLrs = pendingLrs.filter((l) => selectedLrIds.has(l.id));
 
@@ -333,7 +386,8 @@ export function InvoiceForm({
       lrAmounts:
         kind === "MANUAL" ? lines.map((l) => round2(l.qty * l.rate)) : selectedLrs.map((l) => l.amount),
       extraCharges: charges.map((c) => c.amount),
-      gstApplicable,
+      // RCM basis: tax liability is on the recipient — no GST added to the bill
+      gstApplicable: gstApplicable && !rcmActive,
       gstPct,
       supplierStateCode: defaults.firmStateCode,
       recipientStateCode: partyStateCode,
@@ -343,20 +397,34 @@ export function InvoiceForm({
   }
 
   // ---------------------------------------------------------------- save
-  const handleSave = async () => {
-    const invoiceDateIso = textToIso(invoiceDateText);
+  const validateHeader = (): boolean => {
     if (!invoiceNo.trim()) {
       toast({ variant: "destructive", title: "Invoice number is required" });
-      return;
+      return false;
     }
-    if (!invoiceDateIso) {
+    if (!textToIso(invoiceDateText)) {
       toast({ variant: "destructive", title: "Valid invoice date is required" });
-      return;
+      return false;
     }
     if (!partyId) {
       toast({ variant: "destructive", title: "Party is required" });
+      return false;
+    }
+    return true;
+  };
+
+  const openPreview = () => {
+    if (!validateHeader()) return;
+    if (selectedLrs.length === 0) {
+      toast({ variant: "destructive", title: "Select at least one LR" });
       return;
     }
+    setPreviewOpen(true);
+  };
+
+  const handleSave = async () => {
+    const invoiceDateIso = textToIso(invoiceDateText);
+    if (!validateHeader() || !invoiceDateIso) return;
     setSaving(true);
     try {
       const res = await saveInvoice({
@@ -393,8 +461,13 @@ export function InvoiceForm({
       });
       if (res.ok) {
         toast({ title: `Invoice ${invoiceNo} saved` });
+        if (kind === "FULL_TRUCK") {
+          // open the print window automatically after a successful save
+          window.open(`/print/invoice/${res.id}`, "_blank");
+        }
         router.push(`/billing/register?kind=${kind}`);
       } else {
+        setPreviewOpen(false);
         toast({ variant: "destructive", title: "Save failed", description: res.error });
       }
     } finally {
@@ -414,8 +487,15 @@ export function InvoiceForm({
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className="space-y-1">
-            <Label className="text-xs">Invoice No * (auto-generated, editable)</Label>
+            <Label className="text-xs">
+              {kind === "FULL_TRUCK" ? "Invoice No *" : "Invoice No * (auto-generated, editable)"}
+            </Label>
             <Input className="h-8" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)} />
+            {kind === "FULL_TRUCK" && prevInvoiceNo && (
+              <p className="text-xs text-muted-foreground">
+                Previous Bill No: <b>{prevInvoiceNo}</b> (reference only)
+              </p>
+            )}
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Invoice Date *</Label>
@@ -476,7 +556,20 @@ export function InvoiceForm({
             <Label className="text-xs">Remarks</Label>
             <Input className="h-8" value={remarks} onChange={(e) => setRemarks(e.target.value)} />
           </div>
-          {kind !== "GST" && (
+          {kind === "FULL_TRUCK" && (
+            <div className="space-y-1">
+              <Label className="text-xs">RCM Basis (Reverse Charge)</Label>
+              <div className="flex h-8 items-center gap-2">
+                <Switch checked={reverseCharge} onCheckedChange={setReverseCharge} />
+                {rcmActive && (
+                  <span className="text-xs text-muted-foreground">
+                    GST payable by recipient under RCM
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+          {kind !== "GST" && !rcmActive && (
             <>
               <div className="space-y-1">
                 <Label className="text-xs">GST Applicable</Label>
@@ -567,7 +660,10 @@ export function InvoiceForm({
                   <TableRow>
                     <TableHead className="w-8">
                       <Checkbox
-                        checked={pendingLrs.length > 0 && selectedLrIds.size === pendingLrs.length}
+                        checked={
+                          visibleLrs.length > 0 &&
+                          visibleLrs.every((l) => selectedLrIds.has(l.id))
+                        }
                         onCheckedChange={(c) => toggleAll(c === true)}
                       />
                     </TableHead>
@@ -576,21 +672,51 @@ export function InvoiceForm({
                     <TableHead>From</TableHead>
                     <TableHead>To</TableHead>
                     <TableHead>Vehicle</TableHead>
-                    <TableHead>PO No</TableHead>
+                    <TableHead>OBD No</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
                     <TableHead className="text-right">Charge Wt</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                   </TableRow>
+                  {/* per-column filters; OBD filters by prefix */}
+                  <TableRow>
+                    <TableHead />
+                    {(
+                      [
+                        ["lrNo", "LR No..."],
+                        ["date", "Date..."],
+                        ["source", "From..."],
+                        ["dest", "To..."],
+                        ["vehicle", "Vehicle..."],
+                        ["obdNo", "OBD starts with..."],
+                        ["qty", "Qty..."],
+                        ["chargeWt", "Wt..."],
+                        ["amount", "Amt..."],
+                      ] as const
+                    ).map(([key, ph]) => (
+                      <TableHead key={key} className="py-1">
+                        <Input
+                          className="h-7 text-xs"
+                          placeholder={ph}
+                          value={lrFilters[key]}
+                          onChange={(e) => setLrFilter({ [key]: e.target.value })}
+                        />
+                      </TableHead>
+                    ))}
+                  </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pendingLrs.length === 0 && (
+                  {visibleLrs.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={10} className="text-center text-muted-foreground">
-                        {partyId ? "No pending LRs for this party." : "Select a party to load LRs."}
+                        {partyId
+                          ? pendingLrs.length
+                            ? "No LRs match the filters."
+                            : "No pending LRs for this party."
+                          : "Select a party to load LRs."}
                       </TableCell>
                     </TableRow>
                   )}
-                  {pendingLrs.map((lr) => (
+                  {visibleLrs.map((lr) => (
                     <TableRow key={lr.id} className="cursor-pointer" onClick={() => toggleLr(lr.id, !selectedLrIds.has(lr.id))}>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <Checkbox
@@ -603,7 +729,7 @@ export function InvoiceForm({
                       <TableCell>{lr.source}</TableCell>
                       <TableCell>{lr.dest}</TableCell>
                       <TableCell>{lr.vehicle}</TableCell>
-                      <TableCell>{lr.poNumber}</TableCell>
+                      <TableCell>{lr.obdNo}</TableCell>
                       <TableCell className="text-right tabular-nums">{lr.qty}</TableCell>
                       <TableCell className="text-right tabular-nums">{lr.chargeWt}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatMoney(lr.amount)}</TableCell>
@@ -651,12 +777,21 @@ export function InvoiceForm({
               <div key={idx} className="grid grid-cols-2 items-end gap-2 md:grid-cols-6">
                 <div className="space-y-1">
                   <Label className="text-xs">Charge Type</Label>
-                  <Input
-                    className="h-8"
-                    value={c.chargeType}
-                    placeholder="e.g. DETENTION"
-                    onChange={(e) => updateCharge(idx, { chargeType: e.target.value.toUpperCase() })}
-                  />
+                  {chargeHeadOptions.length > 0 ? (
+                    <MasterCombobox
+                      options={chargeHeadOptions}
+                      value={c.chargeType || null}
+                      onChange={(v) => updateCharge(idx, { chargeType: v ?? "" })}
+                      placeholder="Select head..."
+                    />
+                  ) : (
+                    <Input
+                      className="h-8"
+                      value={c.chargeType}
+                      placeholder="e.g. DETENTION"
+                      onChange={(e) => updateCharge(idx, { chargeType: e.target.value.toUpperCase() })}
+                    />
+                  )}
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Description</Label>
@@ -795,7 +930,13 @@ export function InvoiceForm({
                 <span>{formatMoney(val)}</span>
               </div>
             ))}
-            {(gstApplicable || kind === "GST") && (
+            {rcmActive && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">GST</span>
+                <span className="text-xs">Payable by recipient under RCM</span>
+              </div>
+            )}
+            {((gstApplicable && !rcmActive) || kind === "GST") && (
               <>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
@@ -847,10 +988,202 @@ export function InvoiceForm({
         <Button variant="outline" onClick={() => router.push(`/billing/register?kind=${kind}`)}>
           Cancel
         </Button>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? "Saving..." : initial ? "Update Bill" : "Save Bill"}
-        </Button>
+        {kind === "FULL_TRUCK" ? (
+          <Button onClick={openPreview} disabled={saving}>
+            Preview Bill
+          </Button>
+        ) : (
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? "Saving..." : initial ? "Update Bill" : "Save Bill"}
+          </Button>
+        )}
       </div>
+
+      {/* bill preview (Full Truck) — review, adjust, then final save + auto print */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Bill Preview — as it will be printed</DialogTitle>
+          </DialogHeader>
+          <div className="border border-black p-4 text-sm">
+            <div className="border-b border-black pb-2 text-center">
+              <div className="text-lg font-bold uppercase">{firm?.name}</div>
+              <div className="text-xs">{firm?.address}</div>
+              <div className="text-xs">
+                {[
+                  firm?.mobile && `Mob: ${firm.mobile}`,
+                  firm?.gstin && `GSTIN: ${firm.gstin}`,
+                  firm?.pan && `PAN: ${firm.pan}`,
+                ]
+                  .filter(Boolean)
+                  .join(" | ")}
+              </div>
+              <div className="mt-1 font-semibold">
+                FREIGHT BILL {rcmActive ? "(GST payable under RCM by recipient)" : ""}
+              </div>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
+              <div>
+                <b>Bill No:</b> {invoiceNo}
+              </div>
+              <div>
+                <b>Date:</b> {invoiceDateText}
+              </div>
+              <div>
+                <b>Party:</b> {partyOptions.find((p) => p.value === partyId)?.label ?? ""}
+              </div>
+              {vehicleText && (
+                <div>
+                  <b>Vehicle:</b> {vehicleText}
+                </div>
+              )}
+              {subject && (
+                <div className="col-span-2">
+                  <b>Subject:</b> {subject}
+                </div>
+              )}
+            </div>
+            <table className="mt-3 w-full border-collapse text-xs">
+              <thead>
+                <tr>
+                  {["#", "LR No", "Date", "From", "To", "Vehicle", "OBD No", "Qty", "Charge Wt", "Amount", ""].map(
+                    (h) => (
+                      <th key={h} className="border border-black px-1 py-0.5 text-left">
+                        {h}
+                      </th>
+                    )
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {selectedLrs.map((lr, i) => (
+                  <tr key={lr.id}>
+                    <td className="border border-black px-1 py-0.5">{i + 1}</td>
+                    <td className="border border-black px-1 py-0.5">{lr.lrNo}</td>
+                    <td className="border border-black px-1 py-0.5">{formatDate(lr.lrDate)}</td>
+                    <td className="border border-black px-1 py-0.5">{lr.source}</td>
+                    <td className="border border-black px-1 py-0.5">{lr.dest}</td>
+                    <td className="border border-black px-1 py-0.5">{lr.vehicle}</td>
+                    <td className="border border-black px-1 py-0.5">{lr.obdNo}</td>
+                    <td className="border border-black px-1 py-0.5 text-right">{lr.qty}</td>
+                    <td className="border border-black px-1 py-0.5 text-right">{lr.chargeWt}</td>
+                    <td className="border border-black px-1 py-0.5 text-right">
+                      {formatMoney(lr.amount)}
+                    </td>
+                    <td className="border border-black px-1 py-0.5">
+                      <span className="flex gap-1">
+                        <a
+                          href={`/lr?id=${lr.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-primary underline"
+                          title="Edit this LR (opens in a new tab — reload pending LRs after editing)"
+                        >
+                          Edit
+                        </a>
+                        <button
+                          type="button"
+                          className="text-destructive underline"
+                          title="Remove this LR from the bill"
+                          onClick={() => toggleLr(lr.id, false)}
+                        >
+                          Remove
+                        </button>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                <tr className="font-semibold">
+                  <td colSpan={7} className="border border-black px-1 py-0.5">
+                    Total ({selectedLrs.length} LRs)
+                  </td>
+                  <td className="border border-black px-1 py-0.5 text-right">
+                    {selectedLrs.reduce((s, l) => s + l.qty, 0)}
+                  </td>
+                  <td className="border border-black px-1 py-0.5 text-right">
+                    {round2(selectedLrs.reduce((s, l) => s + l.chargeWt, 0))}
+                  </td>
+                  <td className="border border-black px-1 py-0.5 text-right">
+                    {formatMoney(totals.total)}
+                  </td>
+                  <td className="border border-black" />
+                </tr>
+              </tbody>
+            </table>
+            {charges.filter((c) => c.chargeType || c.amount !== 0).length > 0 && (
+              <table className="mt-2 w-full border-collapse text-xs">
+                <tbody>
+                  {charges
+                    .filter((c) => c.chargeType || c.amount !== 0)
+                    .map((c, i) => (
+                      <tr key={i}>
+                        <td className="border border-black px-1 py-0.5">
+                          {c.chargeType || "OTHER"}
+                          {c.description ? ` — ${c.description}` : ""}
+                        </td>
+                        <td className="border border-black px-1 py-0.5 text-right">
+                          {formatMoney(c.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            )}
+            <div className="mt-2 space-y-0.5 text-xs">
+              <div className="flex justify-between">
+                <span>Grand Total (before tax)</span>
+                <b>{formatMoney(totals.grandTotal)}</b>
+              </div>
+              {rcmActive ? (
+                <div className="flex justify-between">
+                  <span>GST</span>
+                  <span>Payable by recipient under Reverse Charge Mechanism</span>
+                </div>
+              ) : (
+                gstApplicable && (
+                  <div className="flex justify-between">
+                    <span>GST (CGST + SGST / IGST)</span>
+                    <span>
+                      {formatMoney(round2(totals.cgstAmt + totals.sgstAmt + totals.igstAmt))}
+                    </span>
+                  </div>
+                )
+              )}
+              <div className="flex justify-between font-semibold">
+                <span>Net Total</span>
+                <span>{formatMoney(totals.netTotal)}</span>
+              </div>
+              {advance > 0 && (
+                <div className="flex justify-between">
+                  <span>Less: Advance</span>
+                  <span>{formatMoney(advance)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-black pt-0.5 font-bold">
+                <span>Balance</span>
+                <span>{formatMoney(totals.balance)}</span>
+              </div>
+            </div>
+            <div className="mt-3 space-y-1">
+              <Label className="text-xs">Remarks (optional — printed on the bill)</Label>
+              <Textarea
+                value={remarks}
+                onChange={(e) => setRemarks(e.target.value)}
+                rows={2}
+                placeholder="Add or edit bill remarks..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPreviewOpen(false)} disabled={saving}>
+              Back to Edit
+            </Button>
+            <Button onClick={handleSave} disabled={saving || selectedLrs.length === 0}>
+              {saving ? "Saving..." : "Final Save & Print"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

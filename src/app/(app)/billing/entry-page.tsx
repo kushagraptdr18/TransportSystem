@@ -24,28 +24,48 @@ export async function InvoiceEntryPage({
 }) {
   const session = requireSession();
 
-  const { firm, parties, banks, suggestedNo } = await withTenant(session.tenantId, async (tx) => {
-    const suggestedNo = await randomUniqueDocNumber(async (n) =>
-      Boolean(
-        await tx.invoice.findFirst({
-          where: { firmId: session.firmId, fyId: session.fyId, kind, invoiceNo: n },
-          select: { id: true },
-        })
-      )
-    );
-    const [firm, partyRows, bankRows] = await Promise.all([
-      tx.firm.findUnique({ where: { id: session.firmId } }),
-      tx.party.findMany({
-        where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" },
-        orderBy: { name: "asc" },
-      }),
-      tx.party.findMany({
-        where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
-        orderBy: { name: "asc" },
-      }),
-    ]);
-    return { firm, parties: partyRows, banks: bankRows, suggestedNo };
-  });
+  const { firm, parties, banks, suggestedNo, prevInvoiceNo, chargeHeads } = await withTenant(
+    session.tenantId,
+    async (tx) => {
+      // FULL_TRUCK: invoice no starts blank; the last saved bill no is shown for reference only
+      const suggestedNo =
+        kind === "FULL_TRUCK"
+          ? ""
+          : await randomUniqueDocNumber(async (n) =>
+              Boolean(
+                await tx.invoice.findFirst({
+                  where: { firmId: session.firmId, fyId: session.fyId, kind, invoiceNo: n },
+                  select: { id: true },
+                })
+              )
+            );
+      const [firm, partyRows, bankRows, prevInvoice, chargeHeads] = await Promise.all([
+        tx.firm.findUnique({ where: { id: session.firmId } }),
+        tx.party.findMany({
+          where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" },
+          orderBy: { name: "asc" },
+        }),
+        tx.party.findMany({
+          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+          orderBy: { name: "asc" },
+        }),
+        tx.invoice.findFirst({
+          where: { firmId: session.firmId, fyId: session.fyId, kind, deletedAt: null },
+          orderBy: { createdAt: "desc" },
+          select: { invoiceNo: true },
+        }),
+        tx.accountHead.findMany({ orderBy: { name: "asc" } }),
+      ]);
+      return {
+        firm,
+        parties: partyRows,
+        banks: bankRows,
+        suggestedNo,
+        prevInvoiceNo: prevInvoice?.invoiceNo ?? null,
+        chargeHeads,
+      };
+    }
+  );
 
   const defaults: BillingDefaults = {
     defaultBankPartyId: firm?.defaultBankPartyId ?? null,
@@ -66,6 +86,19 @@ export async function InvoiceEntryPage({
       <InvoiceForm
         kind={kind}
         suggestedInvoiceNo={suggestedNo}
+        prevInvoiceNo={prevInvoiceNo}
+        chargeHeadOptions={chargeHeads.map((h) => ({
+          value: h.name,
+          label: h.name,
+          meta: h.kind,
+        }))}
+        firm={{
+          name: firm?.name ?? "",
+          address: [firm?.address1, firm?.address2].filter(Boolean).join(", "),
+          gstin: firm?.gstin ?? "",
+          pan: firm?.pan ?? "",
+          mobile: firm?.mobile ?? "",
+        }}
         initial={initial && initial.kind === kind ? initial : null}
         partyOptions={parties.map((p) => ({
           value: p.id,
