@@ -8,7 +8,7 @@ import { VoucherType, DocNumberType } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
-const TYPES: VoucherType[] = ["RECEIPT", "PAYMENT", "CONTRA"];
+const TYPES: VoucherType[] = ["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL"];
 
 export default async function VouchersPage() {
   const session = requireSession();

@@ -60,6 +60,7 @@ enum VoucherType {
   RECEIPT
   PAYMENT
   CONTRA
+  JOURNAL
 }
 
 enum VoucherEntryType {
@@ -148,6 +149,7 @@ enum DocNumberType {
   VOUCHER_RECEIPT
   VOUCHER_PAYMENT
   VOUCHER_CONTRA
+  VOUCHER_JOURNAL
   POD
   BROKER_SLIP
   BROKER_BILL
@@ -1031,10 +1033,11 @@ model Invoice {
   narration     String?
   vehicleText   String?
 
-  lrs         InvoiceLr[]
-  charges     InvoiceCharge[]
-  lines       InvoiceLine[]
-  submissions BillSubmission[]
+  lrs             InvoiceLr[]
+  charges         InvoiceCharge[]
+  lines           InvoiceLine[]
+  submissions     BillSubmission[]
+  submissionItems InvoiceSubmissionItem[]
 
   createdById String?
   createdAt   DateTime  @default(now())
@@ -1117,6 +1120,61 @@ model BillSubmission {
   @@index([tenantId, firmId, fyId])
 }
 
+// Bill Submission v2: one submission covers many invoices, with covering
+// letter, acknowledgement, signed-document uploads and automatic
+// returned/resubmitted tracking per invoice.
+model InvoiceSubmission {
+  id             String   @id @default(cuid())
+  tenantId       String
+  firmId         String
+  fyId           String
+  submissionNo   String // auto-generated BS-<seq>, unique per firm+FY
+  submissionDate DateTime
+  partyId        String
+  remarks        String?
+
+  // acknowledgement (signed copy received back)
+  receivedBy     String?
+  designation    String?
+  receiverMobile String?
+  receivedDate   DateTime?
+  receivedTime   String?
+  ackRemarks     String?
+
+  // permanently attached documents
+  signedLetterPath String?
+  ackCopyPath      String?
+  supportingPath   String?
+
+  items InvoiceSubmissionItem[]
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([firmId, fyId, submissionNo])
+  @@index([tenantId, firmId, fyId, partyId])
+}
+
+model InvoiceSubmissionItem {
+  id           String            @id @default(cuid())
+  tenantId     String
+  submissionId String
+  submission   InvoiceSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  invoiceId    String
+  invoice      Invoice           @relation(fields: [invoiceId], references: [id])
+
+  // automatic return tracking: when the same invoice appears in a LATER
+  // submission, this (earlier) item flips to RETURNED with the new reference
+  status           String    @default("SUBMITTED") // SUBMITTED | RETURNED
+  resubmittedInId  String?
+  resubmittedInNo  String?
+  resubmissionDate DateTime?
+
+  @@unique([submissionId, invoiceId])
+  @@index([tenantId, invoiceId])
+}
+
 // ============ VOUCHERS / ACCOUNTS ============
 
 model Voucher {
@@ -1145,6 +1203,7 @@ model Voucher {
   remarks       String?
 
   allocations VoucherAllocation[]
+  adjustments VoucherAdjustment[]
 
   createdById String?
   createdAt   DateTime  @default(now())
@@ -1153,6 +1212,27 @@ model Voucher {
 
   @@unique([firmId, fyId, type, voucherNo])
   @@index([tenantId, firmId, fyId, type])
+}
+
+// Central reference-based adjustment line (shared engine across receipt /
+// payment / journal vouchers). Each line posts automatically to its own
+// adjustment ledger head so deducted amounts never remain outstanding.
+model VoucherAdjustment {
+  id        String  @id @default(cuid())
+  tenantId  String
+  voucherId String
+  voucher   Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  adjustmentType String // TDS | SHORTAGE | DAMAGE | PENALTY | ... (extensible)
+  referenceType  String // BILL | INVOICE | LR | CHALAN | ADVANCE | LOAN | ...
+  referenceNo    String
+  referenceDate  DateTime?
+  amount         Decimal   @default(0) @db.Decimal(14, 2)
+  remarks        String?
+  accountHeadId  String? // ledger head the adjustment was posted to
+
+  @@index([tenantId, adjustmentType])
+  @@index([tenantId, referenceType, referenceNo])
 }
 
 model VoucherAllocation {

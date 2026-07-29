@@ -28,10 +28,11 @@ export interface RegisterRow {
   [key: string]: string | number | null;
 }
 
-const TYPE_VARIANT: Record<string, "default" | "destructive" | "secondary"> = {
+const TYPE_VARIANT: Record<string, "default" | "destructive" | "secondary" | "outline"> = {
   RECEIPT: "default",
   PAYMENT: "destructive",
   CONTRA: "secondary",
+  JOURNAL: "outline",
 };
 
 function money(key: keyof RegisterRow & string): DataTableColumnMeta<RegisterRow> {

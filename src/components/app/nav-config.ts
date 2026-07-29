@@ -110,6 +110,7 @@ export const NAV: NavGroup[] = [
       { label: "Ledger Summary", href: "/accounts/ledger" },
       { label: "Outstanding", href: "/accounts/outstanding" },
       { label: "TDS Report", href: "/accounts/tds" },
+      { label: "TDS Payable Register", href: "/accounts/tds-report" },
       { label: "Profit & Loss", href: "/accounts/pnl" },
     ],
   },

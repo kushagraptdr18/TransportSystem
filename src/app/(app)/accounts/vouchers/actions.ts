@@ -10,12 +10,23 @@ import { audit } from "@/lib/audit";
 import { syncSequenceTo } from "@/lib/sequences";
 import { postLedger, reverseLedger, LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
+import { adjustmentsTotal, applyAdjustments, ensureAdjustmentHead } from "@/lib/adjust-engine";
 
 const DOC_TYPE_BY_VOUCHER: Record<VoucherType, DocNumberType> = {
   RECEIPT: "VOUCHER_RECEIPT",
   PAYMENT: "VOUCHER_PAYMENT",
   CONTRA: "VOUCHER_CONTRA",
+  JOURNAL: "VOUCHER_JOURNAL",
 };
+
+const adjustmentSchema = z.object({
+  adjustmentType: z.string().min(1),
+  referenceType: z.string().min(1),
+  referenceNo: z.string().min(1, "Reference number is required for every adjustment"),
+  referenceDate: z.string().nullish(),
+  amount: z.number().min(0).default(0),
+  remarks: z.string().nullish(),
+});
 
 const allocationSchema = z.object({
   refId: z.string().min(1),
@@ -31,7 +42,7 @@ const allocationSchema = z.object({
 
 const voucherSchema = z.object({
   id: z.string().nullish(),
-  type: z.enum(["RECEIPT", "PAYMENT", "CONTRA"]),
+  type: z.enum(["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL"]),
   voucherNo: z.string().trim().min(1, "Voucher number is required"),
   voucherDate: z.string().min(1, "Date is required"), // ISO yyyy-mm-dd
   entryType: z.enum(["CASH", "BANK", "CONTRA"]).default("CASH"),
@@ -51,7 +62,7 @@ const voucherSchema = z.object({
   vehicleId: z.string().nullish(),
   accountHeadId: z.string().nullish(),
   ledgerPosting: z.enum(["PARTY", "VEHICLE", "BOTH"]).default("PARTY"),
-  bankPartyId: z.string().min(1, "Bank/Cash account is required"),
+  bankPartyId: z.string().min(1, "Bank/Cash (or journal credit) account is required"),
   chequeNo: z.string().nullish(),
   chequeDate: z.string().nullish(),
   amount: z.number().min(0.01, "Amount is required"),
@@ -60,6 +71,8 @@ const voucherSchema = z.object({
   otherAmt: z.number().min(0).default(0),
   remarks: z.string().nullish(),
   allocations: z.array(allocationSchema).default([]),
+  // central adjustment engine lines (shared by receipt / payment / journal)
+  adjustments: z.array(adjustmentSchema).default([]),
 });
 
 export type SaveVoucherResult = { ok: true; id: string } | { ok: false; error: string };
@@ -83,10 +96,24 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
   if (data.type === "CONTRA" && !data.partyId) {
     return { ok: false, error: "Counter Bank/Cash account is required for contra" };
   }
+  if (data.type === "JOURNAL" && !data.partyId) {
+    return { ok: false, error: "Debit party is required for a journal voucher" };
+  }
+  if (data.type === "CONTRA" && data.adjustments.length > 0) {
+    return { ok: false, error: "Adjustments are not applicable on contra vouchers" };
+  }
 
-  // never trust client totals
-  const netAmount = round2(data.amount - data.tdsAmt - data.deduction + data.otherAmt);
-  if (netAmount <= 0) return { ok: false, error: "Net amount must be positive" };
+  // never trust client totals — adjustments reduce the net like deductions
+  const adjTotal = adjustmentsTotal(data.adjustments);
+  const netAmount = round2(
+    data.amount - data.tdsAmt - data.deduction + data.otherAmt - adjTotal
+  );
+  if (netAmount < 0) {
+    return { ok: false, error: "Deductions + adjustments exceed the voucher amount" };
+  }
+  if (netAmount <= 0 && data.type !== "JOURNAL") {
+    return { ok: false, error: "Net amount must be positive" };
+  }
 
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
@@ -168,7 +195,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         });
       }
 
-      // ---- ledger posting ----
+      // ---- ledger posting (central adjustment engine) ----
       const narration =
         data.remarks || `${data.type} voucher ${data.voucherNo} (${data.moduleLink})`;
       const common = {
@@ -179,10 +206,12 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         narration,
       };
       const entries: LedgerPostEntry[] = [];
-      // bank/cash side: Receipt -> money in (DEBIT bank), Payment -> money out
-      // (CREDIT bank). Contra -> DEBIT destination bank, CREDIT source party.
-      const bankSide = data.type === "PAYMENT" ? "CREDIT" : "DEBIT";
-      const counterSide = data.type === "PAYMENT" ? "DEBIT" : "CREDIT";
+      // bank/cash (or journal credit account) side: Receipt -> money in (DEBIT
+      // bank), Payment -> money out (CREDIT bank). Journal -> CREDIT the
+      // counter account (no cash/bank movement semantics). Contra -> DEBIT
+      // destination bank, CREDIT source party.
+      const bankSide = data.type === "PAYMENT" || data.type === "JOURNAL" ? "CREDIT" : "DEBIT";
+      const counterSide = bankSide === "CREDIT" ? "DEBIT" : "CREDIT";
       entries.push({ ...common, partyId: data.bankPartyId, side: bankSide, amount: netAmount });
 
       const postParty = data.ledgerPosting === "PARTY" || data.ledgerPosting === "BOTH";
@@ -190,13 +219,16 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       if (data.type === "CONTRA") {
         entries.push({ ...common, partyId: data.partyId, side: counterSide, amount: netAmount });
       } else {
+        // the party is settled for the GROSS amount — deductions and
+        // adjustments are posted to their own heads so nothing stays
+        // outstanding against the party
         if (postParty && (data.partyId || data.accountHeadId)) {
           entries.push({
             ...common,
             partyId: data.partyId || null,
             accountHeadId: data.partyId ? null : data.accountHeadId,
             side: counterSide,
-            amount: netAmount,
+            amount: data.amount,
           });
         }
         if (postVehicle && data.vehicleId) {
@@ -204,10 +236,39 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
             ...common,
             vehicleId: data.vehicleId,
             side: counterSide,
-            amount: netAmount,
+            amount: data.amount,
           });
         }
+        // legacy header deductions post to auto-created heads (TDS ledger etc.)
+        const legacy: [string, number, "bank" | "counter"][] = [
+          ["TDS", data.tdsAmt, "bank"],
+          ["DEDUCTION", data.deduction, "bank"],
+          ["OTHER CHARGES", data.otherAmt, "counter"],
+        ];
+        for (const [name, amt, dir] of legacy) {
+          if (amt > 0) {
+            const headId = await ensureAdjustmentHead(tx, session.tenantId, name);
+            entries.push({
+              ...common,
+              accountHeadId: headId,
+              side: dir === "bank" ? bankSide : counterSide,
+              amount: round2(amt),
+              narration: `${name} on ${data.type.toLowerCase()} voucher ${data.voucherNo}`,
+            });
+          }
+        }
       }
+
+      // reference-based adjustment lines — persisted + posted by the engine
+      const { entries: adjEntries } = await applyAdjustments(tx, session, {
+        voucherId: savedId,
+        voucherNo: data.voucherNo,
+        voucherType: data.type,
+        voucherDate,
+        lines: data.type === "CONTRA" ? [] : data.adjustments,
+      });
+      entries.push(...adjEntries);
+
       await postLedger(tx, session, entries);
 
       await syncSequenceTo(tx, {

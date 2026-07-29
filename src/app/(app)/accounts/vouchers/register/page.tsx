@@ -42,7 +42,7 @@ export default async function VoucherRegisterPage({
     firmId: session.firmId,
     fyId: session.fyId,
     deletedAt: null,
-    ...(type && ["RECEIPT", "PAYMENT", "CONTRA"].includes(type) ? { type } : {}),
+    ...(type && ["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL"].includes(type) ? { type } : {}),
     ...(searchParams.party ? { partyId: searchParams.party } : {}),
     ...(searchParams.vehicle ? { vehicleId: searchParams.vehicle } : {}),
     ...(searchParams.module && MODULE_LINKS.includes(searchParams.module)
@@ -96,6 +96,7 @@ export default async function VoucherRegisterPage({
             label: "Type",
             options: [
               { value: "RECEIPT", label: "Receipt" },
+              { value: "JOURNAL", label: "Journal" },
               { value: "PAYMENT", label: "Payment" },
               { value: "CONTRA", label: "Contra" },
             ],

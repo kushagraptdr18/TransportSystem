@@ -37,6 +37,11 @@ import {
   getAllocationCandidates,
   type AllocationCandidate,
 } from "@/app/(app)/accounts/vouchers/actions";
+import {
+  ADJUSTMENT_TYPES,
+  REFERENCE_TYPES,
+  adjustmentLabel,
+} from "@/lib/adjust-engine";
 
 const MODULE_LINKS = [
   "BILLING",
@@ -88,6 +93,16 @@ const formSchema = z.object({
   otherAmt: z.coerce.number().min(0).default(0),
   remarks: z.string(),
   allocations: z.array(allocationSchema),
+  adjustments: z.array(
+    z.object({
+      adjustmentType: z.string(),
+      referenceType: z.string(),
+      referenceNo: z.string(),
+      referenceDate: z.string(),
+      amount: z.coerce.number().min(0).default(0),
+      remarks: z.string(),
+    })
+  ),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -104,12 +119,12 @@ export interface RecentVoucher {
 }
 
 interface VoucherFormProps {
-  peekNumbers: Record<"RECEIPT" | "PAYMENT" | "CONTRA", string>;
+  peekNumbers: Record<"RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL", string>;
   partyOptions: MasterOption[];
   bankOptions: MasterOption[];
   vehicleOptions: MasterOption[];
   accountHeadOptions: MasterOption[];
-  recent: Record<"RECEIPT" | "PAYMENT" | "CONTRA", RecentVoucher[]>;
+  recent: Record<"RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL", RecentVoucher[]>;
 }
 
 function toIso(text: string): string {
@@ -130,12 +145,12 @@ export function VoucherForm({
 }: VoucherFormProps) {
   const router = useRouter();
   const { toast } = useToast();
-  const [type, setType] = React.useState<"RECEIPT" | "PAYMENT" | "CONTRA">("RECEIPT");
+  const [type, setType] = React.useState<"RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL">("RECEIPT");
   const [saving, setSaving] = React.useState(false);
   const [loadingAllocs, setLoadingAllocs] = React.useState(false);
 
   const defaults = React.useCallback(
-    (t: "RECEIPT" | "PAYMENT" | "CONTRA"): FormValues => ({
+    (t: "RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL"): FormValues => ({
       voucherNo: peekNumbers[t] ?? "1",
       voucherDate: formatDate(new Date()),
       entryType: t === "CONTRA" ? "CONTRA" : "CASH",
@@ -153,6 +168,7 @@ export function VoucherForm({
       otherAmt: 0,
       remarks: "",
       allocations: [],
+      adjustments: [],
     }),
     [peekNumbers]
   );
@@ -163,10 +179,18 @@ export function VoucherForm({
     defaultValues: defaults("RECEIPT"),
   });
   const { fields, replace, update } = useFieldArray({ control: form.control, name: "allocations" });
+  const adjArray = useFieldArray({ control: form.control, name: "adjustments" });
 
   const watched = form.watch();
+  const adjTotal = round2(
+    (watched.adjustments ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0)
+  );
   const netAmount = round2(
-    (watched.amount || 0) - (watched.tdsAmt || 0) - (watched.deduction || 0) + (watched.otherAmt || 0)
+    (watched.amount || 0) -
+      (watched.tdsAmt || 0) -
+      (watched.deduction || 0) +
+      (watched.otherAmt || 0) -
+      adjTotal
   );
   const allocTotal = round2(
     (watched.allocations ?? []).reduce((s, a) => s + (Number(a.amount) || 0), 0)
@@ -175,7 +199,7 @@ export function VoucherForm({
     (watched.allocations?.length ?? 0) > 0 && Math.abs(allocTotal - (watched.amount || 0)) > 0.01;
 
   const switchTab = (t: string) => {
-    const vt = t as "RECEIPT" | "PAYMENT" | "CONTRA";
+    const vt = t as "RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL";
     setType(vt);
     form.reset(defaults(vt));
   };
@@ -238,6 +262,16 @@ export function VoucherForm({
         deduction: values.deduction,
         otherAmt: values.otherAmt,
         remarks: values.remarks || null,
+        adjustments: values.adjustments
+          .filter((a) => (Number(a.amount) || 0) > 0 && a.referenceNo.trim())
+          .map((a) => ({
+            adjustmentType: a.adjustmentType,
+            referenceType: a.referenceType,
+            referenceNo: a.referenceNo.trim(),
+            referenceDate: a.referenceDate ? toIso(a.referenceDate) || null : null,
+            amount: a.amount,
+            remarks: a.remarks || null,
+          })),
         allocations: values.allocations
           .filter((a) => (Number(a.amount) || 0) > 0)
           .map((a) => ({
@@ -264,6 +298,14 @@ export function VoucherForm({
   };
 
   const isContra = type === "CONTRA";
+  const isJournal = type === "JOURNAL";
+  // custom adjustment heads added in the Account Head master extend the list
+  const adjustmentTypeOptions = React.useMemo(() => {
+    const custom = accountHeadOptions
+      .filter((h) => h.meta === "ADJUSTMENT")
+      .map((h) => h.label.toUpperCase().replace(/ /g, "_"));
+    return Array.from(new Set([...ADJUSTMENT_TYPES, ...custom]));
+  }, [accountHeadOptions]);
   const recentRows = recent[type] ?? [];
 
   return (
@@ -272,6 +314,7 @@ export function VoucherForm({
         <TabsTrigger value="RECEIPT">Receipt</TabsTrigger>
         <TabsTrigger value="PAYMENT">Payment</TabsTrigger>
         <TabsTrigger value="CONTRA">Contra</TabsTrigger>
+        <TabsTrigger value="JOURNAL">Journal</TabsTrigger>
       </TabsList>
 
       <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 space-y-4">
@@ -343,7 +386,7 @@ export function VoucherForm({
             </div>
 
             <div className="space-y-1">
-              <Label>{isContra ? "From Bank/Cash" : "Party"}</Label>
+              <Label>{isContra ? "From Bank/Cash" : isJournal ? "Debit Party" : "Party"}</Label>
               <Controller
                 control={form.control}
                 name="partyId"
@@ -415,13 +458,15 @@ export function VoucherForm({
             )}
 
             <div className="space-y-1">
-              <Label>{isContra ? "To Bank/Cash" : "Bank / Cash A/c"}</Label>
+              <Label>
+                {isContra ? "To Bank/Cash" : isJournal ? "Credit Party / Account" : "Bank / Cash A/c"}
+              </Label>
               <Controller
                 control={form.control}
                 name="bankPartyId"
                 render={({ field }) => (
                   <MasterCombobox
-                    options={bankOptions}
+                    options={isJournal ? partyOptions : bankOptions}
                     value={field.value || null}
                     onChange={(v) => field.onChange(v ?? "")}
                     placeholder="Select account..."
@@ -612,6 +657,135 @@ export function VoucherForm({
                   Warning: allocated {formatMoney(allocTotal)} does not equal voucher amount{" "}
                   {formatMoney(watched.amount || 0)}.
                 </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {!isContra && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-base">
+                Adjustments / Deductions (reference-based)
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  each line posts automatically to its own ledger — nothing stays outstanding
+                </span>
+              </CardTitle>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  adjArray.append({
+                    adjustmentType: "TDS",
+                    referenceType: isJournal ? "INVOICE" : "BILL",
+                    referenceNo: "",
+                    referenceDate: "",
+                    amount: 0,
+                    remarks: "",
+                  })
+                }
+              >
+                + Add adjustment
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {adjArray.fields.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  No adjustments. Use for TDS, shortage, damage, claims, advance / loan
+                  adjustments, debit &amp; credit notes, etc.
+                </p>
+              )}
+              {adjArray.fields.map((f, i) => (
+                <div key={f.id} className="grid grid-cols-2 items-end gap-2 md:grid-cols-7">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Adjustment Type</Label>
+                    <Controller
+                      control={form.control}
+                      name={`adjustments.${i}.adjustmentType`}
+                      render={({ field }) => (
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <SelectTrigger className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {adjustmentTypeOptions.map((t) => (
+                              <SelectItem key={t} value={t}>
+                                {adjustmentLabel(t)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Reference Type</Label>
+                    <Controller
+                      control={form.control}
+                      name={`adjustments.${i}.referenceType`}
+                      render={({ field }) => (
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <SelectTrigger className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {REFERENCE_TYPES.map((t) => (
+                              <SelectItem key={t} value={t}>
+                                {adjustmentLabel(t)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Reference No *</Label>
+                    <Input
+                      className="h-9"
+                      placeholder="INV-101 / ADV-0001..."
+                      {...form.register(`adjustments.${i}.referenceNo`)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Reference Date</Label>
+                    <Controller
+                      control={form.control}
+                      name={`adjustments.${i}.referenceDate`}
+                      render={({ field }) => (
+                        <DateInput className="h-9" value={field.value} onChange={field.onChange} />
+                      )}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Amount</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      className="h-9 text-right"
+                      {...form.register(`adjustments.${i}.amount`, { valueAsNumber: true })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Reason / Remarks</Label>
+                    <Input className="h-9" {...form.register(`adjustments.${i}.remarks`)} />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive"
+                    onClick={() => adjArray.remove(i)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              {adjArray.fields.length > 0 && (
+                <div className="flex justify-end border-t pt-2 text-sm font-medium tabular-nums">
+                  Adjustments total: {formatMoney(adjTotal)}
+                </div>
               )}
             </CardContent>
           </Card>

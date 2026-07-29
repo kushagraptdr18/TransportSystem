@@ -33,15 +33,23 @@ export default async function OutstandingPage({
       tx.invoice.findMany({ where, orderBy: { invoiceDate: "asc" } }),
       tx.party.findMany({ where: { ledgerGroup: "CONSIGNEE_CONSIGNOR" }, orderBy: { name: "asc" } }),
       tx.voucherAllocation.findMany({
-        where: { refType: { in: ["BILLING", "GST_BILLING"] } },
-        select: { refId: true, amount: true },
+        where: {
+          refType: { in: ["BILLING", "GST_BILLING"] },
+          // only live vouchers of this firm + FY count towards received
+          voucher: { deletedAt: null, firmId: session.firmId, fyId: session.fyId },
+        },
+        select: { refId: true, amount: true, tdsAmt: true, deduction: true, otherAmt: true },
       }),
     ]);
     return { rows: invoices, parties, allocations };
   }).then(({ rows, parties, allocations }) => {
     const receivedByInvoice = new Map<string, number>();
     for (const a of allocations) {
-      receivedByInvoice.set(a.refId, (receivedByInvoice.get(a.refId) ?? 0) + toNum(String(a.amount)));
+      // approved deductions (TDS / deduction) settle the bill just like money
+      // received — adjusted amounts never remain outstanding
+      const settled =
+        toNum(String(a.amount)) + toNum(String(a.tdsAmt)) + toNum(String(a.deduction));
+      receivedByInvoice.set(a.refId, (receivedByInvoice.get(a.refId) ?? 0) + settled);
     }
     const partyById = new Map(parties.map((p) => [p.id, p.name]));
     return {
