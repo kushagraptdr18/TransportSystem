@@ -52,3 +52,24 @@ export async function postLedger(
 export async function reverseLedger(tx: Tx, refType: string, refId: string): Promise<void> {
   await tx.ledgerEntry.deleteMany({ where: { refType, refId } });
 }
+
+/**
+ * Find-or-create an AccountHead by name so modules can post to a stable
+ * income/expense ledger without requiring the user to set it up first.
+ */
+export async function ensureAccountHead(
+  tx: Tx,
+  session: Session,
+  name: string,
+  kind: "INCOME" | "EXPENSE"
+): Promise<string> {
+  const existing = await tx.accountHead.findFirst({
+    where: { tenantId: session.tenantId, name },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+  const created = await tx.accountHead.create({
+    data: { tenantId: session.tenantId, name, kind },
+  });
+  return created.id;
+}

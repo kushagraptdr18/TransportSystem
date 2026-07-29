@@ -8,7 +8,7 @@ import { withTenant, Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { syncSequenceTo } from "@/lib/sequences";
-import { postLedger, reverseLedger } from "@/lib/ledger";
+import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { computeChalan } from "@/lib/calc/chalan";
 import { toNum } from "@/lib/utils";
 import type { PendingLrRow } from "@/components/fleet/lr-picker";
@@ -277,6 +277,34 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
           data: data.lrIds.map((lrId) => ({ tenantId: session.tenantId, chalanId: id, lrId })),
         });
       }
+      // ledger accrual: hire expense vs broker/owner payable — the advances and
+      // balance payment then debit the broker against this credit
+      await reverseLedger(tx, "CHALAN", id);
+      if (fields.grandTotal > 0) {
+        const hireHeadId = await ensureAccountHead(tx, session, "Lorry Hire Expense", "EXPENSE");
+        const common = {
+          date: fields.chalanDate,
+          refType: "CHALAN",
+          refId: id,
+          refNo: fields.chalanNo,
+        };
+        await postLedger(tx, session, [
+          {
+            ...common,
+            accountHeadId: hireHeadId,
+            side: "DEBIT",
+            amount: fields.grandTotal,
+            narration: `Lorry hire — chalan ${fields.chalanNo}`,
+          },
+          {
+            ...common,
+            partyId: fields.brokerId,
+            side: "CREDIT",
+            amount: fields.grandTotal,
+            narration: `Hire payable against chalan ${fields.chalanNo}`,
+          },
+        ]);
+      }
       await audit(tx, session, {
         entity: "Chalan",
         entityId: id,
@@ -328,28 +356,50 @@ export async function saveChalanAdvances(
       const balance = toNum(chalan.grandTotal) - advanceTotal;
       await tx.chalan.update({ where: { id: chalanId }, data: { advanceTotal, balance } });
 
-      // BANK advances hit the bank book: credit the bank account (money out),
-      // debit the broker (advance recoverable against the chalan)
+      // every advance debits the broker (recovered against the hire payable);
+      // the credit side depends on the advance type:
+      //   BANK  -> the selected bank party (bank book)
+      //   CASH  -> the firm's cash party (cash book)
+      //   other -> a per-type account head (diesel / toll / tyre / ... payable)
       await reverseLedger(tx, "CHALAN_ADVANCE", chalanId);
-      const bankRows = rows.filter((r) => r.type === "BANK" && r.bankPartyId && r.amount > 0);
-      await postLedger(
-        tx,
-        session,
-        bankRows.flatMap((r) => {
-          const date = r.date ? new Date(r.date) : chalan.chalanDate;
-          const common = {
-            date,
-            refType: "CHALAN_ADVANCE",
-            refId: chalanId,
-            refNo: chalan.chalanNo,
-            narration: `Bank advance against chalan ${chalan.chalanNo}${r.remarks ? " — " + r.remarks : ""}`,
-          };
-          return [
-            { ...common, partyId: r.bankPartyId!, side: "CREDIT" as const, amount: r.amount },
-            { ...common, partyId: chalan.brokerId, side: "DEBIT" as const, amount: r.amount },
-          ];
-        })
-      );
+      const cashParty = await tx.party.findFirst({
+        where: { ledgerGroup: "CASH", isActive: true },
+        orderBy: { name: "asc" },
+        select: { id: true },
+      });
+      const entries: Parameters<typeof postLedger>[2] = [];
+      for (const r of rows) {
+        if (r.amount <= 0) continue;
+        let creditLeg: { partyId?: string; accountHeadId?: string } | null = null;
+        if (r.type === "BANK") {
+          creditLeg = r.bankPartyId ? { partyId: r.bankPartyId } : null;
+        } else if (r.type === "CASH" && cashParty) {
+          creditLeg = { partyId: cashParty.id };
+        } else {
+          const label = r.type.charAt(0) + r.type.slice(1).toLowerCase().replace(/_/g, " ");
+          const headId = await ensureAccountHead(
+            tx,
+            session,
+            `${label} Advance (Chalan)`,
+            "EXPENSE"
+          );
+          creditLeg = { accountHeadId: headId };
+        }
+        if (!creditLeg) continue;
+        const date = r.date ? new Date(r.date) : chalan.chalanDate;
+        const common = {
+          date,
+          refType: "CHALAN_ADVANCE",
+          refId: chalanId,
+          refNo: chalan.chalanNo,
+          narration: `${r.type === "BANK" ? "Bank" : r.type === "CASH" ? "Cash" : r.type.replace(/_/g, " ")} advance against chalan ${chalan.chalanNo}${r.remarks ? " — " + r.remarks : ""}`,
+        };
+        entries.push(
+          { ...common, ...creditLeg, side: "CREDIT", amount: r.amount },
+          { ...common, partyId: chalan.brokerId, side: "DEBIT", amount: r.amount }
+        );
+      }
+      await postLedger(tx, session, entries);
       await audit(tx, session, {
         entity: "ChalanAdvance",
         entityId: chalanId,
@@ -432,6 +482,7 @@ export async function deleteChalan(
       // chalan's delivery), the chalan-LR links, and the ledger postings
       await tx.pod.deleteMany({ where: { lrId: { in: lrIds } } });
       await tx.chalanLr.deleteMany({ where: { chalanId } });
+      await reverseLedger(tx, "CHALAN", chalanId);
       await reverseLedger(tx, "CHALAN_ADVANCE", chalanId);
       await reverseLedger(tx, "CHALAN_BALANCE", chalanId);
       await tx.chalan.update({ where: { id: chalanId }, data: { deletedAt: new Date() } });

@@ -1864,3 +1864,47 @@ model SavedFilter {
   @@unique([userId, screen, name])
   @@index([tenantId])
 }
+
+// ============ COURIER DISPATCH ============
+// Standalone manual courier dispatch register — deliberately NOT linked to any
+// master (party / vehicle / courier company are free-text). One dispatch holds
+// unlimited vehicle/document rows, searchable by vehicle number.
+
+model CourierDispatch {
+  id             String    @id @default(cuid())
+  tenantId       String
+  firmId         String
+  fyId           String
+  dispatchNo     String // auto CDR-000001 per firm + FY
+  dispatchDate   DateTime
+  courierCompany String
+  trackingNo     String? // AWB / tracking number
+  partyName      String
+  remarks        String?
+  attachmentPath String? // courier slip / receipt (pdf / jpg / png)
+  attachmentName String?
+
+  items CourierDispatchItem[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, dispatchNo])
+  @@index([tenantId, firmId, fyId, dispatchDate])
+}
+
+model CourierDispatchItem {
+  id         String          @id @default(cuid())
+  tenantId   String
+  dispatchId String
+  dispatch   CourierDispatch @relation(fields: [dispatchId], references: [id], onDelete: Cascade)
+
+  vehicleNo       String
+  documentDetails String
+  remarks         String?
+
+  @@index([tenantId, vehicleNo])
+  @@index([dispatchId])
+}

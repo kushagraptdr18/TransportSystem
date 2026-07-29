@@ -14,9 +14,15 @@ export default async function LedgerSummaryPage({
   const session = requireSession();
   await authorize(session, "reports", "view");
 
-  const { rows, parties } = await ledgerBookRows({
+  // "head:<id>" selects an income/expense account-head ledger
+  const selected = searchParams.party ?? "";
+  const headId = selected.startsWith("head:") ? selected.slice(5) : undefined;
+  const partyId = headId ? undefined : selected || undefined;
+
+  const { rows, parties, heads } = await ledgerBookRows({
     session,
-    partyId: searchParams.party,
+    partyId,
+    headId,
     dateFrom: searchParams.date_from,
     dateTo: searchParams.date_to,
   });
@@ -27,7 +33,13 @@ export default async function LedgerSummaryPage({
       type: "combobox",
       key: "party",
       label: "Party / Ledger",
-      options: parties.map((p) => ({ value: p.id, label: p.name })),
+      options: [
+        ...parties.map((p) => ({ value: p.id, label: p.name })),
+        ...heads.map((h) => ({
+          value: `head:${h.id}`,
+          label: `${h.name} (${h.kind === "INCOME" ? "Income" : h.kind === "EXPENSE" ? "Expense" : h.kind} Head)`,
+        })),
+      ],
     },
   ];
 
@@ -37,9 +49,9 @@ export default async function LedgerSummaryPage({
       <FilterBar filters={filters} />
       <SimpleReport
         title={
-          searchParams.party
+          selected
             ? "Opening balance included in running balance"
-            : "Select a party to see its ledger with running balance"
+            : "Select a party or income/expense head to see its ledger with running balance"
         }
         columns={BOOK_COLUMNS}
         rows={rows}

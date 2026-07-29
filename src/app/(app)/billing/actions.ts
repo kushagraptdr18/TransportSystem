@@ -6,6 +6,7 @@ import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { computeInvoice, parseBulkLrNumbers } from "@/lib/calc/invoice";
+import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { gstSplit, stateCodeFromGstin } from "@/lib/calc/gst";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
@@ -617,6 +618,36 @@ export async function saveInvoice(
         });
       }
 
+      // ledger: debit the customer (receivable), credit freight income —
+      // re-posted on every save so edits stay in sync
+      await reverseLedger(tx, "INVOICE", invoiceId);
+      if (totals.grandTotal > 0) {
+        const incomeHeadId = await ensureAccountHead(tx, session, "Freight Income", "INCOME");
+        const invoiceDate = new Date(data.invoiceDate);
+        const common = {
+          date: invoiceDate,
+          refType: "INVOICE",
+          refId: invoiceId,
+          refNo: data.invoiceNo,
+        };
+        await postLedger(tx, session, [
+          {
+            ...common,
+            partyId: data.partyId,
+            side: "DEBIT",
+            amount: totals.grandTotal,
+            narration: `Invoice ${data.invoiceNo} (${data.kind.replace(/_/g, " ")})`,
+          },
+          {
+            ...common,
+            accountHeadId: incomeHeadId,
+            side: "CREDIT",
+            amount: totals.grandTotal,
+            narration: `Freight income — invoice ${data.invoiceNo}`,
+          },
+        ]);
+      }
+
       if (data.setBankDefault && data.bankPartyId) {
         await tx.firm.update({
           where: { id: session.firmId },
@@ -663,6 +694,7 @@ export async function deleteInvoice(
       });
     }
     await tx.invoiceLr.deleteMany({ where: { invoiceId: id } });
+    await reverseLedger(tx, "INVOICE", id);
     await tx.invoice.update({ where: { id }, data: { deletedAt: new Date() } });
     await audit(tx, session, {
       entity: "Invoice",

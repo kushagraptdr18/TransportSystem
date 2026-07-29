@@ -97,6 +97,7 @@ export const NAV: NavGroup[] = [
     items: [
       { label: "Broker Slip Entry", href: "/broker/slip" },
       { label: "Broker Register", href: "/broker/register" },
+      { label: "Courier Dispatch", href: "/broker/courier" },
     ],
   },
   {
@@ -108,7 +109,8 @@ export const NAV: NavGroup[] = [
       { label: "Cash Book", href: "/accounts/cash-book" },
       { label: "Bank Book", href: "/accounts/bank-book" },
       { label: "Ledger Summary", href: "/accounts/ledger" },
-      { label: "Outstanding", href: "/accounts/outstanding" },
+      { label: "Outstanding (Receivables)", href: "/accounts/outstanding" },
+      { label: "Outstanding Payables", href: "/accounts/payables" },
       { label: "TDS Report", href: "/accounts/tds" },
       { label: "TDS Payable Register", href: "/accounts/tds-report" },
       { label: "Staff Payroll & Advances", href: "/accounts/staff" },

@@ -10,17 +10,22 @@ export interface BookParams {
   groups?: LedgerGroup[];
   /** explicit party (ledger summary) */
   partyId?: string;
+  /** explicit income/expense account head (ledger summary) */
+  headId?: string;
   dateFrom?: string;
   dateTo?: string;
 }
 
 /**
  * Ledger entries as book rows (debit / credit / running balance).
- * Opening balance of the party (if a single party is selected) seeds the running total.
+ * A single selected party seeds the running total with its opening balance;
+ * with a date filter, entries before the range are folded into the opening.
+ * Income/Expense account heads are ledgers too — select one via headId.
  */
 export async function ledgerBookRows(params: BookParams): Promise<{
   rows: ReportRow[];
   parties: { id: string; name: string; ledgerGroup: LedgerGroup }[];
+  heads: { id: string; name: string; kind: string }[];
 }> {
   const { session } = params;
   return withTenant(session.tenantId, async (tx) => {
@@ -29,20 +34,28 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     const partyWhere: Prisma.PartyWhereInput = params.groups
       ? { ledgerGroup: { in: params.groups } }
       : { ledgerGroup: { notIn: ["BANK", "CASH"] } };
-    const parties = await tx.party.findMany({
-      where: { ...partyWhere, isActive: true },
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, ledgerGroup: true, openingBalance: true, openingSide: true },
-    });
+    const [parties, heads] = await Promise.all([
+      tx.party.findMany({
+        where: { ...partyWhere, isActive: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, ledgerGroup: true, openingBalance: true, openingSide: true },
+      }),
+      tx.accountHead.findMany({
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, kind: true },
+      }),
+    ]);
     const partyIds = params.partyId ? [params.partyId] : parties.map((p) => p.id);
 
     const where: Prisma.LedgerEntryWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
-      ...(params.partyId || params.groups
-        ? { partyId: { in: partyIds } }
-        : // full ledger: keep unlinked entries, drop bank/cash-party entries
-          { OR: [{ partyId: { in: partyIds } }, { partyId: null }] }),
+      ...(params.headId
+        ? { accountHeadId: params.headId }
+        : params.partyId || params.groups
+          ? { partyId: { in: partyIds } }
+          : // full ledger: keep unlinked entries, drop bank/cash-party entries
+            { OR: [{ partyId: { in: partyIds } }, { partyId: null }] }),
     };
     if (params.dateFrom || params.dateTo) {
       where.date = {
@@ -56,7 +69,9 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       take: 2000,
     });
     const nameById = new Map(parties.map((p) => [p.id, p.name]));
+    const headNameById = new Map(heads.map((h) => [h.id, h.name]));
 
+    const trackRunning = !!params.partyId || !!params.headId;
     let running = 0;
     if (params.partyId) {
       const p = parties.find((x) => x.id === params.partyId);
@@ -65,7 +80,23 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         running = p.openingSide === "DEBIT" ? opening : -opening;
       }
     }
-    const trackRunning = !!params.partyId;
+    // entries before the date filter belong in the opening balance
+    if (trackRunning && params.dateFrom) {
+      const prior = await tx.ledgerEntry.groupBy({
+        by: ["side"],
+        where: {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          ...(params.headId ? { accountHeadId: params.headId } : { partyId: params.partyId }),
+          date: { lt: new Date(params.dateFrom + "T00:00:00") },
+        },
+        _sum: { amount: true },
+      });
+      for (const p of prior) {
+        const sum = toNum(String(p._sum.amount ?? 0));
+        running += p.side === "DEBIT" ? sum : -sum;
+      }
+    }
 
     const rows: ReportRow[] = entries.map((e) => {
       const amt = toNum(String(e.amount));
@@ -74,7 +105,10 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       if (trackRunning) running += debit - credit;
       return {
         date: e.date.toISOString(),
-        party: (e.partyId && nameById.get(e.partyId)) || "",
+        party:
+          (e.partyId && nameById.get(e.partyId)) ||
+          (e.accountHeadId && headNameById.get(e.accountHeadId)) ||
+          "",
         refType: e.refType,
         refNo: e.refNo,
         narration: e.narration ?? "",
@@ -85,7 +119,7 @@ export async function ledgerBookRows(params: BookParams): Promise<{
           : "",
       };
     });
-    return { rows, parties };
+    return { rows, parties, heads };
   });
 }
 

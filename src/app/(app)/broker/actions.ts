@@ -8,7 +8,7 @@ import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { syncSequenceTo } from "@/lib/sequences";
-import { postLedger, reverseLedger } from "@/lib/ledger";
+import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { toNum } from "@/lib/utils";
 import {
   ADVANCE_TYPES,
@@ -286,6 +286,89 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
         savedNumber: data.slipNo,
       });
 
+      // ledger: accrue both sides of the slip and post its advances —
+      // re-posted on every save so edits stay in sync
+      await reverseLedger(tx, "BROKER_SLIP", savedId);
+      await reverseLedger(tx, "BROKER_SLIP_ADVANCE", savedId);
+      const entries: Parameters<typeof postLedger>[2] = [];
+      const accrualCommon = {
+        date: slipDate,
+        refType: "BROKER_SLIP",
+        refId: savedId,
+        refNo: data.slipNo,
+      };
+      if (slipData.partyId && pTotals.netAmt > 0) {
+        const incomeHeadId = await ensureAccountHead(tx, session, "Freight Income", "INCOME");
+        entries.push(
+          {
+            ...accrualCommon,
+            partyId: slipData.partyId,
+            side: "DEBIT",
+            amount: pTotals.netAmt,
+            narration: `Freight receivable — broker slip ${data.slipNo}`,
+          },
+          {
+            ...accrualCommon,
+            accountHeadId: incomeHeadId,
+            side: "CREDIT",
+            amount: pTotals.netAmt,
+            narration: `Freight income — broker slip ${data.slipNo}`,
+          }
+        );
+      }
+      if (slipData.ownerId && vTotals.netAmt > 0) {
+        const hireHeadId = await ensureAccountHead(tx, session, "Lorry Hire Expense", "EXPENSE");
+        entries.push(
+          {
+            ...accrualCommon,
+            accountHeadId: hireHeadId,
+            side: "DEBIT",
+            amount: vTotals.netAmt,
+            narration: `Lorry hire — broker slip ${data.slipNo}`,
+          },
+          {
+            ...accrualCommon,
+            partyId: slipData.ownerId,
+            side: "CREDIT",
+            amount: vTotals.netAmt,
+            narration: `Hire payable — broker slip ${data.slipNo}`,
+          }
+        );
+      }
+      for (const a of advances) {
+        if (a.amount <= 0 || !a.headId) continue;
+        const counterPartyId = a.side === "P" ? slipData.partyId : slipData.ownerId;
+        if (!counterPartyId) continue;
+        const headLeg =
+          a.headKind === "BANK" || a.headKind === "CASH"
+            ? { partyId: a.headId }
+            : { accountHeadId: a.headId };
+        const advCommon = {
+          date: a.date ? toDate(a.date) : slipDate,
+          refType: "BROKER_SLIP_ADVANCE",
+          refId: savedId,
+          refNo: data.slipNo,
+          narration: `${a.type.replace(/_/g, " ")} advance (${a.side === "P" ? "received" : "paid"}) — broker slip ${data.slipNo}${a.remarks ? " — " + a.remarks : ""}`,
+        };
+        // side P: advance received from the party (money in — debit head);
+        // side V: advance paid to the owner (money out — credit head)
+        entries.push(
+          {
+            ...advCommon,
+            ...headLeg,
+            side: a.side === "P" ? "DEBIT" : "CREDIT",
+            amount: a.amount,
+          },
+          {
+            ...advCommon,
+            partyId: counterPartyId,
+            side: a.side === "P" ? "CREDIT" : "DEBIT",
+            amount: a.amount,
+          }
+        );
+      }
+      await postLedger(tx, session, entries);
+
       return savedId;
     });
 
@@ -311,6 +394,8 @@ export async function deleteBrokerSlip(
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.brokerSlip.findUniqueOrThrow({ where: { id } });
       await tx.brokerSlip.update({ where: { id }, data: { deletedAt: new Date() } });
+      await reverseLedger(tx, "BROKER_SLIP", id);
+      await reverseLedger(tx, "BROKER_SLIP_ADVANCE", id);
       await reverseLedger(tx, "BROKER_SLIP_RECEIVED", id);
       await reverseLedger(tx, "BROKER_SLIP_PAID", id);
       await audit(tx, session, { entity: "BrokerSlip", entityId: id, action: "DELETE", before });
