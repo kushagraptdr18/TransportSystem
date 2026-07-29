@@ -1175,6 +1175,119 @@ model InvoiceSubmissionItem {
   @@index([tenantId, invoiceId])
 }
 
+// ============ STAFF PAYROLL & ADVANCES ============
+// Staff are Party rows (ledgerGroup STAFF); these models add the employment /
+// payroll layer on top. All money movements post to the ledger via their own
+// refTypes so the staff party ledger is always complete. History is immutable:
+// edits reverse + re-post; corrections are new transactions.
+
+model StaffProfile {
+  id       String @id @default(cuid())
+  tenantId String
+  partyId  String @unique // Party with ledgerGroup STAFF
+
+  employeeId  String?
+  department  String?
+  designation String?
+  joiningDate DateTime?
+
+  // salary structure (monthly)
+  basicSalary Decimal @default(0) @db.Decimal(12, 2)
+  allowances  Decimal @default(0) @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model StaffAdvance {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  advanceNo String // auto SADV-<seq>
+  partyId   String
+  date      DateTime
+  amount    Decimal  @default(0) @db.Decimal(12, 2)
+  headId    String? // bank/cash party paid from
+  remarks   String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, advanceNo])
+  @@index([tenantId, partyId])
+}
+
+model StaffLoan {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  loanNo    String // auto SLN-<seq>
+  partyId   String
+  date      DateTime
+  amount    Decimal  @default(0) @db.Decimal(12, 2)
+  emiAmount Decimal  @default(0) @db.Decimal(12, 2)
+  headId    String? // bank/cash party paid from
+  status    String   @default("OPEN") // OPEN | CLOSED (auto when fully recovered)
+  remarks   String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, loanNo])
+  @@index([tenantId, partyId])
+}
+
+model StaffSalary {
+  id       String @id @default(cuid())
+  tenantId String
+  firmId   String
+  fyId     String
+  partyId  String
+  month    String // "YYYY-MM"
+
+  // earnings
+  basic         Decimal @default(0) @db.Decimal(12, 2)
+  allowances    Decimal @default(0) @db.Decimal(12, 2)
+  overtime      Decimal @default(0) @db.Decimal(12, 2)
+  incentives    Decimal @default(0) @db.Decimal(12, 2)
+  bonus         Decimal @default(0) @db.Decimal(12, 2)
+  otherEarnings Decimal @default(0) @db.Decimal(12, 2)
+
+  // deductions
+  attendanceAdj   Decimal @default(0) @db.Decimal(12, 2) // attendance adjustment (−)
+  leaveDeduction  Decimal @default(0) @db.Decimal(12, 2)
+  penalties       Decimal @default(0) @db.Decimal(12, 2)
+  otherDeductions Decimal @default(0) @db.Decimal(12, 2)
+  advanceId       String? // StaffAdvance recovered against
+  advanceRecovery Decimal @default(0) @db.Decimal(12, 2)
+  loanId          String? // StaffLoan recovered against
+  loanRecovery    Decimal @default(0) @db.Decimal(12, 2)
+
+  grossSalary     Decimal @default(0) @db.Decimal(12, 2)
+  totalDeductions Decimal @default(0) @db.Decimal(12, 2)
+  netSalary       Decimal @default(0) @db.Decimal(12, 2)
+
+  // payment
+  paymentStatus String    @default("PENDING") // PENDING | PAID
+  paymentDate   DateTime?
+  paymentHeadId String? // bank/cash party paid from
+  remarks       String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, partyId, month])
+  @@index([tenantId, partyId])
+}
+
 // ============ VOUCHERS / ACCOUNTS ============
 
 model Voucher {
