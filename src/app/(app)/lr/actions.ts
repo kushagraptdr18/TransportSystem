@@ -206,6 +206,24 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
         lrNo = await nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId });
       }
 
+      // duplicate check: only ACTIVE LRs in the CURRENT financial year count —
+      // deleted LR numbers are reusable, and other FYs may repeat the sequence
+      const clash = await tx.lr.findFirst({
+        where: {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          lrNo,
+          deletedAt: null,
+          ...(data.id ? { id: { not: data.id } } : {}),
+        },
+        select: { id: true },
+      });
+      if (clash) {
+        throw new Error(
+          "This LR Number already exists in the current Financial Year. Please enter a different LR Number."
+        );
+      }
+
       const lrData = lrRowData(data, totals, lrNo);
       const items = lrItemsData(session.tenantId, data);
       data.cargoType = await deriveCargoType(tx, data.items);
@@ -267,7 +285,11 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
     return { ok: true, id };
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
-      return { ok: false, error: "LR number already exists" };
+      return {
+        ok: false,
+        error:
+          "This LR Number already exists in the current Financial Year. Please enter a different LR Number.",
+      };
     }
     return { ok: false, error: err instanceof Error ? err.message : "Failed to save LR" };
   }
@@ -470,7 +492,7 @@ export async function saveLrBatch(
       if (clashes.length) {
         return {
           ok: false as const,
-          error: `LR number ${clashes[0].lrNo} already exists — change it before saving.`,
+          error: `LR Number ${clashes[0].lrNo} already exists in the current Financial Year. Please enter a different LR Number.`,
         };
       }
 

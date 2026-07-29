@@ -567,3 +567,165 @@ export async function saveBalancePayment(
     return { ok: false, error: e instanceof Error ? e.message : "Balance payment failed" };
   }
 }
+
+// ---------------------------------------------------------------- chalan status
+
+export interface ChalanStatusData {
+  chalanNo: string;
+  chalanDate: string;
+  vehicle: string;
+  transporter: string;
+  owner: string;
+  driverName: string;
+  origin: string;
+  destination: string;
+  createdAt: string;
+  isFinal: boolean;
+  lrs: {
+    lrNo: string;
+    lrDate: string;
+    consignor: string;
+    consignee: string;
+    qty: number;
+    freight: number;
+    status: string;
+    billed: boolean;
+    invoiceNo: string;
+    invoiceDate: string | null;
+    invoiceAmount: number;
+    invoiceReceived: number;
+    invoiceBalance: number;
+    invoiceStatus: string; // Paid | Partially Paid | Pending | Not Billed
+  }[];
+  advances: {
+    name: string;
+    amount: number;
+    date: string | null;
+    mode: string;
+    remarks: string;
+  }[];
+  advanceTotal: number;
+  grandTotal: number;
+  balance: number;
+  paymentStatus: string;
+  balPaidAmount: number;
+  balPaymentDate: string | null;
+  balPaymentMode: string;
+  balRoundOff: number;
+  balShortage: number;
+  balRemarks: string;
+  payments: {
+    date: string;
+    amount: number;
+    account: string; // bank / cash head or broker
+    side: string;
+    refType: string;
+    narration: string;
+  }[];
+}
+
+/** Complete lifecycle of a chalan: LRs, per-LR billing, payments, history. */
+export async function getChalanStatus(
+  chalanId: string
+): Promise<{ ok: true; data: ChalanStatusData } | { ok: false; error: string }> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const chalan = await tx.chalan.findFirst({
+      where: { id: chalanId, firmId: session.firmId, deletedAt: null },
+      include: {
+        lrs: { include: { lr: { include: { items: true, invoiceLrs: { include: { invoice: true } } } } } },
+        advances: true,
+      },
+    });
+    if (!chalan) return { ok: false as const, error: "Chalan not found" };
+
+    const [broker, vehicle, parties, cities, ledger] = await Promise.all([
+      tx.party.findUnique({ where: { id: chalan.brokerId } }),
+      tx.vehicle.findUnique({ where: { id: chalan.vehicleId } }),
+      tx.party.findMany(),
+      tx.city.findMany(),
+      tx.ledgerEntry.findMany({
+        where: { refId: chalanId, refType: { in: ["CHALAN_ADVANCE", "CHALAN_BALANCE"] } },
+        orderBy: { date: "asc" },
+      }),
+    ]);
+    const partyName = (id: string | null) =>
+      id ? parties.find((p) => p.id === id)?.name ?? "" : "";
+    const cityName = (id: string | null) =>
+      id ? cities.find((c) => c.id === id)?.name ?? "" : "";
+
+    const lrRows = chalan.lrs.map(({ lr }) => {
+      const inv = lr.invoiceLrs[0]?.invoice ?? null;
+      const invAmount = inv ? toNum(inv.netTotal) : 0;
+      const invReceived = inv ? toNum(inv.advance) : 0;
+      const invBalance = inv ? toNum(inv.balance) : 0;
+      return {
+        lrNo: lr.lrNo,
+        lrDate: lr.lrDate.toISOString(),
+        consignor: partyName(lr.consignorId),
+        consignee: partyName(lr.consigneeId),
+        qty: lr.items.reduce((s, i) => s + toNum(i.qty), 0),
+        freight: toNum(lr.freight),
+        status: lr.status,
+        billed: !!inv,
+        invoiceNo: inv?.invoiceNo ?? "",
+        invoiceDate: inv ? inv.invoiceDate.toISOString() : null,
+        invoiceAmount: invAmount,
+        invoiceReceived: invReceived,
+        invoiceBalance: invBalance,
+        invoiceStatus: !inv
+          ? "Not Billed"
+          : invBalance <= 0
+            ? "Paid"
+            : invReceived > 0
+              ? "Partially Paid"
+              : "Pending",
+      };
+    });
+
+    const sources = Array.from(new Set(chalan.lrs.map(({ lr }) => cityName(lr.sourceCityId)).filter(Boolean)));
+    const dests = Array.from(new Set(chalan.lrs.map(({ lr }) => cityName(lr.destCityId)).filter(Boolean)));
+
+    return {
+      ok: true as const,
+      data: {
+        chalanNo: chalan.chalanNo,
+        chalanDate: chalan.chalanDate.toISOString(),
+        vehicle: vehicle?.number ?? "",
+        transporter: chalan.transportName ?? broker?.transportName ?? "",
+        owner: chalan.ownerName ?? broker?.name ?? "",
+        driverName: chalan.driverName ?? "",
+        origin: sources.join(", "),
+        destination: dests.join(", "),
+        createdAt: chalan.createdAt.toISOString(),
+        isFinal: chalan.isFinal,
+        lrs: lrRows,
+        advances: chalan.advances.map((a) => ({
+          name: a.bankName || a.supplierName || a.type.replace(/_/g, " "),
+          amount: toNum(a.amount),
+          date: a.date ? a.date.toISOString() : null,
+          mode: a.type === "BANK" ? "Bank" : a.type === "CASH" ? "Cash" : a.type.replace(/_/g, " "),
+          remarks: a.remarks ?? "",
+        })),
+        advanceTotal: toNum(chalan.advanceTotal),
+        grandTotal: toNum(chalan.grandTotal),
+        balance: toNum(chalan.balance),
+        paymentStatus: chalan.paymentStatus,
+        balPaidAmount: toNum(chalan.balPaidAmount),
+        balPaymentDate: chalan.balPaymentDate ? chalan.balPaymentDate.toISOString() : null,
+        balPaymentMode: chalan.balPaymentMode ?? "",
+        balRoundOff: toNum(chalan.balRoundOff),
+        balShortage: toNum(chalan.balShortage),
+        balRemarks: chalan.balRemarks ?? "",
+        payments: ledger.map((e) => ({
+          date: e.date.toISOString(),
+          amount: toNum(e.amount),
+          account: partyName(e.partyId),
+          side: e.side,
+          refType: e.refType,
+          narration: e.narration ?? "",
+        })),
+      },
+    };
+  });
+}

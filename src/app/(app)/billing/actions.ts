@@ -862,3 +862,114 @@ export async function saveBillSubmission(
     return { ok: true as const, id: created.id };
   });
 }
+
+// ------------------------------------------------------- rate change register
+
+export interface RateChangeLrRow {
+  id: string;
+  lrNo: string;
+  date: string; // ISO
+  refNo: string;
+  obdNo: string;
+  invoiceNo: string;
+  vehicle: string;
+  source: string;
+  dest: string;
+  party: string;
+  erpRate: number;
+}
+
+/** Read-only LR lookup for the Rate Change Register (no data is modified). */
+export async function getLrForRateChange(
+  lrNo: string
+): Promise<{ ok: true; row: RateChangeLrRow } | { ok: false; error: string }> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const lr = await tx.lr.findFirst({
+      where: {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        lrNo: lrNo.trim(),
+        deletedAt: null,
+      },
+      include: { items: true },
+    });
+    if (!lr) return { ok: false as const, error: `LR ${lrNo} not found in the current financial year.` };
+    const [cities, billParty, consignor, vehicle] = await Promise.all([
+      tx.city.findMany({ where: { id: { in: [lr.sourceCityId, lr.destCityId] } } }),
+      lr.billToId ? tx.party.findUnique({ where: { id: lr.billToId } }) : Promise.resolve(null),
+      tx.party.findUnique({ where: { id: lr.consignorId } }),
+      lr.vehicleId ? tx.vehicle.findUnique({ where: { id: lr.vehicleId } }) : Promise.resolve(null),
+    ]);
+    const cityName = (id: string) => cities.find((c) => c.id === id)?.name ?? "";
+    return {
+      ok: true as const,
+      row: {
+        id: lr.id,
+        lrNo: lr.lrNo,
+        date: lr.lrDate.toISOString(),
+        refNo: lr.refNo ?? "",
+        obdNo: lr.obdNo ?? "",
+        invoiceNo: lr.invoiceNo ?? "",
+        vehicle: vehicle?.number || lr.vehicleText || "",
+        source: cityName(lr.sourceCityId),
+        dest: cityName(lr.destCityId),
+        party: billParty?.name ?? consignor?.name ?? "",
+        erpRate: lr.items.length ? Math.max(...lr.items.map((i) => toNum(String(i.rate)))) : 0,
+      },
+    };
+  });
+}
+
+// ---------------------------------------------------- trip closure intimation
+
+export interface TripClosureLrRow {
+  id: string;
+  lrNo: string;
+  consignor: string;
+  vehicle: string;
+  lrDate: string; // ISO
+  deliveryDate: string | null; // POD unload date, ISO
+  consignee: string;
+  city: string; // destination
+  obdNo: string;
+}
+
+/** Read-only LR + POD lookup for the Trip Closure Intimation report. */
+export async function getLrForTripClosure(
+  lrNo: string
+): Promise<{ ok: true; row: TripClosureLrRow } | { ok: false; error: string }> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const lr = await tx.lr.findFirst({
+      where: {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        lrNo: lrNo.trim(),
+        deletedAt: null,
+      },
+      include: { pods: true },
+    });
+    if (!lr) return { ok: false as const, error: `LR ${lrNo} not found in the current financial year.` };
+    const [destCity, consignor, consignee, vehicle] = await Promise.all([
+      tx.city.findUnique({ where: { id: lr.destCityId } }),
+      tx.party.findUnique({ where: { id: lr.consignorId } }),
+      tx.party.findUnique({ where: { id: lr.consigneeId } }),
+      lr.vehicleId ? tx.vehicle.findUnique({ where: { id: lr.vehicleId } }) : Promise.resolve(null),
+    ]);
+    return {
+      ok: true as const,
+      row: {
+        id: lr.id,
+        lrNo: lr.lrNo,
+        consignor: consignor?.name ?? "",
+        vehicle: vehicle?.number || lr.vehicleText || "",
+        lrDate: lr.lrDate.toISOString(),
+        deliveryDate: lr.pods[0]?.unloadDate ? lr.pods[0].unloadDate.toISOString() : null,
+        consignee: consignee?.name ?? "",
+        city: destCity?.name ?? "",
+        obdNo: lr.obdNo ?? "",
+      },
+    };
+  });
+}

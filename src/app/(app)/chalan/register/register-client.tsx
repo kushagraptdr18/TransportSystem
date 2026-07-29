@@ -11,7 +11,15 @@ import { DataTable } from "@/components/data/data-table";
 import { FilterBar } from "@/components/data/filter-bar";
 import { ExportButton } from "@/components/data/export-button";
 import { formatDate, formatMoney } from "@/lib/utils";
-import { deleteChalan } from "../actions";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { deleteChalan, getChalanStatus, type ChalanStatusData } from "../actions";
 
 export interface ChalanRegisterRow {
   id: string;
@@ -57,6 +65,20 @@ export function ChalanRegisterClient({
 }) {
   const router = useRouter();
   const { toast } = useToast();
+  // complete chalan lifecycle dialog
+  const [status, setStatus] = React.useState<ChalanStatusData | null>(null);
+  const [statusLoading, setStatusLoading] = React.useState(false);
+
+  const openStatus = async (id: string) => {
+    setStatusLoading(true);
+    try {
+      const res = await getChalanStatus(id);
+      if (res.ok) setStatus(res.data);
+      else toast({ variant: "destructive", title: res.error });
+    } finally {
+      setStatusLoading(false);
+    }
+  };
 
   const columns: ColumnDef<ChalanRegisterRow>[] = [
     { accessorKey: "chalanNo", header: "Chalan No" },
@@ -203,6 +225,16 @@ export function ChalanRegisterClient({
               Print
             </Link>
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2"
+            disabled={statusLoading}
+            title="Complete lifecycle: LRs, billing, payments"
+            onClick={() => void openStatus(row.original.id)}
+          >
+            Status
+          </Button>
           {canDelete && (
             <Button
               variant="ghost"
@@ -307,6 +339,202 @@ export function ChalanRegisterClient({
         data={rows}
         onRowClick={(row) => router.push(`/chalan?id=${row.id}`)}
       />
+
+      {/* chalan status — complete tracking dashboard */}
+      <Dialog open={!!status} onOpenChange={(o) => !o && setStatus(null)}>
+        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Chalan Status — {status?.chalanNo}</DialogTitle>
+            <DialogDescription>
+              Complete lifecycle from creation to payment: LRs, bills, and payment history.
+            </DialogDescription>
+          </DialogHeader>
+          {status && (
+            <div className="space-y-3 text-sm">
+              {/* 1. chalan details */}
+              <div className="rounded-md border p-3">
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                  Chalan Details
+                </div>
+                <div className="grid gap-x-8 gap-y-0.5 sm:grid-cols-2">
+                  <Line label="Chalan No" value={status.chalanNo} />
+                  <Line label="Chalan Date" value={formatDate(status.chalanDate)} />
+                  <Line label="Vehicle No" value={status.vehicle} />
+                  <Line label="Transporter" value={status.transporter || "—"} />
+                  <Line label="Owner" value={status.owner || "—"} />
+                  <Line label="Driver" value={status.driverName || "—"} />
+                  <Line label="Origin" value={status.origin || "—"} />
+                  <Line label="Destination" value={status.destination || "—"} />
+                  <Line label="Created" value={formatDate(status.createdAt)} />
+                  <Line label="Stage" value={status.isFinal ? "Final" : "Draft"} />
+                </div>
+              </div>
+
+              {/* 2 + 3. LRs with billing status */}
+              <div className="rounded-md border p-3">
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                  LR &amp; Billing Status
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b text-left text-muted-foreground">
+                        {["LR No", "Date", "Consignor", "Consignee", "Qty", "Freight", "LR Status", "Bill No", "Bill Date", "Bill Amount", "Received", "Bill Balance", "Payment"].map(
+                          (h) => (
+                            <th key={h} className="px-1 py-0.5">
+                              {h}
+                            </th>
+                          )
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {status.lrs.map((l) => (
+                        <tr key={l.lrNo} className="border-b last:border-0">
+                          <td className="px-1 py-0.5">{l.lrNo}</td>
+                          <td className="px-1 py-0.5">{formatDate(l.lrDate)}</td>
+                          <td className="px-1 py-0.5">{l.consignor}</td>
+                          <td className="px-1 py-0.5">{l.consignee}</td>
+                          <td className="px-1 py-0.5 text-right tabular-nums">{l.qty}</td>
+                          <td className="px-1 py-0.5 text-right tabular-nums">
+                            {formatMoney(l.freight)}
+                          </td>
+                          <td className="px-1 py-0.5">
+                            <Badge variant="outline">{l.status.replace(/_/g, " ")}</Badge>
+                          </td>
+                          <td className="px-1 py-0.5">{l.invoiceNo || "—"}</td>
+                          <td className="px-1 py-0.5">
+                            {l.invoiceDate ? formatDate(l.invoiceDate) : ""}
+                          </td>
+                          <td className="px-1 py-0.5 text-right tabular-nums">
+                            {l.billed ? formatMoney(l.invoiceAmount) : ""}
+                          </td>
+                          <td className="px-1 py-0.5 text-right tabular-nums">
+                            {l.billed ? formatMoney(l.invoiceReceived) : ""}
+                          </td>
+                          <td className="px-1 py-0.5 text-right tabular-nums">
+                            {l.billed ? formatMoney(l.invoiceBalance) : ""}
+                          </td>
+                          <td className="px-1 py-0.5">
+                            <Badge
+                              variant={
+                                l.invoiceStatus === "Paid"
+                                  ? "default"
+                                  : l.invoiceStatus === "Not Billed"
+                                    ? "outline"
+                                    : l.invoiceStatus === "Partially Paid"
+                                      ? "secondary"
+                                      : "destructive"
+                              }
+                            >
+                              {l.invoiceStatus}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* 5. advance & balance */}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-md border p-3">
+                  <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                    Advances Paid
+                  </div>
+                  {status.advances.length === 0 && (
+                    <div className="text-xs text-muted-foreground">No advances.</div>
+                  )}
+                  {status.advances.map((a, i) => (
+                    <div key={i} className="flex justify-between gap-2 py-0.5 text-xs">
+                      <span>
+                        {a.date ? `${formatDate(a.date)} — ` : ""}
+                        {a.name}
+                        {a.mode ? ` (${a.mode})` : ""}
+                        {a.remarks ? ` — ${a.remarks}` : ""}
+                      </span>
+                      <span className="tabular-nums">{formatMoney(a.amount)}</span>
+                    </div>
+                  ))}
+                  <div className="mt-1 flex justify-between border-t pt-1 font-medium">
+                    <span>Total Advance</span>
+                    <span className="tabular-nums">{formatMoney(status.advanceTotal)}</span>
+                  </div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                    Balance &amp; Settlement
+                  </div>
+                  <Line label="Grand Total" value={formatMoney(status.grandTotal)} />
+                  <Line label="Balance" value={formatMoney(status.balance)} />
+                  <Line
+                    label="Balance Paid"
+                    value={
+                      status.paymentStatus === "PAID"
+                        ? `${formatMoney(status.balPaidAmount)}${status.balPaymentDate ? ` on ${formatDate(status.balPaymentDate)}` : ""}${status.balPaymentMode ? ` (${status.balPaymentMode.replace("_", "/")})` : ""}`
+                        : "—"
+                    }
+                  />
+                  {status.paymentStatus === "PAID" && (status.balRoundOff > 0 || status.balShortage > 0) && (
+                    <Line
+                      label="Round Off / Shortage"
+                      value={`${formatMoney(status.balRoundOff)} / ${formatMoney(status.balShortage)}`}
+                    />
+                  )}
+                  <Line
+                    label="Balance Pending"
+                    value={
+                      status.paymentStatus === "PAID" ? formatMoney(0) : formatMoney(status.balance)
+                    }
+                  />
+                  <Line
+                    label="Final Settlement"
+                    value={status.paymentStatus === "PAID" ? "Settled (PAID)" : "Pending"}
+                  />
+                  {status.balRemarks && <Line label="Remarks" value={status.balRemarks} />}
+                </div>
+              </div>
+
+              {/* 6. payment history (ledger) */}
+              <div className="rounded-md border p-3">
+                <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                  Payment History
+                </div>
+                {status.payments.length === 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    No ledger payments recorded yet.
+                  </div>
+                )}
+                {status.payments.map((p, i) => (
+                  <div key={i} className="flex justify-between gap-2 py-0.5 text-xs">
+                    <span>
+                      {formatDate(p.date)} — {p.account || "—"} ({p.side === "CREDIT" ? "Out" : "In"},{" "}
+                      {p.refType === "CHALAN_ADVANCE" ? "Advance" : "Balance"})
+                      {p.narration ? ` — ${p.narration}` : ""}
+                    </span>
+                    <span className="tabular-nums">{formatMoney(p.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStatus(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function Line({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-4 py-0.5 text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium">{value}</span>
     </div>
   );
 }

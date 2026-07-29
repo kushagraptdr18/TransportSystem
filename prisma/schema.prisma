@@ -603,7 +603,11 @@ model Lr {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  @@unique([firmId, fyId, lrNo])
+  // LR numbers are unique per firm + financial year among ACTIVE (non-deleted)
+  // LRs only — enforced by a partial unique index in SQL (Prisma cannot model
+  // partial indexes): Lr_firmId_fyId_lrNo_active_key WHERE "deletedAt" IS NULL.
+  // Deleted LR numbers can therefore be reused.
+  @@index([firmId, fyId, lrNo])
   @@index([tenantId, firmId, fyId, status])
   @@index([tenantId, vehicleId, status])
 }

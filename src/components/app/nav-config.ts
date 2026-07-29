@@ -87,6 +87,8 @@ export const NAV: NavGroup[] = [
       { label: "GST Invoice", href: "/billing/gst" },
       { label: "Bill Submission", href: "/billing/submission" },
       { label: "Billing Register", href: "/billing/register" },
+      { label: "Rate Change Register", href: "/billing/rate-change" },
+      { label: "Trip Closure Intimation", href: "/billing/trip-closure" },
     ],
   },
   {

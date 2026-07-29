@@ -428,6 +428,21 @@ export function ChalanForm({
 
   const brokerName = brokers.find((b) => b.value === brokerId)?.label;
 
+  // Owner ↔ Transport Name two-way link, mapped in the Owner Master:
+  // picking either one fills the other automatically
+  const selectBroker = (v: string | null) => {
+    setBrokerId(v);
+    setTdsOverridden(false);
+    const b = brokers.find((x) => x.value === v);
+    if (b) {
+      setTransportName(b.transportName ?? "");
+      setOwnerName(b.ownerName ?? b.label);
+    }
+  };
+  const transportOptions = brokers
+    .filter((b) => b.transportName)
+    .map((b) => ({ value: b.value, label: b.transportName as string, meta: b.label }));
+
   return (
     <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
       <div className="flex items-center justify-between">
@@ -470,23 +485,24 @@ export function ChalanForm({
             <PartyCombobox
               options={brokers}
               value={brokerId}
-              onChange={(v) => {
-                setBrokerId(v);
-                setTdsOverridden(false);
-                // transport name auto-populates from the party master (still editable);
-                // owner name is carried silently for the print
-                const b = brokers.find((x) => x.value === v);
-                if (b) {
-                  setTransportName(b.transportName ?? "");
-                  setOwnerName(b.ownerName ?? b.label);
-                }
-              }}
+              onChange={(v) => selectBroker(v)}
               ledgerGroup="OWNER_BROKER"
               placeholder="Select broker..."
             />
           </Field>
-          <Field label="Transport Name (from master)">
-            <Input value={transportName} onChange={(e) => setTransportName(e.target.value)} onKeyDown={enterAdvances} />
+          <Field label="Transport Name (auto-links the owner)">
+            <MasterCombobox
+              options={transportOptions}
+              value={
+                brokerId &&
+                brokers.find((b) => b.value === brokerId)?.transportName === transportName &&
+                transportName
+                  ? brokerId
+                  : null
+              }
+              onChange={(v) => selectBroker(v)}
+              placeholder={transportName || "Select transport name..."}
+            />
           </Field>
           <Field label="Vehicle">
             <VehicleCombobox options={vehicles} value={vehicleId} onChange={setVehicleId} />
