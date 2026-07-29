@@ -112,6 +112,7 @@ export const NAV: NavGroup[] = [
       { label: "TDS Report", href: "/accounts/tds" },
       { label: "TDS Payable Register", href: "/accounts/tds-report" },
       { label: "Staff Payroll & Advances", href: "/accounts/staff" },
+      { label: "Office Income & Expense", href: "/accounts/office" },
       { label: "Profit & Loss", href: "/accounts/pnl" },
     ],
   },

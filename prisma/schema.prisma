@@ -1288,6 +1288,40 @@ model StaffSalary {
   @@index([tenantId, partyId])
 }
 
+// ============ OFFICE INCOME & EXPENSE ============
+// Office income/expense entries with automatic double-entry ledger posting
+// (expense/income head ↔ bank/cash, routed via the supplier/party ledger when
+// one is selected). refNo is a free alphanumeric external document reference
+// (bill / invoice / receipt / challan / LR no) echoed into every ledger entry.
+model OfficeTransaction {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  voucherNo String // auto: OEX-<seq> (expense) / OIN-<seq> (income)
+  date      DateTime
+  txnType   String // INCOME | EXPENSE
+  headId    String // AccountHead (kind INCOME / EXPENSE)
+  partyId   String? // supplier / party — optional
+  paymentMode String @default("CASH") // CASH | BANK
+  bankPartyId String // bank/cash account (Party BANK|CASH)
+  amount     Decimal @default(0) @db.Decimal(14, 2)
+  gstPct     Decimal @default(0) @db.Decimal(5, 2) // informational
+  gstAmount  Decimal @default(0) @db.Decimal(12, 2) // informational, included in amount
+  refNo      String? // external reference — editable, alphanumeric, no format
+  remarks    String?
+  attachmentPath String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, voucherNo])
+  @@index([tenantId, firmId, fyId, txnType])
+  @@index([tenantId, partyId])
+}
+
 // ============ VOUCHERS / ACCOUNTS ============
 
 model Voucher {
