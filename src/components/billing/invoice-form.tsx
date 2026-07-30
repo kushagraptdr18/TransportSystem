@@ -553,6 +553,7 @@ export function InvoiceForm({
       pan: "",
       stateName: "",
       stateCode: "",
+      vendorCode: "",
     },
     lrs: selectedLrs.map((lr) => ({
       id: lr.id,
@@ -561,6 +562,8 @@ export function InvoiceForm({
       source: lr.source,
       dest: lr.dest,
       obdNo: lr.obdNo,
+      poNumber: lr.poNumber,
+      gateEntryNo: lr.gateEntryNo,
       invoiceNo: lr.invoiceNo,
       vehicle: lr.vehicle,
       material: lr.material,

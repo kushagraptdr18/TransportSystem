@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function LedgerSummaryPage({
   searchParams,
 }: {
-  searchParams: { date_from?: string; date_to?: string; party?: string };
+  searchParams: { date_from?: string; date_to?: string; party?: string; ref?: string };
 }) {
   const session = requireSession();
   await authorize(session, "reports", "view");
@@ -23,11 +23,13 @@ export default async function LedgerSummaryPage({
     session,
     partyId,
     headId,
+    refNo: searchParams.ref,
     dateFrom: searchParams.date_from,
     dateTo: searchParams.date_to,
   });
 
   const filters: FilterDef[] = [
+    { type: "text", key: "ref", label: "Reference No (bill / invoice)..." },
     { type: "daterange", key: "date", label: "Date" },
     {
       type: "combobox",
@@ -49,9 +51,11 @@ export default async function LedgerSummaryPage({
       <FilterBar filters={filters} />
       <SimpleReport
         title={
-          selected
-            ? "Opening balance included in running balance"
-            : "Select a party or income/expense head to see its ledger with running balance"
+          searchParams.ref
+            ? `Reference-wise details for "${searchParams.ref}" — complete lifecycle across all ledgers, in date order`
+            : selected
+              ? "Opening balance included in running balance"
+              : "Select a party or income/expense head to see its ledger with running balance — or search a Reference No to trace a bill end-to-end"
         }
         columns={BOOK_COLUMNS}
         rows={rows}

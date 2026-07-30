@@ -1303,8 +1303,8 @@ model OfficeTransaction {
   txnType   String // INCOME | EXPENSE
   headId    String // AccountHead (kind INCOME / EXPENSE)
   partyId   String? // supplier / party — optional
-  paymentMode String @default("CASH") // CASH | BANK
-  bankPartyId String // bank/cash account (Party BANK|CASH)
+  paymentMode String? // CASH | BANK — blank = on credit, settle later via voucher
+  bankPartyId String? // bank/cash account (Party BANK|CASH); required when paymentMode set
   amount     Decimal @default(0) @db.Decimal(14, 2)
   gstPct     Decimal @default(0) @db.Decimal(5, 2) // informational
   gstAmount  Decimal @default(0) @db.Decimal(12, 2) // informational, included in amount

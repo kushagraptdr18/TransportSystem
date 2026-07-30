@@ -39,8 +39,8 @@ const schema = z.object({
   txnType: z.enum(["INCOME", "EXPENSE"]),
   headId: z.string().min(1, "Income / Expense head is required"),
   partyId: z.string().nullish(), // supplier / party — optional
-  paymentMode: z.enum(["CASH", "BANK"]).default("CASH"),
-  bankPartyId: z.string().min(1, "Cash / Bank account is required"),
+  paymentMode: z.enum(["CASH", "BANK"]).nullish(), // blank = on credit (settle later)
+  bankPartyId: z.string().nullish(),
   amount: z.number().min(0.01, "Amount is required"),
   gstPct: z.number().min(0).default(0),
   gstAmount: z.number().min(0).default(0),
@@ -60,6 +60,16 @@ export async function saveOfficeTransaction(
   if (d.attachmentPath && !d.attachmentPath.startsWith(`${session.tenantId}/`)) {
     return { ok: false, error: "Invalid attachment path" };
   }
+  if (d.paymentMode && !d.bankPartyId) {
+    return { ok: false, error: "Cash / Bank account is required when a payment mode is selected." };
+  }
+  if (!d.paymentMode && !d.partyId) {
+    return {
+      ok: false,
+      error:
+        "Select a Supplier/Party (for a credit entry) or a Payment Mode with Cash/Bank account.",
+    };
+  }
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
@@ -78,8 +88,8 @@ export async function saveOfficeTransaction(
         txnType: d.txnType,
         headId: d.headId,
         partyId: d.partyId || null,
-        paymentMode: d.paymentMode,
-        bankPartyId: d.bankPartyId,
+        paymentMode: d.paymentMode || null,
+        bankPartyId: d.paymentMode ? d.bankPartyId || null : null,
         amount: d.amount,
         gstPct: d.gstPct,
         gstAmount: d.gstAmount,
@@ -136,6 +146,9 @@ export async function saveOfficeTransaction(
         refNo: values.refNo || voucherNo,
       };
       const label = `${head.name}${values.remarks ? " — " + values.remarks : ""}`;
+      // paid = money moved now (cash/bank leg); otherwise the amount stays
+      // outstanding on the supplier/party ledger until settled by a voucher
+      const paid = !!values.paymentMode && !!values.bankPartyId;
       const entries: LedgerPostEntry[] = [];
       if (d.txnType === "EXPENSE") {
         entries.push({
@@ -146,7 +159,7 @@ export async function saveOfficeTransaction(
           narration: `Office expense ${voucherNo}: ${label}`,
         });
         if (values.partyId) {
-          // route via the supplier ledger: bill + payment
+          // supplier bill — stays outstanding unless paid immediately
           entries.push({
             ...common,
             partyId: values.partyId,
@@ -154,30 +167,37 @@ export async function saveOfficeTransaction(
             amount: d.amount,
             narration: `Supplier bill ${common.refNo} — ${head.name}`,
           });
+          if (paid) {
+            entries.push({
+              ...common,
+              partyId: values.partyId,
+              side: "DEBIT",
+              amount: d.amount,
+              narration: `Payment to supplier (${values.paymentMode!.toLowerCase()}) ${voucherNo}`,
+            });
+          }
+        }
+        if (paid) {
           entries.push({
             ...common,
-            partyId: values.partyId,
-            side: "DEBIT",
+            partyId: values.bankPartyId!,
+            side: "CREDIT",
             amount: d.amount,
-            narration: `Payment to supplier (${d.paymentMode.toLowerCase()}) ${voucherNo}`,
+            narration: `Office expense ${voucherNo}: ${label}`,
           });
         }
-        entries.push({
-          ...common,
-          partyId: d.bankPartyId,
-          side: "CREDIT",
-          amount: d.amount,
-          narration: `Office expense ${voucherNo}: ${label}`,
-        });
       } else {
-        entries.push({
-          ...common,
-          partyId: d.bankPartyId,
-          side: "DEBIT",
-          amount: d.amount,
-          narration: `Office income ${voucherNo}: ${label}`,
-        });
+        if (paid) {
+          entries.push({
+            ...common,
+            partyId: values.bankPartyId!,
+            side: "DEBIT",
+            amount: d.amount,
+            narration: `Office income ${voucherNo}: ${label}`,
+          });
+        }
         if (values.partyId) {
+          // income accrual — stays outstanding unless received immediately
           entries.push({
             ...common,
             partyId: values.partyId,
@@ -185,13 +205,15 @@ export async function saveOfficeTransaction(
             amount: d.amount,
             narration: `Income accrual ${common.refNo} — ${head.name}`,
           });
-          entries.push({
-            ...common,
-            partyId: values.partyId,
-            side: "CREDIT",
-            amount: d.amount,
-            narration: `Received from party (${d.paymentMode.toLowerCase()}) ${voucherNo}`,
-          });
+          if (paid) {
+            entries.push({
+              ...common,
+              partyId: values.partyId,
+              side: "CREDIT",
+              amount: d.amount,
+              narration: `Received from party (${values.paymentMode!.toLowerCase()}) ${voucherNo}`,
+            });
+          }
         }
         entries.push({
           ...common,

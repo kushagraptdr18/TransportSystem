@@ -66,6 +66,7 @@ export interface PartyBillingDetails {
   pan: string;
   stateName: string;
   stateCode: string;
+  vendorCode: string;
 }
 
 /** Full Bill-To details for the invoice preview / print header. */
@@ -84,6 +85,7 @@ export async function getPartyBillingDetails(partyId: string): Promise<PartyBill
       pan: party.pan ?? "",
       stateName: state?.name ?? "",
       stateCode: state?.gstCode ?? stateCodeFromGstin(party.gstin) ?? "",
+      vendorCode: party.vendorCode ?? "",
     };
   });
 }
@@ -143,8 +145,9 @@ async function decorateLrs(
       actualWt,
       chargeWt: lr.items.reduce((s, i) => s + toNum(String(i.chargeWt)), 0),
       amount: toNum(String(lr.total)),
-      poNumber: lr.poNumber ?? "",
-      gateEntryNo: lr.gateEntryNo ?? "",
+      // PO / gate entry come from the POD entry, falling back to the LR fields
+      poNumber: pod?.poNumber || lr.poNumber || "",
+      gateEntryNo: pod?.gateEntryNo || lr.gateEntryNo || "",
       obdNo: lr.obdNo ?? "",
       consignee: pmap.get(lr.consigneeId) ?? "",
       material: lr.items.map((i) => i.productName).filter(Boolean).join(", "),

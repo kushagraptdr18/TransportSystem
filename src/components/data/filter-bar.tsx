@@ -236,15 +236,45 @@ function ComboboxFilter({
   );
 }
 
+function TextFilter({
+  def,
+  value,
+  onChange,
+}: {
+  def: FilterDef;
+  value: string;
+  onChange: (v: string | null) => void;
+}) {
+  const [text, setText] = React.useState(value);
+
+  // stay in sync when the URL param changes externally (chips / clear all)
+  React.useEffect(() => setText(value), [value]);
+
+  // debounced text search -> URL
+  React.useEffect(() => {
+    if (text === value) return;
+    const t = setTimeout(() => onChange(text || null), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+
+  return (
+    <div className="relative">
+      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+      <Input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={def.label}
+        className="w-56 pl-8"
+      />
+    </div>
+  );
+}
+
 export function FilterBar({ filters, className }: FilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-
-  const textFilter = filters.find((f) => f.type === "text");
-  const [search, setSearch] = React.useState(
-    textFilter ? searchParams.get(textFilter.key) ?? "" : ""
-  );
 
   const setParams = React.useCallback(
     (updates: Record<string, string | null>) => {
@@ -257,16 +287,6 @@ export function FilterBar({ filters, className }: FilterBarProps) {
     },
     [router, pathname, searchParams]
   );
-
-  // debounced text search -> URL
-  React.useEffect(() => {
-    if (!textFilter) return;
-    const current = searchParams.get(textFilter.key) ?? "";
-    if (search === current) return;
-    const t = setTimeout(() => setParams({ [textFilter.key]: search || null }), 300);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
 
   // active chips
   const chips: { key: string; label: string; clear: Record<string, string | null> }[] = [];
@@ -308,27 +328,23 @@ export function FilterBar({ filters, className }: FilterBarProps) {
         updates[f.key] = null;
       }
     }
-    setSearch("");
     setParams(updates);
   };
 
   return (
     <div className={cn("space-y-2", className)}>
       <div className="flex flex-wrap items-center gap-2">
-        {textFilter && (
-          <div className="relative">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={textFilter.label}
-              className="w-56 pl-8"
-            />
-          </div>
-        )}
-        {filters
-          .filter((f) => f.type !== "text")
-          .map((f) => {
+        {filters.map((f) => {
+            if (f.type === "text") {
+              return (
+                <TextFilter
+                  key={f.key}
+                  def={f}
+                  value={searchParams.get(f.key) ?? ""}
+                  onChange={(v) => setParams({ [f.key]: v })}
+                />
+              );
+            }
             if (f.type === "daterange") {
               return (
                 <DateRangeFilter
@@ -383,11 +399,7 @@ export function FilterBar({ filters, className }: FilterBarProps) {
               <button
                 type="button"
                 className="rounded-full p-0.5 hover:bg-muted-foreground/20"
-                onClick={() => {
-                  const t = filters.find((f) => f.key === chip.key);
-                  if (t?.type === "text") setSearch("");
-                  setParams(chip.clear);
-                }}
+                onClick={() => setParams(chip.clear)}
                 aria-label={`Remove ${chip.label}`}
               >
                 <X className="h-3 w-3" />

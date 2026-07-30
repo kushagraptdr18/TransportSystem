@@ -44,8 +44,8 @@ export interface OfficeTxnRow {
   head: string;
   partyId: string | null;
   party: string;
-  paymentMode: string;
-  bankPartyId: string;
+  paymentMode: string; // "" = on credit (pending settlement)
+  bankPartyId: string | null;
   bank: string;
   amount: number;
   gstPct: number;
@@ -69,7 +69,7 @@ const emptyForm = {
   txnType: "EXPENSE" as "INCOME" | "EXPENSE",
   headId: null as string | null,
   partyId: null as string | null,
-  paymentMode: "CASH" as "CASH" | "BANK",
+  paymentMode: "CASH" as "CASH" | "BANK" | "CREDIT",
   bankPartyId: null as string | null,
   amount: 0,
   gstPct: 0,
@@ -114,7 +114,7 @@ export function OfficeTxnClient({
       txnType: row.txnType as "INCOME" | "EXPENSE",
       headId: row.headId,
       partyId: row.partyId,
-      paymentMode: row.paymentMode as "CASH" | "BANK",
+      paymentMode: (row.paymentMode || "CREDIT") as "CASH" | "BANK" | "CREDIT",
       bankPartyId: row.bankPartyId,
       amount: row.amount,
       gstPct: row.gstPct,
@@ -161,8 +161,8 @@ export function OfficeTxnClient({
         txnType: form.txnType,
         headId: form.headId ?? "",
         partyId: form.partyId,
-        paymentMode: form.paymentMode,
-        bankPartyId: form.bankPartyId ?? "",
+        paymentMode: form.paymentMode === "CREDIT" ? null : form.paymentMode,
+        bankPartyId: form.paymentMode === "CREDIT" ? null : form.bankPartyId,
         amount: form.amount,
         gstPct: form.gstPct,
         gstAmount: form.gstAmount,
@@ -214,9 +214,12 @@ export function OfficeTxnClient({
     {
       accessorKey: "paymentMode",
       header: "Mode",
-      cell: ({ row }) => (
-        <Badge variant="secondary">{row.original.paymentMode}</Badge>
-      ),
+      cell: ({ row }) =>
+        row.original.paymentMode ? (
+          <Badge variant="secondary">{row.original.paymentMode}</Badge>
+        ) : (
+          <Badge variant="outline">CREDIT</Badge>
+        ),
     },
     { accessorKey: "bank", header: "Cash / Bank A/c" },
     {
@@ -327,6 +330,7 @@ export function OfficeTxnClient({
             options: [
               { value: "CASH", label: "Cash" },
               { value: "BANK", label: "Bank" },
+              { value: "CREDIT", label: "Credit (pending)" },
             ],
           },
         ]}
@@ -348,15 +352,17 @@ export function OfficeTxnClient({
 
       {/* entry dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[95vh] overflow-y-auto sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>
               {form.id ? "Edit" : "New"} Office {form.txnType === "INCOME" ? "Income" : "Expense"}
               {form.id ? "" : " — voucher number auto-generates on save"}
             </DialogTitle>
             <DialogDescription>
-              Supplier / Party is optional — when selected, the transaction also reflects in
-              their ledger. Reference No accepts any external document number.
+              Supplier / Party and Payment Mode are both optional. Pick &quot;Credit&quot; (with a
+              party) to leave the amount outstanding on their ledger for later settlement via a
+              payment / receipt voucher; pick Cash / Bank to pay or receive now. Reference No
+              accepts any external document number.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-3">
@@ -400,27 +406,44 @@ export function OfficeTxnClient({
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Payment Mode</Label>
-              <Select value={form.paymentMode} onValueChange={(v) => set({ paymentMode: v as "CASH" | "BANK" })}>
+              <Label className="text-xs">Payment Mode (optional)</Label>
+              <Select
+                value={form.paymentMode}
+                onValueChange={(v) =>
+                  set({
+                    paymentMode: v as "CASH" | "BANK" | "CREDIT",
+                    ...(v === "CREDIT" ? { bankPartyId: null } : {}),
+                  })
+                }
+              >
                 <SelectTrigger className="h-8">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CASH">Cash</SelectItem>
                   <SelectItem value="BANK">Bank</SelectItem>
+                  <SelectItem value="CREDIT">Credit — settle later via voucher</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Cash / Bank Account *</Label>
-              <MasterCombobox
-                options={bankOptions.filter((b) =>
-                  form.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
-                )}
-                value={form.bankPartyId}
-                onChange={(v) => set({ bankPartyId: v })}
-                placeholder="Select account..."
-              />
+              <Label className="text-xs">
+                {form.paymentMode === "CREDIT" ? "Cash / Bank Account" : "Cash / Bank Account *"}
+              </Label>
+              {form.paymentMode === "CREDIT" ? (
+                <div className="flex h-8 items-center rounded-md border border-dashed px-2 text-xs text-muted-foreground">
+                  Not needed — amount stays outstanding on the party ledger
+                </div>
+              ) : (
+                <MasterCombobox
+                  options={bankOptions.filter((b) =>
+                    form.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                  )}
+                  value={form.bankPartyId}
+                  onChange={(v) => set({ bankPartyId: v })}
+                  placeholder="Select account..."
+                />
+              )}
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Amount *</Label>
@@ -503,7 +526,15 @@ export function OfficeTxnClient({
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={busy || !form.headId || !form.bankPartyId || form.amount <= 0}>
+            <Button
+              onClick={submit}
+              disabled={
+                busy ||
+                !form.headId ||
+                form.amount <= 0 ||
+                (form.paymentMode === "CREDIT" ? !form.partyId : !form.bankPartyId)
+              }
+            >
               {busy ? "Saving..." : form.id ? "Update & Re-post" : "Save & Post"}
             </Button>
           </DialogFooter>

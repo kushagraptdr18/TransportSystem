@@ -198,11 +198,17 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // ---- ledger posting (central adjustment engine) ----
       const narration =
         data.remarks || `${data.type} voucher ${data.voucherNo} (${data.moduleLink})`;
+      // Reference No carries the ORIGINAL document reference (bill / invoice /
+      // chalan / slip no from the allocations) so the whole lifecycle of a
+      // document can be traced by one reference; the voucher number stays
+      // available via refId -> voucher lookup (shown as its own column).
+      const allocRefNos = Array.from(new Set(data.allocations.map((a) => a.refNo).filter(Boolean)));
+      const docRefNo = allocRefNos.length ? allocRefNos.join(", ") : data.voucherNo;
       const common = {
         date: voucherDate,
         refType: "VOUCHER",
         refId: savedId,
-        refNo: data.voucherNo,
+        refNo: docRefNo,
         narration,
       };
       const entries: LedgerPostEntry[] = [];

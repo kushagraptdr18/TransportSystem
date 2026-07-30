@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Trash2 } from "lucide-react";
+import { Pencil, Printer, Trash2 } from "lucide-react";
 import type { InvoiceKind } from "@prisma/client";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -115,28 +115,48 @@ export function BillingRegisterTable({
     money("netTotal", "Net Total"),
     money("advance", "Advance"),
     money("balance", "Balance"),
-    ...(canDelete
-      ? [
-          {
-            id: "actions",
-            header: "",
-            cell: ({ row }) => (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-destructive"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setToDelete(row.original);
-                }}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            ),
-          } satisfies ColumnDef<BillingRegisterRow>,
-        ]
-      : []),
+    {
+      id: "actions",
+      header: "",
+      cell: ({ row }) => (
+        <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Edit invoice"
+            onClick={() =>
+              router.push(`/billing/${KIND_PATHS[row.original.kind]}?id=${row.original.id}`)
+            }
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="Print invoice"
+            onClick={() => window.open(`/print/invoice/${row.original.id}`, "_blank")}
+          >
+            <Printer className="h-4 w-4" />
+          </Button>
+          {canDelete && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-destructive"
+              title="Delete invoice"
+              onClick={() => setToDelete(row.original)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      ),
+    } satisfies ColumnDef<BillingRegisterRow>,
   ];
 
   return (

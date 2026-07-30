@@ -36,7 +36,11 @@ export default async function OfficeIncomeExpensePage({
           ...(type === "INCOME" || type === "EXPENSE" ? { txnType: type } : {}),
           ...(head ? { headId: head } : {}),
           ...(party ? { partyId: party } : {}),
-          ...(mode === "CASH" || mode === "BANK" ? { paymentMode: mode } : {}),
+          ...(mode === "CASH" || mode === "BANK"
+            ? { paymentMode: mode }
+            : mode === "CREDIT"
+              ? { paymentMode: null }
+              : {}),
           ...(q
             ? {
                 OR: [
@@ -76,9 +80,9 @@ export default async function OfficeIncomeExpensePage({
     head: headName.get(t.headId) ?? "",
     partyId: t.partyId,
     party: t.partyId ? partyName.get(t.partyId) ?? "" : "",
-    paymentMode: t.paymentMode,
+    paymentMode: t.paymentMode ?? "",
     bankPartyId: t.bankPartyId,
-    bank: partyName.get(t.bankPartyId) ?? "",
+    bank: t.bankPartyId ? partyName.get(t.bankPartyId) ?? "" : "",
     amount: toNum(String(t.amount)),
     gstPct: toNum(String(t.gstPct)),
     gstAmount: toNum(String(t.gstAmount)),

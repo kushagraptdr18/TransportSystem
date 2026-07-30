@@ -14,6 +14,8 @@ export interface InvoiceViewParty {
   pan: string;
   stateName: string;
   stateCode: string;
+  /** vendor code from the Billed-To party's master (blank if none) */
+  vendorCode: string;
 }
 
 export interface InvoiceViewLr {
@@ -23,6 +25,8 @@ export interface InvoiceViewLr {
   source: string;
   dest: string;
   obdNo: string;
+  poNumber: string;
+  gateEntryNo: string;
   invoiceNo: string;
   vehicle: string;
   material: string;
@@ -120,7 +124,7 @@ export function InvoicePrintView({
             <td className={labelCell}>GSTIN</td>
             <td className={cell}>{firm.gstin}</td>
             <td className={labelCell}>Vendor Code</td>
-            <td className={cell}>{firm.vendorCode}</td>
+            <td className={cell}>{party.vendorCode || firm.vendorCode}</td>
             <td className={labelCell}>IBA Code</td>
             <td className={cell}>{firm.ibaCode}</td>
           </tr>
@@ -185,6 +189,8 @@ export function InvoicePrintView({
                 "From Station",
                 "To Station",
                 "OBD No",
+                "PO No",
+                "Gate Entry No",
                 "Invoice No",
                 "Vehicle No",
                 "Material",
@@ -211,6 +217,8 @@ export function InvoicePrintView({
                 <td className={cell}>{lr.source}</td>
                 <td className={cell}>{lr.dest}</td>
                 <td className={cell}>{lr.obdNo}</td>
+                <td className={cell}>{lr.poNumber}</td>
+                <td className={cell}>{lr.gateEntryNo}</td>
                 <td className={cell}>{lr.invoiceNo}</td>
                 <td className={cell}>{lr.vehicle}</td>
                 <td className={cell}>{lr.material}</td>
@@ -224,7 +232,7 @@ export function InvoicePrintView({
               </tr>
             ))}
             <tr className="font-semibold">
-              <td colSpan={11} className={cell}>
+              <td colSpan={13} className={cell}>
                 Total — Enclosures: {data.lrs.length} LR{data.lrs.length === 1 ? "" : "s"}
               </td>
               <td className={`${cell} text-right`}>{totalActualWt}</td>
