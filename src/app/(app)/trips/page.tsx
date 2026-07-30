@@ -1,7 +1,11 @@
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { peekDocNumber } from "@/lib/sequences";
-import { TripForm, type TripFormValues, type VehicleOpt } from "@/components/trips/trip-form";
+import { toNum } from "@/lib/utils";
+import {
+  TripSettlementForm,
+  type TripSettlementInitial,
+} from "@/components/trips/trip-settlement-form";
 
 export const dynamic = "force-dynamic";
 
@@ -12,94 +16,95 @@ export default async function TripEntryPage({
 }) {
   const session = requireSession();
 
-  const { vehicles, parties, transporters, cities, nextNo, trip } = await withTenant(
+  const { vehicles, drivers, driverByVehicle, banks, nextNo, trip, docs } = await withTenant(
     session.tenantId,
     async (tx) => {
-      const [vehicleRows, partyRows, transporterRows, cityRows, nextNo] = await Promise.all([
+      const [vehicleRows, driverRows, openAssignments, banks, nextNo] = await Promise.all([
         tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
-        tx.party.findMany({
-          where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" },
+        tx.driver.findMany({
+          where: { firmId: session.firmId, deletedAt: null, status: "ACTIVE" },
           orderBy: { name: "asc" },
         }),
+        tx.driverAssignment.findMany({ where: { toDate: null } }),
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } },
+          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
           orderBy: { name: "asc" },
         }),
-        tx.city.findMany({ include: { state: true }, orderBy: { name: "asc" } }),
         peekDocNumber(tx, { firmId: session.firmId, fyId: session.fyId, docType: "TRIP" }),
       ]);
       const trip = searchParams.id
-        ? await tx.trip.findFirst({
-            where: { id: searchParams.id, deletedAt: null },
-            include: { expenses: true },
-          })
+        ? await tx.trip.findFirst({ where: { id: searchParams.id, deletedAt: null } })
         : null;
+      const docs = trip
+        ? await tx.tripDoc.findMany({ where: { tripId: trip.id } })
+        : [];
+      const driverIds = new Set(driverRows.map((d) => d.id));
       return {
-        vehicles: vehicleRows.map((v): VehicleOpt => ({
-          value: v.id,
-          label: v.number,
-          vehicleType: v.vehicleType,
-        })),
-        parties: partyRows.map((p) => ({ value: p.id, label: p.name })),
-        transporters: transporterRows.map((p) => ({ value: p.id, label: p.name })),
-        cities: cityRows.map((c) => ({ value: c.id, label: c.name, meta: c.state.name })),
+        // trip sheets: Own / Relative vehicles only (market = chalan workflow)
+        vehicles: vehicleRows
+          .filter((v) => v.ownershipType !== "BROKER")
+          .map((v) => ({
+            value: v.id,
+            label: `${v.number}${v.ownershipType === "RELATIVE" ? " (Relative)" : ""}`,
+          })),
+        drivers: driverRows.map((d) => ({ value: d.id, label: `${d.name} (${d.driverCode})` })),
+        driverByVehicle: Object.fromEntries(
+          openAssignments
+            .filter((a) => driverIds.has(a.driverId))
+            .map((a) => [a.vehicleId, a.driverId])
+        ) as Record<string, string>,
+        banks: banks.map((b) => ({ value: b.id, label: b.name, meta: b.ledgerGroup })),
         nextNo,
         trip,
+        docs,
       };
     }
   );
 
-  const initial: TripFormValues | null = trip
+  const initial: TripSettlementInitial | null = trip
     ? {
         id: trip.id,
         tripNo: trip.tripNo,
-        tripDate: trip.tripDate.toISOString(),
-        returnDate: trip.returnDate?.toISOString() ?? null,
+        fromDate: (trip.fromDate ?? trip.tripDate).toISOString(),
+        toDate: (trip.toDate ?? trip.returnDate ?? trip.tripDate).toISOString(),
         vehicleId: trip.vehicleId,
-        vehicleType: trip.vehicleType ?? "",
-        goingPartyId: trip.goingPartyId,
-        goingSourceCityId: trip.goingSourceCityId,
-        goingDestCityId: trip.goingDestCityId,
-        gFreight: Number(trip.gFreight),
-        gHamali: Number(trip.gHamali),
-        gOthers: Number(trip.gOthers),
-        gDiesel: Number(trip.gDiesel),
-        gDriverAdvance: Number(trip.gDriverAdvance),
-        gPartyAdvance: Number(trip.gPartyAdvance),
-        gOther: Number(trip.gOther),
-        gBankName: trip.gBankName ?? "",
-        gRemarks: trip.gRemarks ?? "",
-        returnPartyId: trip.returnPartyId,
-        returnSourceCityId: trip.returnSourceCityId,
-        returnDestCityId: trip.returnDestCityId,
-        rFreight: Number(trip.rFreight),
-        rHamali: Number(trip.rHamali),
-        rOthers: Number(trip.rOthers),
-        rDiesel: Number(trip.rDiesel),
-        rDriverAdvance: Number(trip.rDriverAdvance),
-        rPartyAdvance: Number(trip.rPartyAdvance),
-        rDetention: Number(trip.rDetention),
-        rBankName: trip.rBankName ?? "",
-        rRemarks: trip.rRemarks ?? "",
-        expenses: trip.expenses.map((e) => ({
-          category: e.category,
-          amount: Number(e.amount),
-          remarks: e.remarks ?? "",
-          date: e.date?.toISOString() ?? null,
+        driverId: trip.driverId,
+        calcMethod: trip.calcMethod,
+        docs: docs.map((d) => ({
+          refType: d.refType as "CHALAN" | "BROKER_SLIP",
+          refId: d.refId,
         })),
+        tollExpenseType: trip.tollExpenseType,
+        ureaRate: toNum(String(trip.ureaRate)),
+        ureaExpenseType: trip.ureaExpenseType,
+        loadingKm: toNum(String(trip.loadingKm)),
+        unloadingKm: toNum(String(trip.unloadingKm)),
+        newLoadingKm: toNum(String(trip.newLoadingKm)),
+        dieselAvg: toNum(String(trip.dieselAvg)),
+        dieselRate: toNum(String(trip.dieselRate)),
+        apprDriverAdvance: toNum(String(trip.apprDriverAdvance)),
+        roadBillExp: toNum(String(trip.roadBillExp)),
+        foodingDays: toNum(String(trip.foodingDays)),
+        foodingRate: toNum(String(trip.foodingRate)),
+        rtoExp: toNum(String(trip.rtoExp)),
+        fixedTripExp: toNum(String(trip.fixedTripExp)),
       }
     : null;
 
   return (
     <div className="space-y-4 p-4">
       <h1 className="text-xl font-semibold">
-        {initial ? `Edit Trip ${initial.tripNo}` : "Trip Sheet Entry"}
+        {initial ? `Edit Trip Sheet ${initial.tripNo}` : "Trip Sheet Entry (Trip Settlement)"}
       </h1>
-      <TripForm
+      <p className="text-sm text-muted-foreground">
+        Every trip settles separately — Raigarh → Chennai and Chennai → Raigarh are two
+        independent trip sheets, even for the same vehicle.
+      </p>
+      <TripSettlementForm
         vehicles={vehicles}
-        parties={parties}
-        transporters={transporters}
-        cities={cities}
+        drivers={drivers}
+        driverByVehicle={driverByVehicle}
+        bankOptions={banks}
         nextTripNo={nextNo ?? "1"}
         initial={initial}
       />

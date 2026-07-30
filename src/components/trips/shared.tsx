@@ -13,6 +13,7 @@ export const TRIP_EXPENSE_CATEGORIES = [
   "UNLOADING",
   "PARKING",
   "POLICE_RTO",
+  "UREA",
   "MISC",
 ] as const;
 

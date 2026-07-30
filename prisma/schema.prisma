@@ -1590,6 +1590,38 @@ model Trip {
   returnDate  DateTime?
   vehicleId   String
   vehicleType String?
+  driverId    String? // Driver master link
+  driverBalance Decimal @default(0) @db.Decimal(14, 2) // trip driver +/- (posted to DriverSettlement)
+
+  // AdBlue (urea): litres fetched from the stock register; rate entered per
+  // trip; amount = qty × rate, treated as driver or company expense
+  ureaQty         Decimal @default(0) @db.Decimal(12, 2)
+  ureaRate        Decimal @default(0) @db.Decimal(12, 2)
+  ureaAmount      Decimal @default(0) @db.Decimal(14, 2)
+  ureaExpenseType String  @default("DRIVER") // DRIVER | COMPANY
+
+  // ---- trip settlement (redesigned trip sheet) ----
+  calcMethod      String  @default("DIESEL_AVG") // DIESEL_AVG | FIXED
+  fromDate        DateTime? // settlement fetch range
+  toDate          DateTime?
+  tollExpenseType String  @default("DRIVER") // DRIVER | COMPANY
+  tollAmount      Decimal @default(0) @db.Decimal(14, 2) // fetched toll snapshot
+  actualDiesel    Decimal @default(0) @db.Decimal(14, 2) // fetched diesel snapshot
+  actualAdvance   Decimal @default(0) @db.Decimal(14, 2) // fetched advance snapshot
+  loadingKm       Decimal @default(0) @db.Decimal(12, 1)
+  unloadingKm     Decimal @default(0) @db.Decimal(12, 1)
+  newLoadingKm    Decimal @default(0) @db.Decimal(12, 1)
+  dieselAvg       Decimal @default(0) @db.Decimal(8, 2) // km per litre
+  dieselRate      Decimal @default(0) @db.Decimal(8, 2)
+  apprDriverAdvance Decimal @default(0) @db.Decimal(14, 2)
+  roadBillExp     Decimal @default(0) @db.Decimal(14, 2)
+  foodingDays     Decimal @default(0) @db.Decimal(6, 1)
+  foodingRate     Decimal @default(0) @db.Decimal(10, 2)
+  rtoExp          Decimal @default(0) @db.Decimal(14, 2)
+  fixedTripExp    Decimal @default(0) @db.Decimal(14, 2) // FIXED method
+  actualTotal     Decimal @default(0) @db.Decimal(14, 2) // left side total
+  approvedTotal   Decimal @default(0) @db.Decimal(14, 2) // right side total
+  grandTotal      Decimal @default(0) @db.Decimal(14, 2) // company vehicle cost
 
   // going leg
   goingPartyId      String?
@@ -1907,4 +1939,345 @@ model CourierDispatchItem {
 
   @@index([tenantId, vehicleNo])
   @@index([dispatchId])
+}
+
+// ============ TYRE LIFE MANAGEMENT ============
+// A Tyre is a permanent identity (unique tyre number). Its life is a series of
+// installation cycles (vehicle + position + inst/removal KM). Transfers close
+// one cycle and open the next; total life = sum of all cycle KMs / days.
+// Tyre names are module-local free text (no product/master linkage).
+
+model Tyre {
+  id       String @id @default(cuid())
+  tenantId String
+  firmId   String
+  tyreNo   String // permanent unique identity
+  tyreName String // module-specific label, not a master
+  status   String @default("RUNNING") // RUNNING | REMOVED
+
+  cycles TyreCycle[]
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, firmId, tyreNo])
+  @@index([tenantId, firmId, status])
+}
+
+model TyreCycle {
+  id       String @id @default(cuid())
+  tenantId String
+  tyreId   String
+  tyre     Tyre   @relation(fields: [tyreId], references: [id], onDelete: Cascade)
+
+  vehicleId String
+  position  String // HORSE | TRAILER
+  entryDate DateTime
+  instDate  DateTime
+  instKm    Decimal  @db.Decimal(12, 1)
+
+  removalDate   DateTime?
+  removalKm     Decimal?  @db.Decimal(12, 1)
+  removalReason String? // TRANSFER or free text on final removal
+  remarks       String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, tyreId])
+  @@index([tenantId, vehicleId])
+}
+
+// ============ DRIVER MANAGEMENT ============
+// Complete driver lifecycle: master + documents, vehicle assignment history,
+// advances (source of truth for trip sheets), shortages, salary, and the
+// +/- settlement register (auto vouchers on pay/receive). Every driver gets a
+// linked Party (ledgerGroup DRIVER) so all money flows hit the normal ledger.
+
+model Driver {
+  id         String    @id @default(cuid())
+  tenantId   String
+  firmId     String
+  driverCode String // auto DRV-0001
+  partyId    String? // linked Party (DRIVER ledger)
+  name       String
+  mobile     String?
+  emergencyContact String?
+  address    String?
+  joinDate   DateTime?
+  exitDate   DateTime?
+  exitReason String?
+  status     String    @default("ACTIVE") // ACTIVE | INACTIVE
+  remarks    String?
+
+  // fixed document slots (path|name pairs)
+  licencePath String?
+  licenceName String?
+  aadhaarPath String?
+  aadhaarName String?
+  panPath     String?
+  panName     String?
+  photoPath   String?
+  photoName   String?
+  medicalPath String?
+  medicalName String?
+  policePath  String?
+  policeName  String?
+
+  documents   DriverDocument[]
+  assignments DriverAssignment[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([tenantId, firmId, driverCode])
+  @@index([tenantId, firmId, status])
+}
+
+model DriverDocument {
+  id       String @id @default(cuid())
+  tenantId String
+  driverId String
+  driver   Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  title    String
+  filePath String
+  fileName String
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, driverId])
+}
+
+model DriverAssignment {
+  id        String    @id @default(cuid())
+  tenantId  String
+  driverId  String
+  driver    Driver    @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  vehicleId String
+  fromDate  DateTime
+  toDate    DateTime?
+  reason    String? // reason for vehicle change / exit
+  remarks   String?
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, driverId])
+  @@index([tenantId, vehicleId])
+}
+
+model DriverAdvance {
+  id          String   @id @default(cuid())
+  tenantId    String
+  firmId      String
+  fyId        String
+  date        DateTime
+  driverId    String
+  vehicleId   String?
+  tripRef     String? // optional trip reference no (manual)
+  amount      Decimal  @default(0) @db.Decimal(14, 2)
+  paymentMode String   @default("CASH") // CASH | BANK
+  bankPartyId String? // bank/cash account paid from
+  voucherRef  String? // payment voucher reference (manual)
+  remarks     String?
+  status      String   @default("PENDING") // PENDING | ADJUSTED
+  tripId      String? // trip sheet that consumed this advance
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@index([tenantId, firmId, driverId, date])
+  @@index([tenantId, tripId])
+}
+
+model DriverShortage {
+  id       String   @id @default(cuid())
+  tenantId String
+  firmId   String
+  fyId     String
+  date     DateTime
+  driverId String
+  tripRef  String?
+  amount   Decimal  @default(0) @db.Decimal(14, 2)
+  remarks  String?
+  status   String   @default("PENDING") // PENDING | ADJUSTED
+  salaryId String? // DriverSalary that adjusted it
+
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  @@index([tenantId, firmId, driverId, status])
+}
+
+model DriverSettlement {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  date      DateTime
+  driverId  String
+  vehicleId String?
+  tripId    String? // one settlement per trip
+  tripRef   String? // trip no for display
+  amount    Decimal  @default(0) @db.Decimal(14, 2) // + company pays driver, - driver pays company
+  status    String   @default("PENDING") // PENDING | SETTLED
+  settledDate DateTime?
+  voucherId String? // auto-created payment/receipt voucher
+  voucherNo String?
+  remarks   String?
+
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  @@unique([tenantId, tripId])
+  @@index([tenantId, firmId, driverId, status])
+}
+
+model DriverSalary {
+  id       String @id @default(cuid())
+  tenantId String
+  firmId   String
+  fyId     String
+  driverId String
+  month    String // "YYYY-MM"
+
+  salaryAmount      Decimal @default(0) @db.Decimal(12, 2)
+  incentive         Decimal @default(0) @db.Decimal(12, 2)
+  bonus             Decimal @default(0) @db.Decimal(12, 2)
+  otherAllowance    Decimal @default(0) @db.Decimal(12, 2)
+  advanceAdjust     Decimal @default(0) @db.Decimal(12, 2)
+  shortageDeduction Decimal @default(0) @db.Decimal(12, 2)
+  otherDeductions   Decimal @default(0) @db.Decimal(12, 2)
+  netPayable        Decimal @default(0) @db.Decimal(12, 2)
+
+  paymentStatus String    @default("PENDING") // PENDING | PAID
+  paymentDate   DateTime?
+  paymentHeadId String? // bank/cash party paid from
+  remarks       String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, driverId, month])
+  @@index([tenantId, driverId])
+}
+
+// ============ ADBLUE (UREA) STOCK ============
+// Litre-only stock register: refills (in) and vehicle issues (out). No value,
+// no accounting — the amount is computed only inside a trip sheet using a
+// manually entered rate.
+
+model AdblueTxn {
+  id          String   @id @default(cuid())
+  tenantId    String
+  firmId      String
+  fyId        String
+  date        DateTime
+  type        String // REFILL | ISSUE
+  supplierName String? // refill only
+  vehicleId   String? // optional on refill, required on issue
+  destination String? // issue only
+  qty         Decimal  @default(0) @db.Decimal(12, 2) // litres
+  amount      Decimal  @default(0) @db.Decimal(14, 2) // purchase value (refill only, optional)
+  bankPartyId String? // paid from (refill only, optional)
+  refNo       String? // challan / bill no (informational)
+  remarks     String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@index([tenantId, firmId, fyId, type, date])
+  @@index([tenantId, vehicleId, date])
+}
+
+// ============ VEHICLE EXPENSES (accounting) ============
+// Office-I&E-style voucher with vehicle-wise allocation: one accounting
+// voucher, unlimited vehicle rows. Relative-vehicle shares auto-transfer to
+// the relative owner's ledger (company expense reduces). Trip sheets only
+// FETCH (Diesel / Toll) from here — they never create expense records.
+
+model VehicleExpenseVoucher {
+  id        String @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  voucherNo String // auto VEX- (expense) / VIN- (income)
+  date      DateTime
+  txnType   String @default("EXPENSE") // EXPENSE | INCOME
+  headId    String // AccountHead
+  partyId   String? // supplier / party — optional
+  paymentMode String? // CASH | BANK — blank = on credit
+  bankPartyId String?
+  amount    Decimal @default(0) @db.Decimal(14, 2) // total (= sum of items)
+  refNo     String?
+  remarks   String?
+  attachmentPath String?
+  attachmentName String?
+
+  items VehicleExpenseItem[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, voucherNo])
+  @@index([tenantId, firmId, fyId, date])
+}
+
+model VehicleExpenseItem {
+  id        String                @id @default(cuid())
+  tenantId  String
+  voucherId String
+  voucher   VehicleExpenseVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  vehicleId String
+  amount    Decimal               @default(0) @db.Decimal(14, 2)
+
+  @@index([tenantId, vehicleId])
+  @@index([voucherId])
+}
+
+// ============ VEHICLE TRACKING (live register) ============
+// One snapshot row per vehicle per day, auto-saved on every edit (no save
+// button). Latest row = current live status; older rows = date-wise history.
+// Retention: only the last 120 days are kept (auto-cleanup, this module only).
+
+model VehicleTracking {
+  id              String   @id @default(cuid())
+  tenantId        String
+  firmId          String
+  vehicleId       String
+  date            DateTime // normalized to the day of the update
+  transporterName String?
+  fromLocation    String?
+  toLocation      String?
+  currentLocation String?
+  status          String?
+  remarks         String?
+  updatedById     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([tenantId, firmId, vehicleId, date])
+  @@index([tenantId, firmId, date])
+}
+
+// ============ TRIP SETTLEMENT LINKS ============
+// A chalan / broker slip can be settled in exactly ONE trip sheet — the
+// unique(refType, refId) makes "pending" enforcement structural.
+
+model TripDoc {
+  id       String @id @default(cuid())
+  tenantId String
+  tripId   String
+  refType  String // CHALAN | BROKER_SLIP
+  refId    String
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, refType, refId])
+  @@index([tripId])
 }

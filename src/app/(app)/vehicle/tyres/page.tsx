@@ -2,108 +2,136 @@ import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
-import { formatDate, toNum } from "@/lib/utils";
-import { DocModule } from "@/components/data/doc-module";
-import { saveTyre, deleteTyre } from "./actions";
+import { toNum } from "@/lib/utils";
+import { TyreClient, type TyreRow } from "@/components/vehicle/tyre-client";
 
 export const dynamic = "force-dynamic";
+
+/** total-KM range classification, updates automatically as the tyre runs */
+function kmRange(totalKm: number): string {
+  if (totalKm <= 25000) return "1 – 25,000 KM";
+  if (totalKm <= 50000) return "25,001 – 50,000 KM";
+  if (totalKm <= 75000) return "50,001 – 75,000 KM";
+  if (totalKm <= 100000) return "75,001 – 100,000 KM";
+  return "Above 100,000 KM";
+}
+
+const DAY = 86400000;
 
 export default async function TyresPage({
   searchParams,
 }: {
-  searchParams: { vehicle?: string };
+  searchParams: {
+    q?: string; // tyre number
+    vehicle?: string;
+    name?: string;
+    position?: string;
+    status?: string;
+    date_from?: string;
+    date_to?: string;
+  };
 }) {
   const session = requireSession();
   await authorize(session, "maintenance", "view");
 
-  const { rows, vehicles, products } = await withTenant(session.tenantId, async (tx) => {
-    const where: Prisma.TyreInstallationWhereInput = { firmId: session.firmId };
-    if (searchParams.vehicle) where.vehicleId = searchParams.vehicle;
-    const [rows, vehicles, products] = await Promise.all([
-      tx.tyreInstallation.findMany({ where, orderBy: { entryDate: "desc" } }),
+  const { tyres, vehicles } = await withTenant(session.tenantId, async (tx) => {
+    const where: Prisma.TyreWhereInput = { firmId: session.firmId };
+    if (searchParams.q) {
+      where.tyreNo = { contains: searchParams.q.replace(/\s+/g, ""), mode: "insensitive" };
+    }
+    if (searchParams.name) where.tyreName = searchParams.name;
+    if (searchParams.status === "RUNNING" || searchParams.status === "REMOVED") {
+      where.status = searchParams.status;
+    }
+    // vehicle / position match ANY cycle so history is searchable
+    if (searchParams.vehicle || searchParams.position) {
+      where.cycles = {
+        some: {
+          ...(searchParams.vehicle ? { vehicleId: searchParams.vehicle } : {}),
+          ...(searchParams.position === "HORSE" || searchParams.position === "TRAILER"
+            ? { position: searchParams.position }
+            : {}),
+        },
+      };
+    }
+    if (searchParams.date_from || searchParams.date_to) {
+      where.cycles = {
+        some: {
+          ...((where.cycles as { some?: object } | undefined)?.some ?? {}),
+          instDate: {
+            ...(searchParams.date_from
+              ? { gte: new Date(searchParams.date_from + "T00:00:00") }
+              : {}),
+            ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
+          },
+        },
+      };
+    }
+    const [tyres, vehicles] = await Promise.all([
+      tx.tyre.findMany({
+        where,
+        include: { cycles: { orderBy: { instDate: "asc" } } },
+        orderBy: { createdAt: "desc" },
+      }),
       tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
-      tx.product.findMany({ orderBy: { name: "asc" } }),
     ]);
-    return { rows, vehicles, products };
+    return { tyres, vehicles };
   });
 
-  const vehicleById = new Map(vehicles.map((v) => [v.id, v.number]));
-  const productById = new Map(products.map((p) => [p.id, p.name]));
+  const vehicleNo = new Map(vehicles.map((v) => [v.id, v.number]));
+  const today = new Date();
+
+  const rows: TyreRow[] = tyres.map((t) => {
+    let totalKm = 0;
+    let totalDays = 0;
+    const cycles = t.cycles.map((c) => {
+      const instKm = toNum(String(c.instKm));
+      const remKm = c.removalKm == null ? null : toNum(String(c.removalKm));
+      const runKm = remKm != null ? Math.max(0, remKm - instKm) : 0;
+      const endDate = c.removalDate ?? today;
+      const runDays = Math.max(0, Math.round((endDate.getTime() - c.instDate.getTime()) / DAY));
+      totalKm += runKm;
+      totalDays += runDays;
+      return {
+        vehicle: vehicleNo.get(c.vehicleId) ?? "",
+        position: c.position,
+        instDate: c.instDate.toISOString(),
+        instKm,
+        removalDate: c.removalDate ? c.removalDate.toISOString() : null,
+        removalKm: remKm,
+        removalReason: c.removalReason ?? "",
+        remarks: c.remarks ?? "",
+        runKm,
+        runDays,
+      };
+    });
+    const open = t.cycles.find((c) => !c.removalDate);
+    return {
+      id: t.id,
+      tyreNo: t.tyreNo,
+      tyreName: t.tyreName,
+      status: t.status,
+      currentVehicle: open ? vehicleNo.get(open.vehicleId) ?? "" : "",
+      currentPosition: open?.position ?? "",
+      firstInstDate: t.cycles[0]?.instDate.toISOString() ?? "",
+      vehicleCount: new Set(t.cycles.map((c) => c.vehicleId)).size,
+      totalKm,
+      totalDays,
+      kmRange: kmRange(totalKm),
+      cycles,
+    };
+  });
+
+  const nameOptions = Array.from(new Set(tyres.map((t) => t.tyreName))).sort();
 
   return (
-    <DocModule
-      title="Tyre Installation"
-      newLabel="New Installation"
-      exportName="tyre-installations"
-      canDelete={session.role === "ADMIN" || session.role === "OWNER"}
-      save={saveTyre}
-      remove={deleteTyre}
-      rows={rows.map((r) => ({
-        id: r.id,
-        entryDate: formatDate(r.entryDate),
-        vehicleId: r.vehicleId,
-        vehicleNumber: vehicleById.get(r.vehicleId) ?? "",
-        productId: r.productId,
-        productName: (r.productId && productById.get(r.productId)) || "",
-        position: r.position ?? "",
-        partNo: r.partNo ?? "",
-        instKm: r.instKm == null ? 0 : toNum(String(r.instKm)),
-        uninstKm: r.uninstKm == null ? 0 : toNum(String(r.uninstKm)),
-        instDate: r.instDate ? formatDate(r.instDate) : "",
-        uninstDate: r.uninstDate ? formatDate(r.uninstDate) : "",
-        remarks: r.remarks ?? "",
-      }))}
-      columns={[
-        { key: "entryDate", header: "Entry Date" },
-        { key: "vehicleNumber", header: "Vehicle" },
-        { key: "productName", header: "Tyre / Product" },
-        { key: "position", header: "Position", kind: "badge" },
-        { key: "partNo", header: "Part No" },
-        { key: "instDate", header: "Installed" },
-        { key: "instKm", header: "Inst. KM", kind: "money", total: false },
-        { key: "uninstDate", header: "Removed" },
-        { key: "uninstKm", header: "Uninst. KM", kind: "money", total: false },
-      ]}
-      filters={[
-        {
-          type: "combobox",
-          key: "vehicle",
-          label: "Vehicle",
-          options: vehicles.map((v) => ({ value: v.id, label: v.number })),
-        },
-      ]}
-      fields={[
-        { name: "entryDate", label: "Entry Date *", type: "date" },
-        {
-          name: "vehicleId",
-          label: "Vehicle *",
-          type: "combobox",
-          options: vehicles.map((v) => ({ value: v.id, label: v.number })),
-        },
-        {
-          name: "productId",
-          label: "Tyre / Product",
-          type: "combobox",
-          options: products.map((p) => ({ value: p.id, label: p.name })),
-        },
-        {
-          name: "position",
-          label: "Position",
-          type: "select",
-          options: [
-            { value: "FRONT", label: "Front" },
-            { value: "REAR", label: "Rear" },
-          ],
-        },
-        { name: "partNo", label: "Part / Serial No", type: "text" },
-        { name: "instDate", label: "Installation Date", type: "date" },
-        { name: "instKm", label: "Installation KM", type: "number" },
-        { name: "uninstDate", label: "Removal Date", type: "date" },
-        { name: "uninstKm", label: "Removal KM", type: "number" },
-        { name: "remarks", label: "Remarks", type: "textarea", span2: true },
-      ]}
-      defaults={{ entryDate: formatDate(new Date()) }}
-      numericFields={["instKm", "uninstKm"]}
-    />
+    <div className="space-y-4 p-4">
+      <TyreClient
+        rows={rows}
+        vehicleOptions={vehicles.map((v) => ({ value: v.id, label: v.number }))}
+        tyreNames={nameOptions}
+        canEdit={true}
+      />
+    </div>
   );
 }

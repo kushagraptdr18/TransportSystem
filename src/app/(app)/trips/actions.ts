@@ -8,6 +8,7 @@ import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { nextDocNumber, syncSequenceTo } from "@/lib/sequences";
+import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { tripLegTotal, tripLegBalance } from "@/lib/calc/trip";
 
 const TRIP_EXPENSE_CATEGORIES = [
@@ -18,8 +19,12 @@ const TRIP_EXPENSE_CATEGORIES = [
   "UNLOADING",
   "PARKING",
   "POLICE_RTO",
+  "UREA",
   "MISC",
 ] as const;
+
+/** remark marker for the auto-generated company urea expense row */
+const UREA_AUTO_REMARK = "AdBlue (auto)";
 
 const expenseSchema = z.object({
   category: z.enum(TRIP_EXPENSE_CATEGORIES),
@@ -35,6 +40,42 @@ const tripSchema = z.object({
   returnDate: z.string().nullish(),
   vehicleId: z.string().min(1, "Vehicle is required"),
   vehicleType: z.string().nullish(),
+  driverId: z.string().nullish(),
+  /** trip driver +/- : positive = payable to driver, negative = receivable */
+  driverBalance: z.number().default(0),
+  /** PENDING driver-advance ids fetched from the Driver Advance Register */
+  advanceIds: z.array(z.string()).default([]),
+  /** AdBlue: litres fetched from the stock register; rate entered per trip */
+  ureaQty: z.number().min(0).default(0),
+  ureaRate: z.number().min(0).default(0),
+  ureaExpenseType: z.enum(["DRIVER", "COMPANY"]).default("DRIVER"),
+
+  // ---- trip settlement (redesigned sheet) ----
+  calcMethod: z.enum(["DIESEL_AVG", "FIXED"]).default("DIESEL_AVG"),
+  fromDate: z.string().nullish(),
+  toDate: z.string().nullish(),
+  /** chalans / broker slips settled by this trip */
+  docs: z
+    .array(z.object({ refType: z.enum(["CHALAN", "BROKER_SLIP"]), refId: z.string().min(1) }))
+    .default([]),
+  tollExpenseType: z.enum(["DRIVER", "COMPANY"]).default("DRIVER"),
+  tollAmount: z.number().min(0).default(0),
+  actualDiesel: z.number().min(0).default(0),
+  actualAdvance: z.number().min(0).default(0),
+  loadingKm: z.number().min(0).default(0),
+  unloadingKm: z.number().min(0).default(0),
+  newLoadingKm: z.number().min(0).default(0),
+  dieselAvg: z.number().min(0).default(0),
+  dieselRate: z.number().min(0).default(0),
+  apprDriverAdvance: z.number().min(0).default(0),
+  roadBillExp: z.number().min(0).default(0),
+  foodingDays: z.number().min(0).default(0),
+  foodingRate: z.number().min(0).default(0),
+  rtoExp: z.number().min(0).default(0),
+  fixedTripExp: z.number().min(0).default(0),
+  actualTotal: z.number().min(0).default(0),
+  approvedTotal: z.number().min(0).default(0),
+  grandTotal: z.number().min(0).default(0),
 
   goingPartyId: z.string().nullish(),
   goingSourceCityId: z.string().nullish(),
@@ -80,6 +121,14 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
   const data = parsed.data;
   await authorize(session, "trips", data.id ? "edit" : "create");
 
+  // Driver settlement compares APPROVED vs ACTUAL only — the Grand Total
+  // (company vehicle cost) never enters this calculation.
+  //   approved > actual  → +ve → company owes the driver (driver saved)
+  //   approved < actual  → −ve → driver owes the company (driver overspent)
+  if (data.approvedTotal > 0 || data.actualTotal > 0) {
+    data.driverBalance = Math.round((data.approvedTotal - data.actualTotal) * 100) / 100;
+  }
+
   const gTotalFreight = tripLegTotal(data.gFreight, data.gHamali, data.gOthers);
   const gBalance = tripLegBalance(
     gTotalFreight,
@@ -99,6 +148,16 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
 
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
+      // trip sheets exist only for Own / Relative vehicles — market (broker)
+      // vehicles settle through the chalan / broker slip workflow
+      const vehicle = await tx.vehicle.findFirst({ where: { id: data.vehicleId } });
+      if (!vehicle) throw new Error("Vehicle not found");
+      if (vehicle.ownershipType === "BROKER") {
+        throw new Error(
+          "Market / broker vehicles are settled via Chalan & Broker Slip — no trip sheet is created for them."
+        );
+      }
+
       let tripNo = data.tripNo;
       if (!data.id && !tripNo) {
         tripNo = await nextDocNumber(tx, {
@@ -115,6 +174,33 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
         returnDate: data.returnDate ? toDate(data.returnDate) : null,
         vehicleId: data.vehicleId,
         vehicleType: data.vehicleType || null,
+        driverId: data.driverId || null,
+        driverBalance: data.driverBalance,
+        ureaQty: data.ureaQty,
+        ureaRate: data.ureaRate,
+        ureaAmount: Math.round(data.ureaQty * data.ureaRate * 100) / 100,
+        ureaExpenseType: data.ureaExpenseType,
+        calcMethod: data.calcMethod,
+        fromDate: data.fromDate ? toDate(data.fromDate) : null,
+        toDate: data.toDate ? toDate(data.toDate) : null,
+        tollExpenseType: data.tollExpenseType,
+        tollAmount: data.tollAmount,
+        actualDiesel: data.actualDiesel,
+        actualAdvance: data.actualAdvance,
+        loadingKm: data.loadingKm,
+        unloadingKm: data.unloadingKm,
+        newLoadingKm: data.newLoadingKm,
+        dieselAvg: data.dieselAvg,
+        dieselRate: data.dieselRate,
+        apprDriverAdvance: data.apprDriverAdvance,
+        roadBillExp: data.roadBillExp,
+        foodingDays: data.foodingDays,
+        foodingRate: data.foodingRate,
+        rtoExp: data.rtoExp,
+        fixedTripExp: data.fixedTripExp,
+        actualTotal: data.actualTotal,
+        approvedTotal: data.approvedTotal,
+        grandTotal: data.grandTotal,
         goingPartyId: data.goingPartyId || null,
         goingSourceCityId: data.goingSourceCityId || null,
         goingDestCityId: data.goingDestCityId || null,
@@ -145,7 +231,11 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
         rRemarks: data.rRemarks || null,
       };
 
+      const ureaAmount = Math.round(data.ureaQty * data.ureaRate * 100) / 100;
       const expenses = data.expenses
+        // the auto urea row is always regenerated server-side — never trusted
+        // from the client (prevents duplicates on edit)
+        .filter((e) => e.remarks !== UREA_AUTO_REMARK)
         .filter((e) => e.amount > 0 || e.remarks)
         .map((e) => ({
           tenantId: session.tenantId,
@@ -154,6 +244,17 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
           remarks: e.remarks || null,
           date: e.date ? toDate(e.date) : null,
         }));
+      // company urea goes into the trip's company expenses / vehicle cost;
+      // driver urea stays out of company expenses (actual driver expense side)
+      if (data.ureaExpenseType === "COMPANY" && ureaAmount > 0) {
+        expenses.push({
+          tenantId: session.tenantId,
+          category: "UREA",
+          amount: ureaAmount,
+          remarks: UREA_AUTO_REMARK,
+          date: toDate(data.tripDate),
+        });
+      }
 
       let savedId: string;
       if (data.id) {
@@ -204,6 +305,104 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
         savedNumber: tripNo,
       });
 
+      // ---- chalan / broker-slip links: unique(refType, refId) guarantees a
+      // document settles in exactly ONE trip sheet (pending enforcement)
+      await tx.tripDoc.deleteMany({ where: { tripId: savedId } });
+      if (data.docs.length) {
+        try {
+          await tx.tripDoc.createMany({
+            data: data.docs.map((doc) => ({
+              tenantId: session.tenantId,
+              tripId: savedId,
+              refType: doc.refType,
+              refId: doc.refId,
+            })),
+          });
+        } catch (e) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+            throw new Error(
+              "One of the selected chalans / broker slips is already settled in another trip sheet."
+            );
+          }
+          throw e;
+        }
+      }
+
+      // ---- Driver Advance Register sync: the register is the source of
+      // truth; the trip only consumes (marks ADJUSTED) the fetched advances.
+      // Release everything previously linked, then re-link the current set —
+      // no duplicates possible.
+      await tx.driverAdvance.updateMany({
+        where: { tripId: savedId },
+        data: { status: "PENDING", tripId: null },
+      });
+      if (data.driverId && data.advanceIds.length) {
+        await tx.driverAdvance.updateMany({
+          where: {
+            id: { in: data.advanceIds },
+            driverId: data.driverId,
+            status: "PENDING",
+            deletedAt: null,
+          },
+          data: { status: "ADJUSTED", tripId: savedId },
+        });
+      }
+
+      // ---- Driver +/- settlement: one row per trip, auto-posted
+      const existingSettlement = await tx.driverSettlement.findFirst({
+        where: { tripId: savedId, deletedAt: null },
+      });
+      if (data.driverId && data.driverBalance !== 0) {
+        const sData = {
+          date: data.returnDate ? toDate(data.returnDate) : toDate(data.tripDate),
+          driverId: data.driverId,
+          vehicleId: data.vehicleId,
+          tripRef: tripNo,
+          amount: data.driverBalance,
+          remarks: `Trip ${tripNo} driver balance`,
+        };
+        if (!existingSettlement) {
+          await tx.driverSettlement.create({
+            data: {
+              tenantId: session.tenantId,
+              firmId: session.firmId,
+              fyId: session.fyId,
+              tripId: savedId,
+              ...sData,
+            },
+          });
+        } else if (existingSettlement.status === "PENDING") {
+          await tx.driverSettlement.update({
+            where: { id: existingSettlement.id },
+            data: sData,
+          });
+        }
+        // settled rows are never modified — the settled amount must not change
+      } else if (existingSettlement && existingSettlement.status === "PENDING") {
+        await tx.driverSettlement.update({
+          where: { id: existingSettlement.id },
+          data: { deletedAt: new Date() },
+        });
+      }
+
+      // ---- relative-vehicle urea: the allocated amount moves out of the
+      // Urea Expense Ledger into the relative owner's ledger
+      await reverseLedger(tx, "TRIP_UREA", savedId);
+      if (vehicle.ownershipType === "RELATIVE" && vehicle.ownerId && ureaAmount > 0) {
+        const ureaHead = await ensureAccountHead(tx, session, "Urea Expense", "EXPENSE");
+        const common = {
+          date: toDate(data.tripDate),
+          refType: "TRIP_UREA",
+          refId: savedId,
+          refNo: tripNo,
+          narration: `Urea ${data.ureaQty} L × ${data.ureaRate} for relative vehicle — transferred to owner (trip ${tripNo})`,
+        };
+        await postLedger(tx, session, [
+          { ...common, partyId: vehicle.ownerId, side: "DEBIT", amount: ureaAmount },
+          { ...common, accountHeadId: ureaHead, side: "CREDIT", amount: ureaAmount },
+        ]);
+      }
+
       return savedId;
     });
 
@@ -227,6 +426,18 @@ export async function deleteTrip(id: string): Promise<{ ok: true } | { ok: false
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.trip.findUniqueOrThrow({ where: { id } });
       await tx.trip.update({ where: { id }, data: { deletedAt: new Date() } });
+      // release consumed driver advances; drop the pending settlement row
+      await tx.driverAdvance.updateMany({
+        where: { tripId: id },
+        data: { status: "PENDING", tripId: null },
+      });
+      await tx.driverSettlement.updateMany({
+        where: { tripId: id, status: "PENDING" },
+        data: { deletedAt: new Date() },
+      });
+      await reverseLedger(tx, "TRIP_UREA", id);
+      // release the chalans / broker slips back to pending
+      await tx.tripDoc.deleteMany({ where: { tripId: id } });
       await audit(tx, session, { entity: "Trip", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/trips/register");
@@ -321,5 +532,162 @@ export async function findTripSources(vehicleId: string, dateIso: string): Promi
       });
     }
     return out;
+  });
+}
+
+// ------------------------------------------------- trip settlement fetches
+
+export interface PendingTripDoc {
+  refType: "CHALAN" | "BROKER_SLIP";
+  refId: string;
+  docNo: string;
+  date: string; // ISO
+  name: string; // company (chalan broker) / broker (slip transporter)
+  from: string;
+  to: string;
+  actualWt: number;
+  chargeWt: number;
+  rate: number;
+  freight: number;
+}
+
+/**
+ * PENDING chalans & broker slips of a vehicle in a date range — documents
+ * already settled in another trip sheet never appear again. Values are read
+ * live from the source documents, so later edits reflect automatically.
+ */
+export async function getPendingTripDocs(input: {
+  vehicleId: string;
+  dateFrom: string;
+  dateTo: string;
+  excludeTripId?: string | null;
+}): Promise<PendingTripDoc[]> {
+  const session = requireSession();
+  const range = {
+    gte: toDate(input.dateFrom),
+    lte: new Date(`${input.dateTo}T23:59:59`),
+  };
+  return withTenant(session.tenantId, async (tx) => {
+    const linked = await tx.tripDoc.findMany({
+      where: input.excludeTripId ? { tripId: { not: input.excludeTripId } } : {},
+      select: { refType: true, refId: true },
+    });
+    const linkedSet = new Set(linked.map((l) => `${l.refType}:${l.refId}`));
+
+    const [chalans, slips, cities, parties] = await Promise.all([
+      tx.chalan.findMany({
+        where: {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          vehicleId: input.vehicleId,
+          chalanDate: range,
+          deletedAt: null,
+        },
+        include: { lrs: { include: { lr: true } } },
+      }),
+      tx.brokerSlip.findMany({
+        where: {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          vehicleId: input.vehicleId,
+          slipDate: range,
+          deletedAt: null,
+        },
+      }),
+      tx.city.findMany(),
+      tx.party.findMany(),
+    ]);
+    const cityName = (id: string | null | undefined) =>
+      id ? cities.find((c) => c.id === id)?.name ?? "" : "";
+    const partyName = (id: string | null | undefined) =>
+      id ? parties.find((p) => p.id === id)?.name ?? "" : "";
+
+    const out: PendingTripDoc[] = [];
+    for (const c of chalans) {
+      if (linkedSet.has(`CHALAN:${c.id}`)) continue;
+      const firstLr = c.lrs[0]?.lr;
+      out.push({
+        refType: "CHALAN",
+        refId: c.id,
+        docNo: c.chalanNo,
+        date: c.chalanDate.toISOString(),
+        name: c.transportName || partyName(c.brokerId),
+        from: cityName(firstLr?.sourceCityId),
+        to: cityName(firstLr?.destCityId),
+        actualWt: toNumSafe(c.actualWt),
+        chargeWt: toNumSafe(c.chargeWt),
+        rate: toNumSafe(c.rate),
+        freight: toNumSafe(c.freight),
+      });
+    }
+    for (const s of slips) {
+      if (linkedSet.has(`BROKER_SLIP:${s.id}`)) continue;
+      out.push({
+        refType: "BROKER_SLIP",
+        refId: s.id,
+        docNo: s.slipNo,
+        date: s.slipDate.toISOString(),
+        name: partyName(s.transporterId) || partyName(s.partyId) || s.ownerName || "",
+        from: cityName(s.loadStationId),
+        to: cityName(s.destCityId),
+        actualWt: toNumSafe(s.actualWt),
+        chargeWt: toNumSafe(s.chargeWt),
+        rate: toNumSafe(s.vRate),
+        freight: toNumSafe(s.vFreight),
+      });
+    }
+    return out.sort((a, b) => a.date.localeCompare(b.date));
+  });
+}
+
+function toNumSafe(v: unknown): number {
+  const n = Number(String(v ?? 0));
+  return isNaN(n) ? 0 : n;
+}
+
+export interface TripSettlementInfo {
+  previousBalance: number; // pending settlements of the driver (excl. this trip)
+  current: {
+    id: string;
+    amount: number;
+    status: string;
+    voucherNo: string;
+  } | null;
+}
+
+/** Previous pending driver balance + this trip's settlement row (if saved). */
+export async function getTripSettlementInfo(input: {
+  driverId: string;
+  excludeTripId?: string | null;
+}): Promise<TripSettlementInfo> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const pending = await tx.driverSettlement.findMany({
+      where: {
+        firmId: session.firmId,
+        driverId: input.driverId,
+        status: "PENDING",
+        deletedAt: null,
+        ...(input.excludeTripId ? { OR: [{ tripId: null }, { tripId: { not: input.excludeTripId } }] } : {}),
+      },
+    });
+    const previousBalance =
+      Math.round(pending.reduce((s, r) => s + toNumSafe(r.amount), 0) * 100) / 100;
+    const current = input.excludeTripId
+      ? await tx.driverSettlement.findFirst({
+          where: { tripId: input.excludeTripId, deletedAt: null },
+        })
+      : null;
+    return {
+      previousBalance,
+      current: current
+        ? {
+            id: current.id,
+            amount: toNumSafe(current.amount),
+            status: current.status,
+            voucherNo: current.voucherNo ?? "",
+          }
+        : null,
+    };
   });
 }

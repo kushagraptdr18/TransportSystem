@@ -1,53 +1,213 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
+import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
-import { saveDocRow, deleteDocRow, type ActionResult, type DocCrudConfig } from "@/lib/doc-crud";
-import { parseDateInput, optStr } from "../../masters/_lib/util";
+import { audit } from "@/lib/audit";
+import { toNum } from "@/lib/utils";
 
-const CFG: DocCrudConfig = {
-  delegate: "tyreInstallation",
-  entity: "TyreInstallation",
-  path: "/vehicle/tyres",
-  scope: "firm",
-  softDelete: false,
-};
+/**
+ * Tyre Life Management. A tyre is a permanent identity (unique Tyre Number);
+ * its life is a chain of installation cycles. Transfers close the running
+ * cycle (reason TRANSFER) and open a new one on the next vehicle; removal
+ * closes the running cycle and marks the tyre REMOVED. History is never
+ * deleted — every cycle stays linked to the same tyre number.
+ */
 
-const schema = z.object({
-  id: z.string().optional(),
-  entryDate: z.string().min(1, "Entry date is required"),
-  vehicleId: z.string().min(1, "Vehicle is required"),
-  productId: optStr,
-  position: optStr,
-  partNo: optStr,
-  instKm: z.coerce.number().nullable().optional(),
-  uninstKm: z.coerce.number().nullable().optional(),
-  instDate: optStr,
-  uninstDate: optStr,
-  remarks: optStr,
-});
+const REVALIDATE = "/vehicle/tyres";
 
-export async function saveTyre(input: unknown): Promise<ActionResult> {
-  const session = requireSession();
-  const parsed = schema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
-  const { id, entryDate, instDate, uninstDate, ...data } = parsed.data;
-  await authorize(session, "maintenance", id ? "edit" : "create");
-  const date = parseDateInput(entryDate);
-  if (!date) return { ok: false, error: "Invalid entry date" };
-  return saveDocRow(session, CFG, id, {
-    ...data,
-    instKm: data.instKm || null,
-    uninstKm: data.uninstKm || null,
-    entryDate: date,
-    instDate: parseDateInput(instDate),
-    uninstDate: parseDateInput(uninstDate),
-  });
+function toDate(s: string): Date {
+  return new Date(s.includes("T") ? s : `${s}T00:00:00`);
 }
 
-export async function deleteTyre(id: string): Promise<ActionResult> {
+// ---------------------------------------------------------------- create
+
+const newTyreSchema = z.object({
+  entryDate: z.string().min(1, "Entry date is required"),
+  vehicleId: z.string().min(1, "Vehicle is required"),
+  tyreName: z.string().trim().min(1, "Tyre name is required"),
+  tyreNo: z.string().trim().min(1, "Tyre number is required"),
+  position: z.enum(["HORSE", "TRAILER"]),
+  instDate: z.string().min(1, "Installation date is required"),
+  instKm: z.number().min(0, "Installation KM is required"),
+  remarks: z.string().nullish(),
+});
+
+export async function createTyre(
+  input: unknown
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const session = requireSession();
-  await authorize(session, "maintenance", "delete");
-  return deleteDocRow(session, CFG, id);
+  const parsed = newTyreSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const d = parsed.data;
+  await authorize(session, "maintenance", "create");
+
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const tyreNo = d.tyreNo.toUpperCase().replace(/\s+/g, "");
+      const dup = await tx.tyre.findFirst({
+        where: { firmId: session.firmId, tyreNo },
+        select: { id: true },
+      });
+      if (dup) {
+        return {
+          ok: false as const,
+          error: `Tyre number ${tyreNo} already exists — tyre numbers are unique. Use Transfer to move it to another vehicle.`,
+        };
+      }
+      const tyre = await tx.tyre.create({
+        data: {
+          tenantId: session.tenantId,
+          firmId: session.firmId,
+          tyreNo,
+          tyreName: d.tyreName,
+          createdById: session.userId,
+          cycles: {
+            create: {
+              tenantId: session.tenantId,
+              vehicleId: d.vehicleId,
+              position: d.position,
+              entryDate: toDate(d.entryDate),
+              instDate: toDate(d.instDate),
+              instKm: d.instKm,
+              remarks: d.remarks || null,
+            },
+          },
+        },
+      });
+      await audit(tx, session, { entity: "Tyre", entityId: tyre.id, action: "CREATE", after: tyre });
+      revalidatePath(REVALIDATE);
+      return { ok: true as const, id: tyre.id };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Save failed" };
+  }
+}
+
+// ---------------------------------------------------------------- transfer
+
+const transferSchema = z.object({
+  tyreId: z.string().min(1),
+  changeDate: z.string().min(1, "Change date is required"),
+  oldKm: z.number().min(0, "Old vehicle KM is required"),
+  newVehicleId: z.string().min(1, "New vehicle is required"),
+  newInstKm: z.number().min(0, "New vehicle installation KM is required"),
+  position: z.enum(["HORSE", "TRAILER"]),
+  remarks: z.string().nullish(),
+});
+
+export async function transferTyre(
+  input: unknown
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  const parsed = transferSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const d = parsed.data;
+  await authorize(session, "maintenance", "edit");
+
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const tyre = await tx.tyre.findFirst({
+        where: { id: d.tyreId, firmId: session.firmId },
+        include: { cycles: { where: { removalDate: null } } },
+      });
+      if (!tyre) return { ok: false as const, error: "Tyre not found" };
+      if (tyre.status === "REMOVED" || !tyre.cycles.length) {
+        return { ok: false as const, error: "Tyre is not running — nothing to transfer." };
+      }
+      const open = tyre.cycles[0];
+      if (d.oldKm < toNum(String(open.instKm))) {
+        return { ok: false as const, error: "Old vehicle KM cannot be less than its installation KM." };
+      }
+      if (open.vehicleId === d.newVehicleId) {
+        return { ok: false as const, error: "New vehicle is the same as the current vehicle." };
+      }
+      const changeDate = toDate(d.changeDate);
+      await tx.tyreCycle.update({
+        where: { id: open.id },
+        data: { removalDate: changeDate, removalKm: d.oldKm, removalReason: "TRANSFER" },
+      });
+      await tx.tyreCycle.create({
+        data: {
+          tenantId: session.tenantId,
+          tyreId: tyre.id,
+          vehicleId: d.newVehicleId,
+          position: d.position,
+          entryDate: changeDate,
+          instDate: changeDate,
+          instKm: d.newInstKm,
+          remarks: d.remarks || null,
+        },
+      });
+      await audit(tx, session, {
+        entity: "Tyre",
+        entityId: tyre.id,
+        action: "UPDATE",
+        after: { transfer: d },
+      });
+      revalidatePath(REVALIDATE);
+      return { ok: true as const };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Transfer failed" };
+  }
+}
+
+// ---------------------------------------------------------------- removal
+
+const removalSchema = z.object({
+  tyreId: z.string().min(1),
+  removalDate: z.string().min(1, "Removal date is required"),
+  removalKm: z.number().min(0, "Removal KM is required"),
+  reason: z.string().nullish(),
+  remarks: z.string().nullish(),
+});
+
+export async function removeTyre(
+  input: unknown
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  const parsed = removalSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const d = parsed.data;
+  await authorize(session, "maintenance", "edit");
+
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const tyre = await tx.tyre.findFirst({
+        where: { id: d.tyreId, firmId: session.firmId },
+        include: { cycles: { where: { removalDate: null } } },
+      });
+      if (!tyre) return { ok: false as const, error: "Tyre not found" };
+      if (tyre.status === "REMOVED" || !tyre.cycles.length) {
+        return { ok: false as const, error: "Tyre is already removed." };
+      }
+      const open = tyre.cycles[0];
+      if (d.removalKm < toNum(String(open.instKm))) {
+        return { ok: false as const, error: "Removal KM cannot be less than the installation KM." };
+      }
+      await tx.tyreCycle.update({
+        where: { id: open.id },
+        data: {
+          removalDate: toDate(d.removalDate),
+          removalKm: d.removalKm,
+          removalReason: d.reason || null,
+          remarks: [open.remarks, d.remarks].filter(Boolean).join(" | ") || null,
+        },
+      });
+      await tx.tyre.update({ where: { id: tyre.id }, data: { status: "REMOVED" } });
+      await audit(tx, session, {
+        entity: "Tyre",
+        entityId: tyre.id,
+        action: "UPDATE",
+        after: { removal: d },
+      });
+      revalidatePath(REVALIDATE);
+      return { ok: true as const };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Removal failed" };
+  }
 }
