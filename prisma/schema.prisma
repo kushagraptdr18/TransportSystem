@@ -2100,6 +2100,7 @@ model DriverShortage {
   driverId String
   tripRef  String?
   amount   Decimal  @default(0) @db.Decimal(14, 2)
+  adjustedAmount Decimal @default(0) @db.Decimal(14, 2) // partial adjustments accumulate here
   remarks  String?
   status   String   @default("PENDING") // PENDING | ADJUSTED
   salaryId String? // DriverSalary that adjusted it
@@ -2150,6 +2151,7 @@ model DriverSalary {
   shortageDeduction Decimal @default(0) @db.Decimal(12, 2)
   otherDeductions   Decimal @default(0) @db.Decimal(12, 2)
   netPayable        Decimal @default(0) @db.Decimal(12, 2)
+  paidAmount        Decimal @default(0) @db.Decimal(12, 2) // partial payments accumulate here
 
   paymentStatus String    @default("PENDING") // PENDING | PAID
   paymentDate   DateTime?

@@ -29,7 +29,7 @@ export default async function DriverSalaryPage({
       where.paymentStatus = searchParams.status;
     }
     const [salaries, shortages, drivers, banks] = await Promise.all([
-      tx.driverSalary.findMany({ where, orderBy: [{ month: "desc" }, { createdAt: "desc" }] }),
+      tx.driverSalary.findMany({ where, orderBy: [{ month: "asc" }, { createdAt: "asc" }] }),
       tx.driverShortage.findMany({
         where: { firmId: session.firmId, deletedAt: null },
         orderBy: { date: "desc" },
@@ -45,23 +45,52 @@ export default async function DriverSalaryPage({
 
   const driverName = new Map(drivers.map((d) => [d.id, d.name]));
 
-  const rows: DriverSalaryRow[] = salaries.map((s) => ({
-    id: s.id,
-    driverId: s.driverId,
-    driver: driverName.get(s.driverId) ?? "",
-    month: s.month,
-    salaryAmount: toNum(String(s.salaryAmount)),
-    incentive: toNum(String(s.incentive)),
-    bonus: toNum(String(s.bonus)),
-    otherAllowance: toNum(String(s.otherAllowance)),
-    advanceAdjust: toNum(String(s.advanceAdjust)),
-    shortageDeduction: toNum(String(s.shortageDeduction)),
-    otherDeductions: toNum(String(s.otherDeductions)),
-    netPayable: toNum(String(s.netPayable)),
-    paymentStatus: s.paymentStatus,
-    paymentDate: s.paymentDate ? s.paymentDate.toISOString() : null,
-    remarks: s.remarks ?? "",
-  }));
+  // pending shortage (remaining) per driver — offered for adjustment at pay time
+  const shortagePendingByDriver = new Map<string, number>();
+  for (const s of shortages) {
+    if (s.status !== "PENDING") continue;
+    const remaining = toNum(String(s.amount)) - toNum(String(s.adjustedAmount));
+    if (remaining <= 0) continue;
+    shortagePendingByDriver.set(
+      s.driverId,
+      Math.round(((shortagePendingByDriver.get(s.driverId) ?? 0) + remaining) * 100) / 100
+    );
+  }
+
+  // running salary balance per driver, chronological (unpaid carries forward)
+  const runningByDriver = new Map<string, number>();
+  const rows: DriverSalaryRow[] = salaries.map((s) => {
+    const net = toNum(String(s.netPayable));
+    const paid = toNum(String(s.paidAmount));
+    const outstanding = Math.round((net - paid) * 100) / 100;
+    const prevPending = runningByDriver.get(s.driverId) ?? 0;
+    const running = Math.round((prevPending + outstanding) * 100) / 100;
+    runningByDriver.set(s.driverId, running);
+    return {
+      id: s.id,
+      driverId: s.driverId,
+      driver: driverName.get(s.driverId) ?? "",
+      month: s.month,
+      salaryAmount: toNum(String(s.salaryAmount)),
+      incentive: toNum(String(s.incentive)),
+      bonus: toNum(String(s.bonus)),
+      otherAllowance: toNum(String(s.otherAllowance)),
+      advanceAdjust: toNum(String(s.advanceAdjust)),
+      shortageDeduction: toNum(String(s.shortageDeduction)),
+      otherDeductions: toNum(String(s.otherDeductions)),
+      netPayable: net,
+      paidAmount: paid,
+      outstanding,
+      prevPending,
+      runningBalance: running,
+      shortagePending: shortagePendingByDriver.get(s.driverId) ?? 0,
+      paymentStatus:
+        s.paymentStatus === "PAID" ? "PAID" : paid > 0 ? "PARTIAL" : "PENDING",
+      paymentDate: s.paymentDate ? s.paymentDate.toISOString() : null,
+      remarks: s.remarks ?? "",
+    };
+  });
+  rows.reverse(); // newest first for display
 
   const shortageRows = shortages.map((s) => ({
     id: s.id,

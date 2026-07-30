@@ -33,7 +33,7 @@ import { MasterCombobox, type MasterOption } from "@/components/data/master-comb
 import {
   deleteDriverSalary,
   getPendingShortages,
-  payDriverSalary,
+  payDriverSalaryRunning,
   processDriverSalary,
   saveDriverShortage,
 } from "@/app/(app)/vehicle/driver-salary/actions";
@@ -51,7 +51,12 @@ export interface DriverSalaryRow {
   shortageDeduction: number;
   otherDeductions: number;
   netPayable: number;
-  paymentStatus: string;
+  paidAmount: number;
+  outstanding: number;
+  prevPending: number;
+  runningBalance: number;
+  shortagePending: number;
+  paymentStatus: string; // PENDING | PARTIAL | PAID
   paymentDate: string | null;
   remarks: string;
 }
@@ -132,8 +137,20 @@ export function DriverSalaryClient({
   const [payOf, setPayOf] = React.useState<DriverSalaryRow | null>(null);
   const [pay, setPay] = React.useState({
     dateText: formatDate(new Date()),
+    paymentMode: "CASH" as "CASH" | "BANK",
     paymentHeadId: null as string | null,
+    shortageAdjust: 0,
+    paymentAmount: 0,
+    refNo: "",
+    remarks: "",
   });
+
+  // Pay only on each driver's LATEST salary entry (rows arrive newest-first)
+  const latestByDriver = React.useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows) if (!m.has(r.driverId)) m.set(r.driverId, r.id);
+    return m;
+  }, [rows]);
 
   const [shortOpen, setShortOpen] = React.useState(false);
   const [short, setShort] = React.useState({
@@ -192,11 +209,31 @@ export function DriverSalaryClient({
       } satisfies DataTableColumnMeta<DriverSalaryRow>,
     },
     {
+      accessorKey: "paidAmount",
+      header: "Paid",
+      cell: ({ row }) => formatMoney(row.original.paidAmount),
+      meta: { numeric: true } satisfies DataTableColumnMeta<DriverSalaryRow>,
+    },
+    {
+      accessorKey: "prevPending",
+      header: "Prev Pending",
+      cell: ({ row }) => formatMoney(row.original.prevPending),
+      meta: { numeric: true } satisfies DataTableColumnMeta<DriverSalaryRow>,
+    },
+    {
+      accessorKey: "runningBalance",
+      header: "Running Balance",
+      cell: ({ row }) => <b>{formatMoney(row.original.runningBalance)}</b>,
+      meta: { numeric: true } satisfies DataTableColumnMeta<DriverSalaryRow>,
+    },
+    {
       accessorKey: "paymentStatus",
       header: "Status",
       cell: ({ row }) =>
         row.original.paymentStatus === "PAID" ? (
           <Badge>PAID {row.original.paymentDate ? formatDate(row.original.paymentDate) : ""}</Badge>
+        ) : row.original.paymentStatus === "PARTIAL" ? (
+          <Badge variant="secondary">PARTIAL</Badge>
         ) : (
           <Badge variant="outline">PENDING</Badge>
         ),
@@ -205,12 +242,13 @@ export function DriverSalaryClient({
       id: "actions",
       header: "",
       cell: ({ row }) =>
-        row.original.paymentStatus === "PENDING" ? (
+        row.original.paymentStatus !== "PAID" ? (
           <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
             <Button
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs"
+              disabled={row.original.paidAmount > 0}
               onClick={() => {
                 setForm({
                   id: row.original.id,
@@ -230,17 +268,29 @@ export function DriverSalaryClient({
             >
               Edit
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs"
-              onClick={() => {
-                setPay({ dateText: formatDate(new Date()), paymentHeadId: null });
-                setPayOf(row.original);
-              }}
-            >
-              Pay
-            </Button>
+            {latestByDriver.get(row.original.driverId) === row.original.id &&
+              row.original.runningBalance > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  title="Pays the driver's total running outstanding salary"
+                  onClick={() => {
+                    setPay({
+                      dateText: formatDate(new Date()),
+                      paymentMode: "CASH",
+                      paymentHeadId: null,
+                      shortageAdjust: 0,
+                      paymentAmount: row.original.runningBalance,
+                      refNo: "",
+                      remarks: "",
+                    });
+                    setPayOf(row.original);
+                  }}
+                >
+                  Pay
+                </Button>
+              )}
             {canDelete && (
               <Button
                 variant="ghost"
@@ -486,48 +536,188 @@ export function DriverSalaryClient({
         </DialogContent>
       </Dialog>
 
-      {/* pay dialog */}
+      {/* salary settlement (pay) window */}
       <Dialog open={!!payOf} onOpenChange={(o) => !o && setPayOf(null)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[95vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>
-              Pay {formatMoney(payOf?.netPayable ?? 0)} to {payOf?.driver} ({payOf?.month})
-            </DialogTitle>
-            <DialogDescription>Posts to the driver ledger and cash/bank book.</DialogDescription>
+            <DialogTitle>Salary Settlement — {payOf?.driver}</DialogTitle>
+            <DialogDescription>
+              Payment always settles the TOTAL running outstanding salary (oldest month first).
+              Partial payments and full/partial shortage adjustment are supported.
+            </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label className="text-xs">Payment Date *</Label>
-              <DateInput
-                className="h-8"
-                value={pay.dateText}
-                onChange={(t) => setPay((f) => ({ ...f, dateText: t }))}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Cash / Bank Account *</Label>
-              <MasterCombobox
-                options={bankOptions}
-                value={pay.paymentHeadId}
-                onChange={(v) => setPay((f) => ({ ...f, paymentHeadId: v }))}
-                placeholder="Select account..."
-              />
-            </div>
-          </div>
+
+          {payOf && (
+            <>
+              <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+                {(
+                  [
+                    ["Current Month Salary", payOf.outstanding],
+                    ["Previous Pending", payOf.prevPending],
+                    ["Running Salary Balance", payOf.runningBalance],
+                    ["Shortage Pending", payOf.shortagePending],
+                  ] as [string, number][]
+                ).map(([l, v]) => (
+                  <div key={l} className="rounded-md border p-2">
+                    <div className="text-[11px] text-muted-foreground">{l}</div>
+                    <div className="font-semibold tabular-nums">{formatMoney(v)}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    Adjust Against Shortage (max {formatMoney(Math.min(payOf.shortagePending, payOf.runningBalance))})
+                  </Label>
+                  <Input
+                    type="number"
+                    className="h-8 text-right"
+                    value={pay.shortageAdjust ? String(pay.shortageAdjust) : ""}
+                    placeholder="0"
+                    onChange={(e) => {
+                      const v = Math.max(
+                        0,
+                        Math.min(
+                          Number(e.target.value) || 0,
+                          Math.min(payOf.shortagePending, payOf.runningBalance)
+                        )
+                      );
+                      setPay((f) => ({
+                        ...f,
+                        shortageAdjust: v,
+                        paymentAmount: Math.max(
+                          0,
+                          Math.round((payOf.runningBalance - v) * 100) / 100
+                        ),
+                      }));
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Payable Salary (running − shortage adjust)</Label>
+                  <Input
+                    readOnly
+                    className="h-8 bg-muted text-right font-semibold"
+                    value={formatMoney(
+                      Math.round((payOf.runningBalance - pay.shortageAdjust) * 100) / 100
+                    )}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Payment Amount * (partial allowed)</Label>
+                  <Input
+                    type="number"
+                    className="h-8 text-right"
+                    value={pay.paymentAmount ? String(pay.paymentAmount) : ""}
+                    onChange={(e) => {
+                      const max =
+                        Math.round((payOf.runningBalance - pay.shortageAdjust) * 100) / 100;
+                      setPay((f) => ({
+                        ...f,
+                        paymentAmount: Math.max(0, Math.min(Number(e.target.value) || 0, max)),
+                      }));
+                    }}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Payment Date *</Label>
+                  <DateInput
+                    className="h-8"
+                    value={pay.dateText}
+                    onChange={(t) => setPay((f) => ({ ...f, dateText: t }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Payment Mode</Label>
+                  <Select
+                    value={pay.paymentMode}
+                    onValueChange={(v) =>
+                      setPay((f) => ({ ...f, paymentMode: v as "CASH" | "BANK", paymentHeadId: null }))
+                    }
+                  >
+                    <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="CASH">Cash</SelectItem>
+                      <SelectItem value="BANK">Bank</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Cash / Bank Account *</Label>
+                  <MasterCombobox
+                    options={bankOptions.filter((b) =>
+                      pay.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                    )}
+                    value={pay.paymentHeadId}
+                    onChange={(v) => setPay((f) => ({ ...f, paymentHeadId: v }))}
+                    placeholder="Select account..."
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Reference No</Label>
+                  <Input
+                    className="h-8"
+                    value={pay.refNo}
+                    onChange={(e) => setPay((f) => ({ ...f, refNo: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Remarks</Label>
+                  <Input
+                    className="h-8"
+                    value={pay.remarks}
+                    onChange={(e) => setPay((f) => ({ ...f, remarks: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-md bg-muted/50 p-2 text-sm">
+                Settling now: shortage adjust {formatMoney(pay.shortageAdjust)} + payment{" "}
+                {formatMoney(pay.paymentAmount)} — remaining outstanding after this:{" "}
+                <b>
+                  {formatMoney(
+                    Math.max(
+                      0,
+                      Math.round(
+                        (payOf.runningBalance - pay.shortageAdjust - pay.paymentAmount) * 100
+                      ) / 100
+                    )
+                  )}
+                </b>{" "}
+                (carries forward automatically)
+              </div>
+            </>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setPayOf(null)} disabled={busy}>Cancel</Button>
             <Button
-              disabled={busy || !pay.paymentHeadId}
+              disabled={
+                busy ||
+                !pay.paymentHeadId ||
+                (pay.paymentAmount <= 0 && pay.shortageAdjust <= 0)
+              }
               onClick={async () => {
                 setBusy(true);
                 try {
-                  const res = await payDriverSalary({
-                    id: payOf!.id,
+                  const res = await payDriverSalaryRunning({
+                    driverId: payOf!.driverId,
                     paymentDate: textToIso(pay.dateText),
                     paymentHeadId: pay.paymentHeadId ?? "",
+                    paymentMode: pay.paymentMode,
+                    shortageAdjust: pay.shortageAdjust,
+                    paymentAmount: pay.paymentAmount,
+                    refNo: pay.refNo,
+                    remarks: pay.remarks,
                   });
                   if (res.ok) {
-                    toast({ title: "Salary paid" });
+                    toast({
+                      title: `Paid ${formatMoney(res.paid)}${res.adjusted ? `, shortage adjusted ${formatMoney(res.adjusted)}` : ""}`,
+                      description: res.remaining
+                        ? `Outstanding ${formatMoney(res.remaining)} carries forward.`
+                        : "Salary fully settled.",
+                    });
                     setPayOf(null);
                     router.refresh();
                   } else toast({ variant: "destructive", title: "Failed", description: res.error });
@@ -536,7 +726,7 @@ export function DriverSalaryClient({
                 }
               }}
             >
-              {busy ? "Paying..." : "Pay Salary"}
+              {busy ? "Processing..." : "Confirm Settlement"}
             </Button>
           </DialogFooter>
         </DialogContent>

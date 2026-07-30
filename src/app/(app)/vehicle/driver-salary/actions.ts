@@ -70,7 +70,7 @@ export async function saveDriverShortage(
   }
 }
 
-/** Pending shortages of a driver — shown before salary is processed. */
+/** Pending shortages of a driver (remaining after partial adjustments). */
 export async function getPendingShortages(driverId: string): Promise<{
   total: number;
   rows: { id: string; date: string; tripRef: string; amount: number; remarks: string }[];
@@ -81,13 +81,15 @@ export async function getPendingShortages(driverId: string): Promise<{
       where: { firmId: session.firmId, driverId, status: "PENDING", deletedAt: null },
       orderBy: { date: "asc" },
     });
-    const out = rows.map((r) => ({
-      id: r.id,
-      date: r.date.toISOString(),
-      tripRef: r.tripRef ?? "",
-      amount: toNum(String(r.amount)),
-      remarks: r.remarks ?? "",
-    }));
+    const out = rows
+      .map((r) => ({
+        id: r.id,
+        date: r.date.toISOString(),
+        tripRef: r.tripRef ?? "",
+        amount: round2(toNum(String(r.amount)) - toNum(String(r.adjustedAmount))),
+        remarks: r.remarks ?? "",
+      }))
+      .filter((r) => r.amount > 0);
     return { total: round2(out.reduce((s, r) => s + r.amount, 0)), rows: out };
   });
 }
@@ -139,7 +141,12 @@ export async function processDriverSalary(
         where: { firmId: session.firmId, driverId: d.driverId, status: "PENDING", deletedAt: null },
       });
       const shortageDeduction = d.adjustShortage
-        ? round2(pending.reduce((s, r) => s + toNum(String(r.amount)), 0))
+        ? round2(
+            pending.reduce(
+              (s, r) => s + toNum(String(r.amount)) - toNum(String(r.adjustedAmount)),
+              0
+            )
+          )
         : 0;
 
       const gross = round2(d.salaryAmount + d.incentive + d.bonus + d.otherAllowance);
@@ -169,9 +176,12 @@ export async function processDriverSalary(
           return { ok: false as const, error: "Salary already paid — cannot edit." };
         }
         // release shortages previously adjusted by this salary
+        if (toNum(String(before.paidAmount)) > 0) {
+          return { ok: false as const, error: "Salary has payments against it — cannot edit." };
+        }
         await tx.driverShortage.updateMany({
           where: { salaryId: d.id },
-          data: { status: "PENDING", salaryId: null },
+          data: { status: "PENDING", salaryId: null, adjustedAmount: 0 },
         });
         const updated = await tx.driverSalary.update({ where: { id: d.id }, data: values });
         id = updated.id;
@@ -192,10 +202,12 @@ export async function processDriverSalary(
       }
 
       if (d.adjustShortage && pending.length) {
-        await tx.driverShortage.updateMany({
-          where: { id: { in: pending.map((p) => p.id) } },
-          data: { status: "ADJUSTED", salaryId: id },
-        });
+        for (const p of pending) {
+          await tx.driverShortage.update({
+            where: { id: p.id },
+            data: { status: "ADJUSTED", adjustedAmount: p.amount, salaryId: id },
+          });
+        }
       }
 
       // ledger accrual
@@ -248,71 +260,193 @@ export async function processDriverSalary(
   }
 }
 
-// ---------------------------------------------------------------- pay salary
+// ------------------------------------------ pay running salary balance
 
-const paySchema = z.object({
-  id: z.string().min(1),
+const payRunningSchema = z.object({
+  driverId: z.string().min(1),
   paymentDate: z.string().min(1, "Payment date is required"),
   paymentHeadId: z.string().min(1, "Cash / Bank account is required"),
+  paymentMode: z.enum(["CASH", "BANK"]).default("CASH"),
+  /** shortage amount to adjust against the salary (full or partial) */
+  shortageAdjust: z.number().min(0).default(0),
+  /** money actually paid now (partial payments allowed) */
+  paymentAmount: z.number().min(0).default(0),
+  refNo: z.string().nullish(),
+  remarks: z.string().nullish(),
 });
 
-export async function payDriverSalary(
+/**
+ * Settle a driver's RUNNING salary balance (all pending months, FIFO):
+ *   payable = running balance − shortage adjustment (full or partial)
+ *   payment amount may be less than payable — the rest stays outstanding and
+ *   carries forward automatically as Previous Pending Salary.
+ * Shortage adjustment reduces the oldest pending shortages first; partially
+ * consumed rows keep their remainder pending.
+ */
+export async function payDriverSalaryRunning(
   input: unknown
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; paid: number; adjusted: number; remaining: number }
+  | { ok: false; error: string }
+> {
   const session = requireSession();
-  const parsed = paySchema.safeParse(input);
+  const parsed = payRunningSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   const d = parsed.data;
   await authorize(session, "vouchers", "create");
+  if (d.shortageAdjust <= 0 && d.paymentAmount <= 0) {
+    return { ok: false, error: "Enter a payment amount and/or a shortage adjustment." };
+  }
+
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const sal = await tx.driverSalary.findFirst({
-        where: { id: d.id, firmId: session.firmId, deletedAt: null },
-      });
-      if (!sal) return { ok: false as const, error: "Salary record not found" };
-      if (sal.paymentStatus === "PAID") return { ok: false as const, error: "Already paid." };
-      const driver = await tx.driver.findFirst({ where: { id: sal.driverId } });
-      if (!driver?.partyId) return { ok: false as const, error: "Driver ledger party missing" };
+      const driver = await tx.driver.findFirst({ where: { id: d.driverId, deletedAt: null } });
+      if (!driver?.partyId) return { ok: false as const, error: "Driver (ledger party) not found" };
 
-      const net = toNum(String(sal.netPayable));
-      const paymentDate = new Date(`${d.paymentDate}T00:00:00`);
-      const after = await tx.driverSalary.update({
-        where: { id: sal.id },
-        data: { paymentStatus: "PAID", paymentDate, paymentHeadId: d.paymentHeadId },
+      const salaries = await tx.driverSalary.findMany({
+        where: {
+          firmId: session.firmId,
+          driverId: d.driverId,
+          paymentStatus: "PENDING",
+          deletedAt: null,
+        },
+        orderBy: { month: "asc" },
       });
-      if (net > 0) {
-        const common = {
-          date: paymentDate,
-          refType: "DRIVER_SALARY_PAY",
-          refId: sal.id,
-          refNo: `DSAL-${sal.month}`,
-        };
-        await postLedger(tx, session, [
+      const running = round2(
+        salaries.reduce(
+          (s, r) => s + toNum(String(r.netPayable)) - toNum(String(r.paidAmount)),
+          0
+        )
+      );
+      if (running <= 0) return { ok: false as const, error: "No outstanding salary balance." };
+
+      const shortages = await tx.driverShortage.findMany({
+        where: { firmId: session.firmId, driverId: d.driverId, status: "PENDING", deletedAt: null },
+        orderBy: { date: "asc" },
+      });
+      const shortagePending = round2(
+        shortages.reduce(
+          (s, r) => s + toNum(String(r.amount)) - toNum(String(r.adjustedAmount)),
+          0
+        )
+      );
+      if (d.shortageAdjust > shortagePending) {
+        return { ok: false as const, error: `Shortage adjustment exceeds pending shortage (${shortagePending}).` };
+      }
+      if (d.shortageAdjust > running) {
+        return { ok: false as const, error: "Shortage adjustment exceeds the running salary balance." };
+      }
+      const payable = round2(running - d.shortageAdjust);
+      if (d.paymentAmount > payable) {
+        return { ok: false as const, error: `Payment exceeds the payable salary (${payable}).` };
+      }
+
+      const paymentDate = new Date(`${d.paymentDate}T00:00:00`);
+      const latest = salaries[salaries.length - 1];
+
+      // shortage adjustment — consume oldest pending shortages first
+      let toAdjust = d.shortageAdjust;
+      for (const sh of shortages) {
+        if (toAdjust <= 0) break;
+        const remaining = round2(toNum(String(sh.amount)) - toNum(String(sh.adjustedAmount)));
+        if (remaining <= 0) continue;
+        const take = Math.min(remaining, toAdjust);
+        toAdjust = round2(toAdjust - take);
+        await tx.driverShortage.update({
+          where: { id: sh.id },
+          data: {
+            adjustedAmount: round2(toNum(String(sh.adjustedAmount)) + take),
+            status: take >= remaining ? "ADJUSTED" : "PENDING",
+            salaryId: latest.id,
+          },
+        });
+      }
+
+      // settle salaries FIFO with (shortage adjust + money paid)
+      let toSettle = round2(d.shortageAdjust + d.paymentAmount);
+      for (const sal of salaries) {
+        if (toSettle <= 0) break;
+        const outstanding = round2(toNum(String(sal.netPayable)) - toNum(String(sal.paidAmount)));
+        if (outstanding <= 0) continue;
+        const take = Math.min(outstanding, toSettle);
+        toSettle = round2(toSettle - take);
+        await tx.driverSalary.update({
+          where: { id: sal.id },
+          data: {
+            paidAmount: round2(toNum(String(sal.paidAmount)) + take),
+            ...(take >= outstanding
+              ? { paymentStatus: "PAID", paymentDate, paymentHeadId: d.paymentHeadId }
+              : {}),
+          },
+        });
+      }
+
+      // ledger
+      const common = {
+        date: paymentDate,
+        refType: "DRIVER_SALARY_PAY",
+        refId: `${latest.id}:${paymentDate.getTime()}`,
+        refNo: d.refNo?.trim() || `DSAL-${latest.month}`,
+      };
+      const entries = [];
+      if (d.paymentAmount > 0) {
+        entries.push(
           {
             ...common,
             partyId: d.paymentHeadId,
-            side: "CREDIT",
-            amount: net,
-            narration: `Driver salary paid ${sal.month} — ${driver.name}`,
+            side: "CREDIT" as const,
+            amount: d.paymentAmount,
+            narration: `Driver salary paid (running balance) — ${driver.name}${d.remarks ? " — " + d.remarks : ""}`,
           },
           {
             ...common,
             partyId: driver.partyId,
-            side: "DEBIT",
-            amount: net,
-            narration: `Salary paid ${sal.month}`,
-          },
-        ]);
+            side: "DEBIT" as const,
+            amount: d.paymentAmount,
+            narration: `Salary paid (running balance up to ${latest.month})`,
+          }
+        );
       }
+      if (d.shortageAdjust > 0) {
+        const head = await ensureAccountHead(tx, session, "Shortage Recovery (Driver)", "INCOME");
+        entries.push(
+          {
+            ...common,
+            partyId: driver.partyId,
+            side: "DEBIT" as const,
+            amount: d.shortageAdjust,
+            narration: `Shortage adjusted against salary — ${driver.name}`,
+          },
+          {
+            ...common,
+            accountHeadId: head,
+            side: "CREDIT" as const,
+            amount: d.shortageAdjust,
+            narration: `Shortage recovery via salary (up to ${latest.month})`,
+          }
+        );
+      }
+      await postLedger(tx, session, entries);
+
       await audit(tx, session, {
         entity: "DriverSalary",
-        entityId: sal.id,
+        entityId: latest.id,
         action: "UPDATE",
-        before: sal,
-        after,
+        after: {
+          runningPay: {
+            paid: d.paymentAmount,
+            shortageAdjust: d.shortageAdjust,
+            remaining: round2(payable - d.paymentAmount),
+          },
+        },
       });
       revalidatePath(REVALIDATE);
-      return { ok: true as const };
+      return {
+        ok: true as const,
+        paid: d.paymentAmount,
+        adjusted: d.shortageAdjust,
+        remaining: round2(payable - d.paymentAmount),
+      };
     });
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Payment failed" };
@@ -330,10 +464,12 @@ export async function deleteDriverSalary(
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.driverSalary.findFirstOrThrow({ where: { id, deletedAt: null } });
-      if (before.paymentStatus === "PAID") throw new Error("Paid salary cannot be deleted.");
+      if (before.paymentStatus === "PAID" || toNum(String(before.paidAmount)) > 0) {
+        throw new Error("Salary with payments cannot be deleted.");
+      }
       await tx.driverShortage.updateMany({
         where: { salaryId: id },
-        data: { status: "PENDING", salaryId: null },
+        data: { status: "PENDING", salaryId: null, adjustedAmount: 0 },
       });
       await tx.driverSalary.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "DRIVER_SALARY", id);
