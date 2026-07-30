@@ -29,6 +29,7 @@ import { MasterCombobox, type MasterOption } from "@/components/data/master-comb
 import { Field, NumInput, isoFromText, textFromIso, todayText } from "./shared";
 import {
   getPendingTripDocs,
+  getPrevLoadingKm,
   getTripSettlementInfo,
   saveTrip,
   type PendingTripDoc,
@@ -43,7 +44,7 @@ import {
   fetchVehicleExpensesForTrip,
   type TripFetchedExpenseRow,
 } from "@/app/(app)/vehicle/expenses/actions";
-import { settleDriverSettlement } from "@/app/(app)/vehicle/driver-settlements/actions";
+import { settleDriverRunningBalance } from "@/app/(app)/vehicle/driver-settlements/actions";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const signed = (n: number) =>
@@ -65,6 +66,7 @@ export interface TripSettlementInitial {
   unloadingKm: number;
   newLoadingKm: number;
   dieselAvg: number;
+  dieselAvg2: number;
   dieselRate: number;
   apprDriverAdvance: number;
   roadBillExp: number;
@@ -216,7 +218,11 @@ export function TripSettlementForm({
   const [unloadingKm, setUnloadingKm] = React.useState(initial?.unloadingKm ?? 0);
   const [newLoadingKm, setNewLoadingKm] = React.useState(initial?.newLoadingKm ?? 0);
   const [dieselAvg, setDieselAvg] = React.useState(initial?.dieselAvg ?? 0);
+  const [dieselAvg2, setDieselAvg2] = React.useState(initial?.dieselAvg2 ?? 0);
   const [dieselRate, setDieselRate] = React.useState(initial?.dieselRate ?? 0);
+  // previous trip's New Loading KM (info-only warning; never blocks saving)
+  const prevKmRef = React.useRef<{ km: number; tripNo: string } | null>(null);
+  const prevKmWarned = React.useRef(false);
   const [apprAdvance, setApprAdvance] = React.useState(initial?.apprDriverAdvance ?? 0);
   const [roadBill, setRoadBill] = React.useState(initial?.roadBillExp ?? 0);
   const [foodingDays, setFoodingDays] = React.useState(initial?.foodingDays ?? 0);
@@ -224,10 +230,39 @@ export function TripSettlementForm({
   const [rtoExp, setRtoExp] = React.useState(initial?.rtoExp ?? 0);
   const [fixedExp, setFixedExp] = React.useState(initial?.fixedTripExp ?? 0);
 
+  // auto-fetch the previous trip's New Loading KM into Loading KM
+  React.useEffect(() => {
+    if (!vehicleId || initial?.id) return;
+    let cancelled = false;
+    getPrevLoadingKm({ vehicleId, excludeTripId: initial?.id ?? null })
+      .then((r) => {
+        if (cancelled) return;
+        prevKmRef.current = r;
+        prevKmWarned.current = false;
+        if (r) setLoadingKm(r.km);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicleId]);
+
+  const onLoadingKmChange = (n: number) => {
+    setLoadingKm(n);
+    const prev = prevKmRef.current;
+    if (prev && n !== prev.km && !prevKmWarned.current) {
+      prevKmWarned.current = true; // info only — never blocks anything
+      window.confirm(
+        `Previous Trip (${prev.tripNo}) New Loading KM is ${prev.km.toLocaleString("en-IN")}. Do you want to use a different Loading KM?`
+      );
+    }
+  };
+
   const dist1 = Math.max(0, unloadingKm - loadingKm);
   const dist2 = newLoadingKm > 0 ? Math.max(0, newLoadingKm - unloadingKm) : 0;
   const fuel1 = dieselAvg > 0 ? r2((dist1 / dieselAvg) * dieselRate) : 0;
-  const fuel2 = dieselAvg > 0 ? r2((dist2 / dieselAvg) * dieselRate) : 0;
+  const fuel2 = dieselAvg2 > 0 ? r2((dist2 / dieselAvg2) * dieselRate) : 0;
   const totalDieselCost = r2(fuel1 + fuel2);
   const fooding = r2(foodingDays * foodingRate);
 
@@ -310,6 +345,7 @@ export function TripSettlementForm({
         unloadingKm,
         newLoadingKm,
         dieselAvg,
+        dieselAvg2,
         dieselRate,
         apprDriverAdvance: apprAdvance,
         roadBillExp: roadBill,
@@ -531,22 +567,27 @@ export function TripSettlementForm({
               {calcMethod === "DIESEL_AVG" ? (
                 <>
                   <div className="grid grid-cols-3 gap-2">
-                    <Field label="Loading KM"><NumInput value={loadingKm} onChange={setLoadingKm} className="h-8" /></Field>
+                    <Field label="Loading KM (auto from prev trip)">
+                      <NumInput value={loadingKm} onChange={onLoadingKmChange} className="h-8" />
+                    </Field>
                     <Field label="Unloading KM"><NumInput value={unloadingKm} onChange={setUnloadingKm} className="h-8" /></Field>
                     <Field label="New Loading KM"><NumInput value={newLoadingKm} onChange={setNewLoadingKm} className="h-8" /></Field>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                    <div>Trip Distance 1: <b>{dist1.toLocaleString("en-IN")} km</b></div>
-                    <div>Trip Distance 2: <b>{dist2.toLocaleString("en-IN")} km</b></div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Field label="Diesel Average (km/L)"><NumInput value={dieselAvg} onChange={setDieselAvg} className="h-8" /></Field>
+                  <div className="grid grid-cols-3 gap-2">
                     <Field label="Diesel Rate (per L)"><NumInput value={dieselRate} onChange={setDieselRate} className="h-8" /></Field>
+                    <Field label="Diesel Average 1 (km/L)"><NumInput value={dieselAvg} onChange={setDieselAvg} className="h-8" /></Field>
+                    <Field label="Diesel Average 2 (km/L)"><NumInput value={dieselAvg2} onChange={setDieselAvg2} className="h-8" /></Field>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-xs text-muted-foreground">
-                    <div>Fuel Cost 1: <b>{formatMoney(fuel1)}</b></div>
-                    <div>Fuel Cost 2: <b>{formatMoney(fuel2)}</b></div>
-                    <div>Total Diesel Cost: <b>{formatMoney(totalDieselCost)}</b></div>
+                  <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                    <div>
+                      Trip Distance 1: <b>{dist1.toLocaleString("en-IN")} km</b> ÷ {dieselAvg || "—"} × {dieselRate} ={" "}
+                      <b>Diesel Cost 1: {formatMoney(fuel1)}</b>
+                    </div>
+                    <div>
+                      Trip Distance 2: <b>{dist2.toLocaleString("en-IN")} km</b> ÷ {dieselAvg2 || "—"} × {dieselRate} ={" "}
+                      <b>Diesel Cost 2: {formatMoney(fuel2)}</b>
+                    </div>
+                    <div className="col-span-2">Total Diesel Cost: <b>{formatMoney(totalDieselCost)}</b></div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <Field label="Driver Advance"><NumInput value={apprAdvance} onChange={setApprAdvance} className="h-8" /></Field>
@@ -629,20 +670,26 @@ export function TripSettlementForm({
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              {settleInfo.current && settleInfo.current.status === "PENDING" && (
-                <Button
-                  size="sm"
-                  variant={settleInfo.current.amount > 0 ? "default" : "destructive"}
-                  onClick={() => {
-                    setSettleBank(null);
-                    setSettleOpen(true);
-                  }}
-                >
-                  {settleInfo.current.amount > 0
-                    ? `Pay Driver ${formatMoney(Math.abs(settleInfo.current.amount))}`
-                    : `Receive from Driver ${formatMoney(Math.abs(settleInfo.current.amount))}`}
-                </Button>
-              )}
+              {settleInfo.current &&
+                settleInfo.current.status === "PENDING" &&
+                (settleInfo.previousBalance + settleInfo.current.amount !== 0 ? (
+                  <Button
+                    size="sm"
+                    variant={
+                      settleInfo.previousBalance + settleInfo.current.amount > 0
+                        ? "default"
+                        : "destructive"
+                    }
+                    onClick={() => {
+                      setSettleBank(null);
+                      setSettleOpen(true);
+                    }}
+                  >
+                    {settleInfo.previousBalance + settleInfo.current.amount > 0
+                      ? `Pay Driver ${formatMoney(Math.abs(settleInfo.previousBalance + settleInfo.current.amount))} (running balance)`
+                      : `Receive from Driver ${formatMoney(Math.abs(settleInfo.previousBalance + settleInfo.current.amount))} (running balance)`}
+                  </Button>
+                ) : null)}
               {settleInfo.current && settleInfo.current.status === "SETTLED" && (
                 <Badge>Settled — voucher {settleInfo.current.voucherNo}</Badge>
               )}
@@ -740,12 +787,16 @@ export function TripSettlementForm({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {settleInfo.current && settleInfo.current.amount > 0 ? "Pay Driver" : "Receive from Driver"}{" "}
-              {formatMoney(Math.abs(settleInfo.current?.amount ?? 0))}
+              {settleInfo.previousBalance + (settleInfo.current?.amount ?? 0) > 0
+                ? "Pay Driver"
+                : "Receive from Driver"}{" "}
+              {formatMoney(Math.abs(settleInfo.previousBalance + (settleInfo.current?.amount ?? 0)))}{" "}
+              — full running balance
             </DialogTitle>
             <DialogDescription>
-              A {settleInfo.current && settleInfo.current.amount > 0 ? "Payment" : "Receipt"} Voucher is
-              created automatically and the running balance updates.
+              Settles the driver&apos;s entire outstanding running balance (all pending entries) —
+              one {settleInfo.previousBalance + (settleInfo.current?.amount ?? 0) > 0 ? "Payment" : "Receipt"}{" "}
+              Voucher is created automatically, referenced by the settled trip numbers.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -772,11 +823,11 @@ export function TripSettlementForm({
             <Button
               disabled={busy || !settleBank}
               onClick={async () => {
-                if (!settleInfo.current) return;
+                if (!driverId) return;
                 setBusy(true);
                 try {
-                  const res = await settleDriverSettlement({
-                    id: settleInfo.current.id,
+                  const res = await settleDriverRunningBalance({
+                    driverId,
                     date: fromIso || new Date().toISOString().slice(0, 10),
                     paymentMode: settleMode,
                     bankPartyId: settleBank ?? "",

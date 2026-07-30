@@ -198,3 +198,110 @@ export async function deleteDriverSettlement(
     return { ok: false, error: e instanceof Error ? e.message : "Delete failed" };
   }
 }
+
+// ------------------------------------------------- running balance settlement
+
+const runningSettleSchema = z.object({
+  driverId: z.string().min(1),
+  date: z.string().min(1, "Date is required"),
+  paymentMode: z.enum(["CASH", "BANK"]).default("CASH"),
+  bankPartyId: z.string().min(1, "Cash / Bank account is required"),
+  remarks: z.string().nullish(),
+});
+
+/**
+ * Settle a driver's ENTIRE outstanding running balance in one shot — only the
+ * latest entry offers Pay/Receive, and it always settles the net of all
+ * pending entries. One voucher is created for the net amount; every pending
+ * row is marked SETTLED so nothing carries forward.
+ */
+export async function settleDriverRunningBalance(
+  input: unknown
+): Promise<{ ok: true; voucherNo: string; amount: number } | { ok: false; error: string }> {
+  const session = requireSession();
+  const parsed = runningSettleSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const d = parsed.data;
+  await authorize(session, "vouchers", "create");
+
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const pending = await tx.driverSettlement.findMany({
+        where: { firmId: session.firmId, driverId: d.driverId, status: "PENDING", deletedAt: null },
+        orderBy: { date: "asc" },
+      });
+      if (!pending.length) return { ok: false as const, error: "No pending balance to settle." };
+      const net =
+        Math.round(pending.reduce((s, r) => s + toNum(String(r.amount)), 0) * 100) / 100;
+      if (net === 0) {
+        // pluses and minuses cancel out — close all rows without money movement
+        await tx.driverSettlement.updateMany({
+          where: { id: { in: pending.map((p) => p.id) } },
+          data: { status: "SETTLED", settledDate: new Date(`${d.date}T00:00:00`), voucherNo: "NET-0" },
+        });
+        revalidatePath(REVALIDATE);
+        return { ok: true as const, voucherNo: "NET-0", amount: 0 };
+      }
+
+      const driver = await tx.driver.findFirst({ where: { id: d.driverId } });
+      if (!driver?.partyId) return { ok: false as const, error: "Driver has no linked ledger party." };
+
+      const pay = net > 0; // company pays driver
+      const abs = Math.abs(net);
+      const date = new Date(`${d.date}T00:00:00`);
+      const voucherNo = await nextDocNumber(tx, {
+        tenantId: session.tenantId,
+        firmId: session.firmId,
+        fyId: session.fyId,
+        docType: pay ? "VOUCHER_PAYMENT" : "VOUCHER_RECEIPT",
+      });
+      const refNos = Array.from(new Set(pending.map((p) => p.tripRef).filter(Boolean))) as string[];
+      const narration = `Driver running balance ${pay ? "paid to" : "received from"} ${driver.name} (${pending.length} entr${pending.length === 1 ? "y" : "ies"})${d.remarks ? " — " + d.remarks : ""}`;
+      const voucher = await tx.voucher.create({
+        data: {
+          tenantId: session.tenantId,
+          firmId: session.firmId,
+          fyId: session.fyId,
+          voucherNo,
+          voucherDate: date,
+          type: pay ? "PAYMENT" : "RECEIPT",
+          entryType: d.paymentMode,
+          moduleLink: "OTHERS",
+          partyId: driver.partyId,
+          bankPartyId: d.bankPartyId,
+          amount: abs,
+          netAmount: abs,
+          remarks: narration,
+          createdById: session.userId,
+        },
+      });
+      const common = {
+        date,
+        refType: "VOUCHER",
+        refId: voucher.id,
+        // reference-number-based adjustment: carries every trip ref settled
+        refNo: refNos.length ? refNos.join(", ") : voucherNo,
+        narration,
+      };
+      await postLedger(tx, session, [
+        { ...common, partyId: d.bankPartyId, side: pay ? "CREDIT" : "DEBIT", amount: abs },
+        { ...common, partyId: driver.partyId, side: pay ? "DEBIT" : "CREDIT", amount: abs },
+      ]);
+      await tx.driverSettlement.updateMany({
+        where: { id: { in: pending.map((p) => p.id) } },
+        data: { status: "SETTLED", settledDate: date, voucherId: voucher.id, voucherNo },
+      });
+      await audit(tx, session, {
+        entity: "DriverSettlement",
+        entityId: d.driverId,
+        action: "UPDATE",
+        after: { runningSettle: { net, voucherNo, entries: pending.length } },
+      });
+      revalidatePath(REVALIDATE);
+      revalidatePath("/accounts/vouchers/register");
+      return { ok: true as const, voucherNo, amount: net };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Settlement failed" };
+  }
+}

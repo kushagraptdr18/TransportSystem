@@ -33,7 +33,7 @@ import { MasterCombobox, type MasterOption } from "@/components/data/master-comb
 import {
   deleteDriverSettlement,
   saveDriverSettlement,
-  settleDriverSettlement,
+  settleDriverRunningBalance,
 } from "@/app/(app)/vehicle/driver-settlements/actions";
 
 export interface DriverSettlementRow {
@@ -90,6 +90,16 @@ export function DriverSettlementClient({
     remarks: "",
   });
 
+  // Pay/Receive appears ONLY on each driver's latest pending entry, and it
+  // settles the driver's ENTIRE running balance (rows arrive newest-first).
+  const latestPendingByDriver = React.useMemo(() => {
+    const m = new Map<string, string>(); // driverId -> row id
+    for (const r of rows) {
+      if (r.status === "PENDING" && !m.has(r.driverId)) m.set(r.driverId, r.id);
+    }
+    return m;
+  }, [rows]);
+
   const [settleOf, setSettleOf] = React.useState<DriverSettlementRow | null>(null);
   const [settle, setSettle] = React.useState({
     dateText: formatDate(new Date()),
@@ -142,32 +152,35 @@ export function DriverSettlementClient({
       header: "",
       cell: ({ row }) => (
         <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
-          {row.original.status === "PENDING" && row.original.amount !== 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-6 px-2 text-xs ${row.original.amount > 0 ? "" : "text-destructive"}`}
-              onClick={() => {
-                setSettle({
-                  dateText: formatDate(new Date()),
-                  paymentMode: "CASH",
-                  bankPartyId: null,
-                  remarks: "",
-                });
-                setSettleOf(row.original);
-              }}
-            >
-              {row.original.amount > 0 ? (
-                <>
-                  <ArrowUpCircle className="h-3.5 w-3.5" /> Pay Driver
-                </>
-              ) : (
-                <>
-                  <ArrowDownCircle className="h-3.5 w-3.5" /> Receive
-                </>
-              )}
-            </Button>
-          )}
+          {row.original.status === "PENDING" &&
+            latestPendingByDriver.get(row.original.driverId) === row.original.id &&
+            row.original.runningBalance !== 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={`h-6 px-2 text-xs ${row.original.runningBalance > 0 ? "" : "text-destructive"}`}
+                title="Settles the driver's full running balance — older entries are locked"
+                onClick={() => {
+                  setSettle({
+                    dateText: formatDate(new Date()),
+                    paymentMode: "CASH",
+                    bankPartyId: null,
+                    remarks: "",
+                  });
+                  setSettleOf(row.original);
+                }}
+              >
+                {row.original.runningBalance > 0 ? (
+                  <>
+                    <ArrowUpCircle className="h-3.5 w-3.5" /> Pay Driver
+                  </>
+                ) : (
+                  <>
+                    <ArrowDownCircle className="h-3.5 w-3.5" /> Receive
+                  </>
+                )}
+              </Button>
+            )}
           {canDelete && row.original.status === "PENDING" && (
             <Button
               variant="ghost"
@@ -337,13 +350,14 @@ export function DriverSettlementClient({
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              {settleOf && settleOf.amount > 0
-                ? `Pay ${formatMoney(Math.abs(settleOf.amount))} to ${settleOf.driver}`
-                : `Receive ${formatMoney(Math.abs(settleOf?.amount ?? 0))} from ${settleOf?.driver}`}
+              {settleOf && settleOf.runningBalance > 0
+                ? `Pay ${formatMoney(Math.abs(settleOf.runningBalance))} to ${settleOf.driver}`
+                : `Receive ${formatMoney(Math.abs(settleOf?.runningBalance ?? 0))} from ${settleOf?.driver}`}
             </DialogTitle>
             <DialogDescription>
-              A {settleOf && settleOf.amount > 0 ? "Payment" : "Receipt"} Voucher is created
-              automatically and the driver ledger + cash/bank book update instantly.
+              Settles the driver&apos;s ENTIRE outstanding running balance (all pending entries) in
+              one {settleOf && settleOf.runningBalance > 0 ? "Payment" : "Receipt"} Voucher — the
+              driver ledger and cash/bank book update instantly.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -393,12 +407,12 @@ export function DriverSettlementClient({
           <DialogFooter>
             <Button variant="outline" onClick={() => setSettleOf(null)} disabled={busy}>Cancel</Button>
             <Button
-              disabled={busy || !settle.bankPartyId}
+              disabled={busy || !settle.bankPartyId || !settleOf}
               onClick={async () => {
                 setBusy(true);
                 try {
-                  const res = await settleDriverSettlement({
-                    id: settleOf!.id,
+                  const res = await settleDriverRunningBalance({
+                    driverId: settleOf!.driverId,
                     date: textToIso(settle.dateText),
                     paymentMode: settle.paymentMode,
                     bankPartyId: settle.bankPartyId ?? "",

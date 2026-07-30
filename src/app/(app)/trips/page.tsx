@@ -81,6 +81,7 @@ export default async function TripEntryPage({
         unloadingKm: toNum(String(trip.unloadingKm)),
         newLoadingKm: toNum(String(trip.newLoadingKm)),
         dieselAvg: toNum(String(trip.dieselAvg)),
+        dieselAvg2: toNum(String(trip.dieselAvg2)),
         dieselRate: toNum(String(trip.dieselRate)),
         apprDriverAdvance: toNum(String(trip.apprDriverAdvance)),
         roadBillExp: toNum(String(trip.roadBillExp)),

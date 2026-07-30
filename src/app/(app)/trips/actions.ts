@@ -66,6 +66,7 @@ const tripSchema = z.object({
   unloadingKm: z.number().min(0).default(0),
   newLoadingKm: z.number().min(0).default(0),
   dieselAvg: z.number().min(0).default(0),
+  dieselAvg2: z.number().min(0).default(0),
   dieselRate: z.number().min(0).default(0),
   apprDriverAdvance: z.number().min(0).default(0),
   roadBillExp: z.number().min(0).default(0),
@@ -191,6 +192,7 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
         unloadingKm: data.unloadingKm,
         newLoadingKm: data.newLoadingKm,
         dieselAvg: data.dieselAvg,
+        dieselAvg2: data.dieselAvg2,
         dieselRate: data.dieselRate,
         apprDriverAdvance: data.apprDriverAdvance,
         roadBillExp: data.roadBillExp,
@@ -689,5 +691,30 @@ export async function getTripSettlementInfo(input: {
           }
         : null,
     };
+  });
+}
+
+/**
+ * Last saved "New Loading KM" of the vehicle's previous trip sheet — used to
+ * prefill the next trip's Loading KM (editable; warning only, never blocks).
+ */
+export async function getPrevLoadingKm(input: {
+  vehicleId: string;
+  excludeTripId?: string | null;
+}): Promise<{ km: number; tripNo: string } | null> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const prev = await tx.trip.findFirst({
+      where: {
+        firmId: session.firmId,
+        vehicleId: input.vehicleId,
+        deletedAt: null,
+        ...(input.excludeTripId ? { id: { not: input.excludeTripId } } : {}),
+      },
+      orderBy: [{ tripDate: "desc" }, { createdAt: "desc" }],
+    });
+    if (!prev) return null;
+    const km = toNumSafe(prev.newLoadingKm) || toNumSafe(prev.unloadingKm);
+    return km > 0 ? { km, tripNo: prev.tripNo } : null;
   });
 }

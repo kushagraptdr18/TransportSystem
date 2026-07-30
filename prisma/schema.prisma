@@ -1611,7 +1611,8 @@ model Trip {
   loadingKm       Decimal @default(0) @db.Decimal(12, 1)
   unloadingKm     Decimal @default(0) @db.Decimal(12, 1)
   newLoadingKm    Decimal @default(0) @db.Decimal(12, 1)
-  dieselAvg       Decimal @default(0) @db.Decimal(8, 2) // km per litre
+  dieselAvg       Decimal @default(0) @db.Decimal(8, 2) // km per litre (distance 1)
+  dieselAvg2      Decimal @default(0) @db.Decimal(8, 2) // km per litre (distance 2)
   dieselRate      Decimal @default(0) @db.Decimal(8, 2)
   apprDriverAdvance Decimal @default(0) @db.Decimal(14, 2)
   roadBillExp     Decimal @default(0) @db.Decimal(14, 2)
