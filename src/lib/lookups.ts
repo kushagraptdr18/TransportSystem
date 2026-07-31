@@ -66,8 +66,19 @@ export async function getProductOptions(): Promise<Option[]> {
   return products.map((p) => ({ value: p.id, label: p.name, meta: p.group.name }));
 }
 
+/**
+ * Bank & Cash heads. `meta` carries the ledger group ("BANK" | "CASH") so
+ * callers can filter the list by the selected payment mode.
+ */
 export async function getBankOptions(): Promise<Option[]> {
-  return getPartyOptions(["BANK", "CASH"]);
+  const s = requireSession();
+  const heads = await withTenant(s.tenantId, (tx) =>
+    tx.party.findMany({
+      where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+      orderBy: { name: "asc" },
+    })
+  );
+  return heads.map((p) => ({ value: p.id, label: p.name, meta: p.ledgerGroup }));
 }
 
 export async function getStateOptions(): Promise<Option[]> {

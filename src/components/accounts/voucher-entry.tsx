@@ -127,6 +127,11 @@ export function VoucherEntry({
   const [dateText, setDateText] = React.useState(formatDate(new Date()));
   const [mode, setMode] = React.useState<"CASH" | "BANK">("CASH");
   const [bankPartyId, setBankPartyId] = React.useState<string | null>(null);
+  // Bank & Cash master, narrowed to the selected mode (meta = ledger group)
+  const modeAccounts = React.useMemo(
+    () => bankOptions.filter((b) => b.meta === mode),
+    [bankOptions, mode]
+  );
   const [chequeNo, setChequeNo] = React.useState("");
   const [chequeDateText, setChequeDateText] = React.useState("");
   const [partyId, setPartyId] = React.useState<string | null>(null);
@@ -376,10 +381,14 @@ export function VoucherEntry({
               <div className="space-y-1">
                 <Label className="text-xs">{mode === "CASH" ? "Cash Account *" : "Bank Account *"}</Label>
                 <MasterCombobox
-                  options={bankOptions.filter((b) => (mode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"))}
+                  options={modeAccounts}
                   value={bankPartyId}
                   onChange={setBankPartyId}
-                  placeholder="Select account..."
+                  placeholder={
+                    modeAccounts.length
+                      ? `Select ${mode === "CASH" ? "cash" : "bank"} account...`
+                      : `No ${mode === "CASH" ? "cash" : "bank"} head in master`
+                  }
                 />
               </div>
               {mode === "BANK" && (
