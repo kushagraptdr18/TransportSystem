@@ -7,6 +7,7 @@ import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { ensureAccountHead, postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
+import { resolveRelativeOwner } from "@/lib/relative-owner";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
 
@@ -249,6 +250,27 @@ export async function processDriverSalary(
           amount: d.otherDeductions,
           narration: `Salary deductions ${d.month} — ${driver.name}`,
         });
+      }
+      // relative vehicle: the salary is paid on behalf of the relative owner —
+      // neutralise the company expense and move it to the owner's ledger
+      const rel = await resolveRelativeOwner(tx, { driverId: d.driverId, at: salaryDate });
+      if (rel && gross > 0) {
+        entries.push(
+          {
+            ...common,
+            partyId: rel.ownerId,
+            side: "DEBIT" as const,
+            amount: gross,
+            narration: `Driver salary ${d.month} (${driver.name}, vehicle ${rel.vehicleNo}) — on behalf of relative owner`,
+          },
+          {
+            ...common,
+            accountHeadId: expenseHead,
+            side: "CREDIT" as const,
+            amount: gross,
+            narration: `Salary ${d.month} shifted to relative owner ledger (${rel.vehicleNo})`,
+          }
+        );
       }
       await postLedger(tx, session, entries);
 

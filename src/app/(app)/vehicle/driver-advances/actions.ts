@@ -6,7 +6,8 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
-import { postLedger, reverseLedger } from "@/lib/ledger";
+import { postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
+import { resolveRelativeOwner } from "@/lib/relative-owner";
 import { toNum } from "@/lib/utils";
 
 /**
@@ -92,10 +93,36 @@ export async function saveDriverAdvance(
           refNo: values.voucherRef || values.tripRef || `ADV-${driver.driverCode}`,
           narration: `Driver advance to ${driver.name}${values.tripRef ? ` (trip ${values.tripRef})` : ""}`,
         };
-        await postLedger(tx, session, [
+        const entries: LedgerPostEntry[] = [
           { ...common, partyId: driver.partyId, side: "DEBIT", amount: d.amount },
           { ...common, partyId: values.bankPartyId, side: "CREDIT", amount: d.amount },
-        ]);
+        ];
+        // relative vehicle: the advance is paid ON BEHALF OF the relative
+        // owner — shift the recoverable from the driver to the owner's ledger
+        const rel = await resolveRelativeOwner(tx, {
+          vehicleId: values.vehicleId,
+          driverId: d.driverId,
+          at: values.date,
+        });
+        if (rel) {
+          entries.push(
+            {
+              ...common,
+              partyId: rel.ownerId,
+              side: "DEBIT",
+              amount: d.amount,
+              narration: `Driver advance (${driver.name}, vehicle ${rel.vehicleNo}) — paid on behalf of relative owner`,
+            },
+            {
+              ...common,
+              partyId: driver.partyId,
+              side: "CREDIT",
+              amount: d.amount,
+              narration: `Advance transferred to relative owner ledger (${rel.vehicleNo})`,
+            }
+          );
+        }
+        await postLedger(tx, session, entries);
       }
 
       revalidatePath(REVALIDATE);

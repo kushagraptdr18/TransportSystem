@@ -7,6 +7,7 @@ import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { ensureAccountHead, postLedger, type LedgerPostEntry } from "@/lib/ledger";
+import { resolveRelativeOwner } from "@/lib/relative-owner";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
 
@@ -297,6 +298,29 @@ export async function finalizeDriverFnf(
           { ...common, partyId: d.bankPartyId, side: pay ? "CREDIT" : "DEBIT", amount: abs, narration: `Final settlement ${pay ? "paid to" : "received from"} ${driver.name} (${settlementNo})` },
           { ...common, partyId: driver.partyId, side: pay ? "DEBIT" : "CREDIT", amount: abs, narration: `Final settlement ${settlementNo}` }
         );
+      }
+      // relative vehicle: F&F payments belong to the relative owner, not the
+      // company — shift the incentive expense and the final payment there
+      const rel = await resolveRelativeOwner(tx, {
+        driverId: d.driverId,
+        at: d.lastWorkingDate ? new Date(`${d.lastWorkingDate}T00:00:00`) : date,
+      });
+      if (rel) {
+        if (d.otherPayments > 0) {
+          const head = await ensureAccountHead(tx, session, "Driver Salary Expense", "EXPENSE");
+          entries.push(
+            { ...common, partyId: rel.ownerId, side: "DEBIT", amount: d.otherPayments, narration: `F&F incentive (${driver.name}, vehicle ${rel.vehicleNo}) — on behalf of relative owner` },
+            { ...common, accountHeadId: head, side: "CREDIT", amount: d.otherPayments, narration: `F&F incentive shifted to relative owner ledger (${rel.vehicleNo})` }
+          );
+        }
+        if (Math.abs(finalPayable) >= 0.01) {
+          const pay = finalPayable > 0;
+          const abs = Math.abs(finalPayable);
+          entries.push(
+            { ...common, partyId: rel.ownerId, side: pay ? "DEBIT" : "CREDIT", amount: abs, narration: `F&F ${settlementNo} (${driver.name}, vehicle ${rel.vehicleNo}) — on behalf of relative owner` },
+            { ...common, partyId: driver.partyId, side: pay ? "CREDIT" : "DEBIT", amount: abs, narration: `F&F transferred to relative owner ledger (${rel.vehicleNo})` }
+          );
+        }
       }
       await postLedger(tx, session, entries);
 

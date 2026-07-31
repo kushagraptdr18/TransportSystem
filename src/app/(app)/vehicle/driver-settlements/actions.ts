@@ -6,7 +6,8 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
-import { postLedger } from "@/lib/ledger";
+import { postLedger, type LedgerPostEntry } from "@/lib/ledger";
+import { resolveRelativeOwner } from "@/lib/relative-owner";
 import { nextDocNumber } from "@/lib/sequences";
 import { toNum } from "@/lib/utils";
 
@@ -137,7 +138,7 @@ export async function settleDriverSettlement(
         refNo: s.tripRef || voucherNo,
         narration,
       };
-      await postLedger(tx, session, [
+      const entries: LedgerPostEntry[] = [
         {
           ...common,
           partyId: d.bankPartyId,
@@ -150,7 +151,32 @@ export async function settleDriverSettlement(
           side: pay ? "DEBIT" : "CREDIT",
           amount: abs,
         },
-      ]);
+      ];
+      // relative vehicle: the settlement is on behalf of the relative owner
+      const rel = await resolveRelativeOwner(tx, {
+        vehicleId: s.vehicleId,
+        driverId: s.driverId,
+        at: date,
+      });
+      if (rel) {
+        entries.push(
+          {
+            ...common,
+            partyId: rel.ownerId,
+            side: pay ? "DEBIT" : "CREDIT",
+            amount: abs,
+            narration: `Driver settlement (${driver.name}, vehicle ${rel.vehicleNo}) — on behalf of relative owner`,
+          },
+          {
+            ...common,
+            partyId: driver.partyId,
+            side: pay ? "CREDIT" : "DEBIT",
+            amount: abs,
+            narration: `Settlement transferred to relative owner ledger (${rel.vehicleNo})`,
+          }
+        );
+      }
+      await postLedger(tx, session, entries);
 
       const after = await tx.driverSettlement.update({
         where: { id: s.id },
@@ -283,10 +309,31 @@ export async function settleDriverRunningBalance(
         refNo: refNos.length ? refNos.join(", ") : voucherNo,
         narration,
       };
-      await postLedger(tx, session, [
+      const entries: LedgerPostEntry[] = [
         { ...common, partyId: d.bankPartyId, side: pay ? "CREDIT" : "DEBIT", amount: abs },
         { ...common, partyId: driver.partyId, side: pay ? "DEBIT" : "CREDIT", amount: abs },
-      ]);
+      ];
+      // relative vehicle: running balance settles on behalf of the owner
+      const rel = await resolveRelativeOwner(tx, { driverId: d.driverId, at: date });
+      if (rel) {
+        entries.push(
+          {
+            ...common,
+            partyId: rel.ownerId,
+            side: pay ? "DEBIT" : "CREDIT",
+            amount: abs,
+            narration: `Driver running balance (${driver.name}, vehicle ${rel.vehicleNo}) — on behalf of relative owner`,
+          },
+          {
+            ...common,
+            partyId: driver.partyId,
+            side: pay ? "CREDIT" : "DEBIT",
+            amount: abs,
+            narration: `Settlement transferred to relative owner ledger (${rel.vehicleNo})`,
+          }
+        );
+      }
+      await postLedger(tx, session, entries);
       await tx.driverSettlement.updateMany({
         where: { id: { in: pending.map((p) => p.id) } },
         data: { status: "SETTLED", settledDate: date, voucherId: voucher.id, voucherNo },
