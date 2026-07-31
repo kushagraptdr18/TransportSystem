@@ -62,6 +62,13 @@ export interface RecentVoucher {
   moduleLink: string;
   amount: number;
   netAmount: number;
+  /** present when this voucher created a party advance */
+  advance: {
+    amount: number;
+    consumed: number;
+    balance: number;
+    uses: { refNo: string; amount: number; date: string }[];
+  } | null;
 }
 
 interface SettleRow extends AllocationCandidate {
@@ -675,13 +682,14 @@ export function VoucherEntry({
                   <TableHead>Bank / Cash</TableHead>
                   <TableHead className="text-right">Gross</TableHead>
                   <TableHead className="text-right">Net</TableHead>
+                  <TableHead>Advance Adjusted</TableHead>
                   <TableHead className="w-10" />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {recent[type].length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-14 text-center text-muted-foreground">
+                    <TableCell colSpan={8} className="h-14 text-center text-muted-foreground">
                       No vouchers yet.
                     </TableCell>
                   </TableRow>
@@ -694,6 +702,29 @@ export function VoucherEntry({
                       <TableCell>{v.bankName ?? ""}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatMoney(v.amount)}</TableCell>
                       <TableCell className="text-right tabular-nums">{formatMoney(v.netAmount)}</TableCell>
+                      {/* adjustment history: every document this voucher's
+                          advance was consumed by, with the running balance */}
+                      <TableCell className="text-xs">
+                        {!v.advance ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <div className="space-y-0.5">
+                            {v.advance.uses.length === 0 ? (
+                              <span className="text-muted-foreground">Unused advance</span>
+                            ) : (
+                              v.advance.uses.map((u, i) => (
+                                <div key={i} className="tabular-nums">
+                                  {u.refNo} — {formatMoney(u.amount)}
+                                </div>
+                              ))
+                            )}
+                            <div className="text-muted-foreground tabular-nums">
+                              Adjusted {formatMoney(v.advance.consumed)} · Balance{" "}
+                              {formatMoney(v.advance.balance)}
+                            </div>
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Button
                           variant="ghost"

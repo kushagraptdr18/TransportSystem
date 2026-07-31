@@ -218,10 +218,19 @@ export default async function ChalanPrintPage({
               )}
               {chalan.advances.map((a) => (
                 <tr key={a.id}>
-                  <td className="border border-black px-1 py-0.5">{a.type.replace("_", " ")}</td>
+                  <td className="border border-black px-1 py-0.5">
+                    {a.type === "ADVANCE_ADJ" ? "ADV ADJUSTMENT" : a.type.replace("_", " ")}
+                  </td>
                   <td className="border border-black px-1 py-0.5">{formatDate(a.date)}</td>
                   <td className="border border-black px-1 py-0.5">
-                    {[a.supplierName, a.bankName, a.remarks].filter(Boolean).join(" / ")}
+                    {[
+                      a.advanceVoucherNo && `Voucher ${a.advanceVoucherNo}`,
+                      a.supplierName,
+                      a.bankName,
+                      a.remarks,
+                    ]
+                      .filter(Boolean)
+                      .join(" / ")}
                   </td>
                   <td className="border border-black px-1 py-0.5 text-right">
                     {formatMoney(toNum(a.amount))}

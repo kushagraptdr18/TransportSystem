@@ -89,6 +89,7 @@ enum AdvanceType {
   SPARE_PARTS
   REPAIR
   OTHER
+  ADVANCE_ADJ
 }
 
 enum PodSourceType {
@@ -704,6 +705,8 @@ model Chalan {
   balPaymentHeadId String? // BANK/CASH party the balance was paid from
   balPaymentMode   String? // CASH | BANK | UPI | CHEQUE | NEFT_RTGS
   balRemarks       String?
+  // total settled from advance vouchers in the balance-payment step
+  balAdvanceAdjusted Decimal @default(0) @db.Decimal(14, 2)
 
   lrs      ChalanLr[]
   advances ChalanAdvance[]
@@ -745,7 +748,13 @@ model ChalanAdvance {
   date         DateTime?
   remarks      String?
 
+  // ADVANCE_ADJ rows: the advance voucher this row consumes
+  advanceId        String?
+  advance          PartyAdvance? @relation(fields: [advanceId], references: [id])
+  advanceVoucherNo String?
+
   @@index([tenantId])
+  @@index([advanceId])
 }
 
 // ============ PART-TRUCK OPS ============
@@ -2342,7 +2351,8 @@ model PartyAdvance {
   consumedAmount Decimal  @default(0) @db.Decimal(14, 2)
   remarks        String?
 
-  uses PartyAdvanceUse[]
+  uses           PartyAdvanceUse[]
+  chalanAdvances ChalanAdvance[]
 
   createdAt DateTime  @default(now())
   deletedAt DateTime?

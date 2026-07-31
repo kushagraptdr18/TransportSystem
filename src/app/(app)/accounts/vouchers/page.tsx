@@ -40,6 +40,14 @@ export default async function VouchersPage() {
         orderBy: { createdAt: "desc" },
         take: 10,
       });
+      // advances these vouchers created, with the documents that consumed them
+      const advances = vouchers.length
+        ? await tx.partyAdvance.findMany({
+            where: { voucherId: { in: vouchers.map((v) => v.id) }, deletedAt: null },
+            include: { uses: { orderBy: { date: "asc" } } },
+          })
+        : [];
+      const advByVoucher = new Map(advances.map((a) => [a.voucherId ?? "", a]));
       recent[t] = vouchers.map((v) => ({
         id: v.id,
         voucherNo: v.voucherNo,
@@ -49,6 +57,22 @@ export default async function VouchersPage() {
         moduleLink: v.moduleLink,
         amount: Number(v.amount),
         netAmount: Number(v.netAmount),
+        advance: (() => {
+          const a = advByVoucher.get(v.id);
+          if (!a) return null;
+          const amount = Number(a.amount);
+          const consumed = Number(a.consumedAmount);
+          return {
+            amount,
+            consumed,
+            balance: Math.round((amount - consumed) * 100) / 100,
+            uses: a.uses.map((u) => ({
+              refNo: u.refNo,
+              amount: Number(u.amount),
+              date: u.date.toISOString(),
+            })),
+          };
+        })(),
       }));
     }
     return { peekNumbers, recent };

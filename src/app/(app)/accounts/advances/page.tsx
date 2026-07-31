@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
-import { toNum } from "@/lib/utils";
+import { formatMoney, toNum } from "@/lib/utils";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport, type ReportRow } from "@/components/accounts/simple-report";
 
@@ -58,7 +58,11 @@ export default async function AdvanceRegisterPage({
       amount,
       consumed,
       balance,
-      usedAgainst: a.uses.map((u) => u.refNo).join(", "),
+      // the per-document split, so a voucher spread over several chalans reads
+      // as "CH-80001 ₹6,000, CH-80006 ₹5,000" rather than a bare list
+      usedAgainst: a.uses
+        .map((u) => `${u.refNo} ${formatMoney(toNum(String(u.amount)))}`)
+        .join(", "),
       status: balance <= 0.009 ? "CONSUMED" : consumed > 0 ? "PARTLY USED" : "OPEN",
       narration: a.remarks ?? "",
     };
@@ -89,8 +93,9 @@ export default async function AdvanceRegisterPage({
     <div className="space-y-4 p-4">
       <h1 className="page-title">Advance Register</h1>
       <p className="text-sm text-muted-foreground">
-        Created automatically by receipt vouchers (receive-as-advance / over-payment) and consumed
-        automatically when bills use the Advance field.
+        Created automatically by receipt / payment vouchers with no bill reference. Bills consume
+        them automatically; chalans consume them manually, voucher by voucher, through Advance
+        Adjustment — &ldquo;Used Against&rdquo; shows the document and amount for every adjustment.
       </p>
       <FilterBar filters={filters} />
       <SimpleReport

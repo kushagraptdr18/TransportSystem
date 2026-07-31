@@ -42,6 +42,12 @@ export default async function ChalanPage({
             },
           })
         : null;
+      // advance vouchers consumed by the balance-payment step, for the grid
+      const balAdvanceUses = record
+        ? await tx.partyAdvanceUse.findMany({
+            where: { refId: record.id, refType: "CHALAN_BALANCE_ADJ" },
+          })
+        : [];
       const cities = record ? await tx.city.findMany() : [];
       const parties = record ? await tx.party.findMany() : [];
       const cityName = (id: string) => cities.find((c) => c.id === id)?.name ?? "";
@@ -70,6 +76,10 @@ export default async function ChalanPage({
             balPaymentHeadId: record.balPaymentHeadId,
             balPaymentMode: record.balPaymentMode ?? "BANK",
             balRemarks: record.balRemarks ?? "",
+            balAdvanceLines: balAdvanceUses.map((u) => ({
+              advanceId: u.advanceId,
+              amount: toNum(u.amount),
+            })),
             podTotal: record.lrs.filter(
               (l) => l.lr.lrType !== "CANCELLED" && l.lr.lrType !== "PAPER_CHANGE"
             ).length,
@@ -126,7 +136,14 @@ export default async function ChalanPage({
               bankName: a.bankName ?? "",
               bankPartyId: a.bankPartyId,
               headId: a.bankPartyId,
-              advanceType: a.type === "BANK" ? ("BANK_CASH" as const) : ("HEAD" as const),
+              advanceId: a.advanceId,
+              advanceVoucherNo: a.advanceVoucherNo,
+              advanceType:
+                a.type === "ADVANCE_ADJ"
+                  ? ("ADV_ADJ" as const)
+                  : a.type === "BANK"
+                    ? ("BANK_CASH" as const)
+                    : ("HEAD" as const),
               dieselQty: a.dieselQty == null ? 0 : toNum(a.dieselQty),
               dieselRate: a.dieselRate == null ? 0 : toNum(a.dieselRate),
               amount: toNum(a.amount),

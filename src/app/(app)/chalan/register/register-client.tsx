@@ -461,6 +461,30 @@ export function ChalanRegisterClient({
                     <span>Total Advance</span>
                     <span className="tabular-nums">{formatMoney(status.advanceTotal)}</span>
                   </div>
+                  {/* every advance voucher this chalan consumed, either in the
+                      advance section or at balance payment */}
+                  {status.advanceAdjustments.length > 0 && (
+                    <div className="mt-3 border-t pt-2">
+                      <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                        Advance Vouchers Adjusted
+                      </div>
+                      {status.advanceAdjustments.map((a, i) => (
+                        <div key={i} className="flex justify-between gap-2 py-0.5 text-xs">
+                          <span>
+                            {a.voucherNo}
+                            {a.voucherDate ? ` — ${formatDate(a.voucherDate)}` : ""} ({a.section})
+                          </span>
+                          <span className="tabular-nums">{formatMoney(a.amount)}</span>
+                        </div>
+                      ))}
+                      <div className="mt-1 flex justify-between border-t pt-1 font-medium">
+                        <span>Total Advance Adjusted</span>
+                        <span className="tabular-nums">
+                          {formatMoney(status.advanceAdjustedTotal)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-md border p-3">
                   <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">

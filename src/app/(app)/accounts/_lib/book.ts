@@ -161,6 +161,10 @@ export async function ledgerBookRows(params: BookParams): Promise<{
             .filter(Boolean)
             .join(" | ");
         }
+      } else if (e.refType === "ADVANCE_ADJUSTMENT") {
+        // refNo is "<chalan no> / <voucher no>" — surface the voucher separately
+        voucherNo = e.refNo.split(" / ").slice(1).join(" / ");
+        payment = "Advance adjustment";
       } else if (e.refType === "OFFICE_TXN") {
         const o = officeById.get(e.refId);
         if (o) {

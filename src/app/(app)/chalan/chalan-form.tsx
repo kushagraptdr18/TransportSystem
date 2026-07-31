@@ -23,8 +23,15 @@ import { computeChalan, dieselAdvanceAmount } from "@/lib/calc/chalan";
 import { tdsPctFromPan, type TdsMode } from "@/lib/calc/tds";
 import { formatDate, formatMoney, parseDdMmYyyy } from "@/lib/utils";
 import {
+  AdvanceAdjustGrid,
+  advanceAdjustError,
+  advanceAdjustLines,
+} from "@/components/chalan/advance-adjust-grid";
+import type { OpenAdvance } from "@/lib/party-advance";
+import {
   finalizeChalan,
   saveBalancePayment,
+  getBrokerAdvances,
   getBrokerTdsInfo,
   getPendingLrsForVehicle,
   saveChalan,
@@ -42,12 +49,26 @@ export interface BrokerOption {
 }
 
 export interface AdvanceRow {
-  type: "CASH" | "BANK" | "DIESEL" | "TOLL" | "TYRE" | "SPARE_PARTS" | "REPAIR" | "OTHER";
+  type:
+    | "CASH"
+    | "BANK"
+    | "DIESEL"
+    | "TOLL"
+    | "TYRE"
+    | "SPARE_PARTS"
+    | "REPAIR"
+    | "OTHER"
+    | "ADVANCE_ADJ";
   supplierName: string;
   bankName: string;
   bankPartyId?: string | null;
-  advanceType?: "HEAD" | "BANK_CASH";
+  advanceType?: "HEAD" | "BANK_CASH" | "ADV_ADJ";
   headId?: string | null;
+  /** ADVANCE_ADJ only — the advance voucher this row consumes */
+  advanceId?: string | null;
+  advanceVoucherNo?: string | null;
+  /** ADVANCE_ADJ editor row only — advanceId -> amount, expanded on save */
+  adjValues?: Record<string, number>;
   dieselQty: number;
   dieselRate: number;
   amount: number;
@@ -77,6 +98,8 @@ export interface ChalanRecord {
   balPaymentHeadId: string | null;
   balPaymentMode: string;
   balRemarks: string;
+  /** per-voucher advance adjustment applied in the balance-payment step */
+  balAdvanceLines: { advanceId: string; amount: number }[];
   podTotal: number;
   podDone: number;
   /** total shortage weight recorded across the LRs' PODs */
@@ -179,7 +202,44 @@ export function ChalanForm({
   const [unloadRemarks, setUnloadRemarks] = React.useState(record?.unloadRemarks ?? "");
 
   // ------- advances -------
-  const [advances, setAdvances] = React.useState<AdvanceRow[]>(record?.advances ?? []);
+  // ADVANCE_ADJ rows are persisted one-per-voucher but edited as a single grid
+  // row, so collapse them on load and expand again on save.
+  const [advances, setAdvances] = React.useState<AdvanceRow[]>(() => {
+    const rows = record?.advances ?? [];
+    const adj = rows.filter((r) => r.type === "ADVANCE_ADJ");
+    const rest = rows.filter((r) => r.type !== "ADVANCE_ADJ");
+    if (!adj.length) return rest;
+    const adjValues: Record<string, number> = {};
+    for (const r of adj) if (r.advanceId) adjValues[r.advanceId] = r.amount;
+    return [
+      ...rest,
+      {
+        type: "ADVANCE_ADJ",
+        advanceType: "ADV_ADJ",
+        adjValues,
+        headId: null,
+        supplierName: "",
+        bankName: "",
+        bankPartyId: null,
+        dieselQty: 0,
+        dieselRate: 0,
+        amount: adj.reduce((s, r) => s + r.amount, 0),
+        date: adj[0]?.date ?? null,
+        remarks: adj[0]?.remarks ?? "",
+      } as AdvanceRow,
+    ];
+  });
+
+  // open advance vouchers of the broker, per section (each adds back its own
+  // consumption so editing a saved chalan shows a truthful available balance)
+  const [advOptions, setAdvOptions] = React.useState<OpenAdvance[]>([]);
+  const [balAdvOptions, setBalAdvOptions] = React.useState<OpenAdvance[]>([]);
+  const [advLoading, setAdvLoading] = React.useState(false);
+  const [balAdjValues, setBalAdjValues] = React.useState<Record<string, number>>(() => {
+    const v: Record<string, number> = {};
+    for (const l of record?.balAdvanceLines ?? []) v[l.advanceId] = l.amount;
+    return v;
+  });
 
   // ------- balance payment (PENDING -> PAID) -------
   const [balRoundOff, setBalRoundOff] = React.useState(record?.balRoundOff ?? 0);
@@ -211,6 +271,29 @@ export function ChalanForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vehicleId, id]);
 
+  // broker's open advance vouchers (both sections)
+  const refreshAdvanceOptions = React.useCallback(() => {
+    if (!brokerId) {
+      setAdvOptions([]);
+      setBalAdvOptions([]);
+      return;
+    }
+    setAdvLoading(true);
+    Promise.all([
+      getBrokerAdvances(brokerId, id, "ADVANCE"),
+      getBrokerAdvances(brokerId, id, "BALANCE"),
+    ])
+      .then(([a, b]) => {
+        setAdvOptions(a);
+        setBalAdvOptions(b);
+      })
+      .finally(() => setAdvLoading(false));
+  }, [brokerId, id]);
+
+  React.useEffect(() => {
+    refreshAdvanceOptions();
+  }, [refreshAdvanceOptions]);
+
   // auto TDS pct from broker PAN
   React.useEffect(() => {
     if (!brokerId) return;
@@ -223,6 +306,14 @@ export function ChalanForm({
     else getBrokerTdsInfo(brokerId).then((info) => apply(info.pan, info.tdsMode));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brokerId]);
+
+  /** the adjustment row's amount is the sum of its per-voucher entries */
+  const advAmount = (a: AdvanceRow) =>
+    a.type === "ADVANCE_ADJ"
+      ? Math.round(
+          Object.values(a.adjValues ?? {}).reduce((s, n) => s + (n || 0), 0) * 100
+        ) / 100
+      : a.amount;
 
   const bookingFreight = selected.reduce((s, r) => s + r.freight, 0);
   const actualWt = selected.reduce((s, r) => s + r.actualWt, 0);
@@ -246,10 +337,15 @@ export function ChalanForm({
     commissionPct: commMode === "PCT" ? commissionPct : 0,
     commissionAmt: commMode === "MANUAL" ? commissionAmt : 0,
     tdsPct,
-    advances: advances.map((a) => a.amount),
+    advances: advances.map(advAmount),
   });
 
-  const balPaidPreview = Math.round((totals.balance - balRoundOff - balShortage) * 100) / 100;
+  // balance section: advances adjusted here reduce the cash/bank leg only
+  const balSettleable = Math.round((totals.balance - balRoundOff - balShortage) * 100) / 100;
+  const balAdjTotal =
+    Math.round(Object.values(balAdjValues).reduce((s, n) => s + (n || 0), 0) * 100) / 100;
+  const balPaidPreview = Math.round((balSettleable - balAdjTotal) * 100) / 100;
+  const balAdjError = advanceAdjustError(balAdvOptions, balAdjValues, balSettleable);
 
   const handleBalancePayment = async () => {
     if (!id) return;
@@ -266,7 +362,12 @@ export function ChalanForm({
       toast({ variant: "destructive", title: "Valid payment date is required" });
       return;
     }
-    if (!balHeadId) {
+    if (balAdjError) {
+      toast({ variant: "destructive", title: "Advance adjustment invalid", description: balAdjError });
+      return;
+    }
+    // the head is only needed when money actually leaves the bank/cash book
+    if (balPaidPreview > 0.009 && !balHeadId) {
       toast({ variant: "destructive", title: "Select the bank/cash payment head" });
       return;
     }
@@ -280,8 +381,18 @@ export function ChalanForm({
         shortage: balShortage,
         paymentDate: `${d.getFullYear()}-${mm}-${dd}`,
         paymentHeadId: balHeadId,
-        paymentMode: balMode as "CASH" | "BANK" | "UPI" | "CHEQUE" | "NEFT_RTGS",
+        paymentMode: balMode as
+          | "CASH"
+          | "BANK"
+          | "UPI"
+          | "CHEQUE"
+          | "NEFT_RTGS"
+          | "ADVANCE_ADJ",
         remarks: balRemarks,
+        advanceLines: advanceAdjustLines(balAdvOptions, balAdjValues).map((l) => ({
+          advanceId: l.advanceId,
+          amount: l.amount,
+        })),
       });
       if (res.ok) {
         setPaymentStatus("PAID");
@@ -379,13 +490,42 @@ export function ChalanForm({
     }
   };
 
+  /** Expand the single adjustment editor row into one row per advance voucher. */
+  const buildAdvancePayload = () =>
+    advances.flatMap((a) => {
+      if (a.type !== "ADVANCE_ADJ") return [{ ...a, adjValues: undefined }];
+      return advanceAdjustLines(advOptions, a.adjValues ?? {}).map((l) => ({
+        ...a,
+        adjValues: undefined,
+        advanceId: l.advanceId,
+        advanceVoucherNo: l.voucherNo,
+        amount: l.amount,
+      }));
+    });
+
+  /** Cap for the advance-section grid: what the chalan owes minus other advances. */
+  const advAdjRow = advances.find((a) => a.type === "ADVANCE_ADJ");
+  const otherAdvanceTotal = advances
+    .filter((a) => a.type !== "ADVANCE_ADJ")
+    .reduce((s, a) => s + a.amount, 0);
+  const advAdjPayable = Math.round((totals.grandTotal - otherAdvanceTotal) * 100) / 100;
+  const advAdjError = advAdjRow
+    ? advanceAdjustError(advOptions, advAdjRow.adjValues ?? {}, advAdjPayable)
+    : null;
+
   const handleSaveAdvances = async () => {
     if (!id) return;
+    if (advAdjError) {
+      toast({ variant: "destructive", title: "Advance adjustment invalid", description: advAdjError });
+      return;
+    }
     setSaving(true);
-    const res = await saveChalanAdvances(id, advances);
+    const res = await saveChalanAdvances(id, buildAdvancePayload());
     setSaving(false);
-    if (res.ok) toast({ title: "Advances saved" });
-    else toast({ variant: "destructive", title: "Save failed", description: res.error });
+    if (res.ok) {
+      toast({ title: "Advances saved" });
+      refreshAdvanceOptions();
+    } else toast({ variant: "destructive", title: "Save failed", description: res.error });
   };
 
   const handleFinalSave = async () => {
@@ -398,7 +538,12 @@ export function ChalanForm({
       toast({ variant: "destructive", title: "Save failed", description: s.error });
       return;
     }
-    const a = await saveChalanAdvances(id, advances);
+    if (advAdjError) {
+      setSaving(false);
+      toast({ variant: "destructive", title: "Advance adjustment invalid", description: advAdjError });
+      return;
+    }
+    const a = await saveChalanAdvances(id, buildAdvancePayload());
     if (!a.ok) {
       setSaving(false);
       toast({ variant: "destructive", title: "Save failed", description: a.error });
@@ -734,11 +879,12 @@ export function ChalanForm({
                   value={a.advanceType ?? "BANK_CASH"}
                   onValueChange={(v) =>
                     setAdvance(i, {
-                      advanceType: v as "HEAD" | "BANK_CASH",
-                      type: v === "BANK_CASH" ? "BANK" : "OTHER",
+                      advanceType: v as "HEAD" | "BANK_CASH" | "ADV_ADJ",
+                      type: v === "BANK_CASH" ? "BANK" : v === "ADV_ADJ" ? "ADVANCE_ADJ" : "OTHER",
                       headId: null,
                       bankPartyId: null,
                       bankName: "",
+                      adjValues: v === "ADV_ADJ" ? {} : undefined,
                     })
                   }
                 >
@@ -748,9 +894,41 @@ export function ChalanForm({
                   <SelectContent>
                     <SelectItem value="HEAD">Income / Expense Head</SelectItem>
                     <SelectItem value="BANK_CASH">Bank / Cash Head</SelectItem>
+                    <SelectItem
+                      value="ADV_ADJ"
+                      disabled={a.type !== "ADVANCE_ADJ" && advances.some((r) => r.type === "ADVANCE_ADJ")}
+                    >
+                      Advance Adjustment
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
+
+              {a.type === "ADVANCE_ADJ" ? (
+                <>
+                  <div className="sm:col-span-2 lg:col-span-4">
+                    <AdvanceAdjustGrid
+                      advances={advOptions}
+                      values={a.adjValues ?? {}}
+                      onChange={(next) => setAdvance(i, { adjValues: next })}
+                      payable={advAdjPayable}
+                      loading={advLoading}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive"
+                      onClick={() => setAdvances((prev) => prev.filter((_, idx) => idx !== i))}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
               <Field label={(a.advanceType ?? "BANK_CASH") === "HEAD" ? "Head" : "Bank / Cash"}>
                 <MasterCombobox
                   options={(a.advanceType ?? "BANK_CASH") === "HEAD" ? accountHeads : banks}
@@ -792,11 +970,20 @@ export function ChalanForm({
                   Remove
                 </Button>
               </div>
+                </>
+              )}
             </div>
           ))}
+          {advAdjError && <div className="text-xs text-destructive">{advAdjError}</div>}
           {id && advances.length > 0 && (
             <div className="flex justify-end">
-              <Button type="button" variant="outline" size="sm" onClick={handleSaveAdvances} disabled={saving}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleSaveAdvances}
+                disabled={saving || !!advAdjError}
+              >
                 Save advances
               </Button>
             </div>
@@ -902,9 +1089,24 @@ export function ChalanForm({
                 )}
               </div>
             </Field>
+            <Field label="Advance Adjusted (−)">
+              <NumInput value={balAdjTotal} readOnly />
+            </Field>
             <Field label="Final Paid Amount">
               <NumInput value={balPaidPreview} readOnly />
             </Field>
+            <div className="sm:col-span-2 lg:col-span-4">
+              <div className="mb-1 text-xs text-muted-foreground">
+                Advance Adjustment — settle the balance against this party&apos;s advance vouchers
+              </div>
+              <AdvanceAdjustGrid
+                advances={balAdvOptions}
+                values={balAdjValues}
+                onChange={setBalAdjValues}
+                payable={balSettleable}
+                loading={advLoading}
+              />
+            </div>
             <Field label="Payment Date">
               <DateInput value={balDateText} onChange={(t) => setBalDateText(t)} />
             </Field>
@@ -927,6 +1129,7 @@ export function ChalanForm({
                 <option value="UPI">UPI</option>
                 <option value="CHEQUE">Cheque</option>
                 <option value="NEFT_RTGS">NEFT / RTGS</option>
+                <option value="ADVANCE_ADJ">Advance Adjustment</option>
               </select>
             </Field>
             <Field label="Remarks">
@@ -936,7 +1139,7 @@ export function ChalanForm({
               <Button
                 type="button"
                 onClick={handleBalancePayment}
-                disabled={balSaving || !isFinal || !allPodDone}
+                disabled={balSaving || !isFinal || !allPodDone || !!balAdjError}
               >
                 {balSaving
                   ? "Saving..."

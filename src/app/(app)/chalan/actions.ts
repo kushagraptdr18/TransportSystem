@@ -11,7 +11,82 @@ import { syncSequenceTo } from "@/lib/sequences";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { computeChalan } from "@/lib/calc/chalan";
 import { toNum } from "@/lib/utils";
+import {
+  applyManualAdvanceUses,
+  listOpenAdvances,
+  restoreAdvanceUses,
+  type OpenAdvance,
+} from "@/lib/party-advance";
 import type { PendingLrRow } from "@/components/fleet/lr-picker";
+
+/** PartyAdvanceUse refTypes — one per chalan section, so a save in one section
+ *  never clobbers what the other section consumed. */
+const ADV_USE_ADVANCE = "CHALAN_ADVANCE_ADJ";
+const ADV_USE_BALANCE = "CHALAN_BALANCE_ADJ";
+/** Ledger refType for the adjustment postings (both sections share it). */
+const ADV_ADJ_REF = "ADVANCE_ADJUSTMENT";
+
+/**
+ * Re-post every advance adjustment of a chalan from the stored use rows.
+ * Both sections post under one ledger refType, so this always re-derives the
+ * full set from the DB and both callers may run it independently.
+ * Debit the broker (his hire payable drops), credit the advance head (the
+ * advance we were carrying is released) — a balanced pair per voucher.
+ */
+async function postAdvanceAdjustments(
+  tx: Tx,
+  session: ReturnType<typeof requireSession>,
+  chalan: { id: string; chalanNo: string; brokerId: string }
+) {
+  await reverseLedger(tx, ADV_ADJ_REF, chalan.id);
+  const uses = await tx.partyAdvanceUse.findMany({
+    where: { refId: chalan.id, refType: { in: [ADV_USE_ADVANCE, ADV_USE_BALANCE] } },
+    include: { advance: true },
+    orderBy: { date: "asc" },
+  });
+  if (!uses.length) return;
+  const headId = await ensureAccountHead(tx, session, "Advance to Broker", "EXPENSE");
+  const entries: Parameters<typeof postLedger>[2] = [];
+  for (const u of uses) {
+    const amount = toNum(u.amount);
+    if (amount <= 0) continue;
+    const voucherNo = u.advance?.voucherNo ?? "—";
+    const common = {
+      date: u.date,
+      refType: ADV_ADJ_REF,
+      refId: chalan.id,
+      refNo: `${chalan.chalanNo} / ${voucherNo}`,
+      narration: `Advance adjusted from Voucher ${voucherNo} against Chalan ${chalan.chalanNo}`,
+    };
+    entries.push(
+      { ...common, partyId: chalan.brokerId, side: "DEBIT", amount },
+      { ...common, accountHeadId: headId, side: "CREDIT", amount }
+    );
+  }
+  await postLedger(tx, session, entries);
+}
+
+/**
+ * Open advance vouchers of a chalan's broker, both directions, for manual
+ * voucher-wise adjustment. `section` decides which of this chalan's own uses
+ * are added back to the available balance.
+ */
+export async function getBrokerAdvances(
+  brokerId: string,
+  chalanId?: string | null,
+  section: "ADVANCE" | "BALANCE" = "ADVANCE"
+): Promise<OpenAdvance[]> {
+  const session = requireSession();
+  if (!brokerId) return [];
+  return withTenant(session.tenantId, (tx) =>
+    listOpenAdvances(tx, {
+      firmId: session.firmId,
+      partyId: brokerId,
+      includeRefType: section === "ADVANCE" ? ADV_USE_ADVANCE : ADV_USE_BALANCE,
+      includeRefId: chalanId ?? undefined,
+    })
+  );
+}
 
 /** Pending LRs of a vehicle (no chalan yet, not cancelled). */
 export async function getPendingLrsForVehicle(
@@ -75,7 +150,19 @@ export async function getBrokerTdsInfo(partyId: string) {
 }
 
 const advanceSchema = z.object({
-  type: z.enum(["CASH", "BANK", "DIESEL", "TOLL", "TYRE", "SPARE_PARTS", "REPAIR", "OTHER"]),
+  type: z.enum([
+    "CASH",
+    "BANK",
+    "DIESEL",
+    "TOLL",
+    "TYRE",
+    "SPARE_PARTS",
+    "REPAIR",
+    "OTHER",
+    "ADVANCE_ADJ",
+  ]),
+  advanceId: z.string().optional().nullable(),
+  advanceVoucherNo: z.string().optional().nullable(),
   supplierName: z.string().optional().nullable(),
   bankName: z.string().optional().nullable(),
   bankPartyId: z.string().optional().nullable(),
@@ -334,6 +421,25 @@ export async function saveChalanAdvances(
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({ where: { id: chalanId, deletedAt: null } });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
+
+      // manual advance-voucher adjustments: every ADVANCE_ADJ row must name the
+      // voucher it consumes, and the consumption is re-applied (restore first)
+      // so an edit never double-counts against the voucher's balance
+      const adjRows = rows.filter((r) => r.type === "ADVANCE_ADJ");
+      if (adjRows.some((r) => !r.advanceId)) {
+        return { ok: false as const, error: "Select an advance voucher for every adjustment row." };
+      }
+      const applied = await applyManualAdvanceUses(tx, {
+        tenantId: session.tenantId,
+        firmId: chalan.firmId,
+        partyId: chalan.brokerId,
+        refType: ADV_USE_ADVANCE,
+        refId: chalanId,
+        refNo: chalan.chalanNo,
+        lines: adjRows.map((r) => ({ advanceId: r.advanceId as string, amount: r.amount })),
+      });
+      const voucherNoOf = new Map(applied.map((a) => [a.advanceId, a.voucherNo]));
+
       await tx.chalanAdvance.deleteMany({ where: { chalanId } });
       if (rows.length) {
         await tx.chalanAdvance.createMany({
@@ -341,6 +447,11 @@ export async function saveChalanAdvances(
             tenantId: session.tenantId,
             chalanId,
             type: r.type,
+            advanceId: r.type === "ADVANCE_ADJ" ? r.advanceId ?? null : null,
+            advanceVoucherNo:
+              r.type === "ADVANCE_ADJ"
+                ? voucherNoOf.get(r.advanceId ?? "") ?? r.advanceVoucherNo ?? null
+                : null,
             supplierName: r.supplierName ?? null,
             bankName: r.bankName ?? null,
             bankPartyId: r.bankPartyId ?? null,
@@ -370,6 +481,9 @@ export async function saveChalanAdvances(
       const entries: Parameters<typeof postLedger>[2] = [];
       for (const r of rows) {
         if (r.amount <= 0) continue;
+        // adjustments are posted separately (ADVANCE_ADJUSTMENT refType) so the
+        // ledger names both the voucher and the chalan
+        if (r.type === "ADVANCE_ADJ") continue;
         let creditLeg: { partyId?: string; accountHeadId?: string } | null = null;
         if (r.type === "BANK") {
           creditLeg = r.bankPartyId ? { partyId: r.bankPartyId } : null;
@@ -400,6 +514,7 @@ export async function saveChalanAdvances(
         );
       }
       await postLedger(tx, session, entries);
+      await postAdvanceAdjustments(tx, session, chalan);
       await audit(tx, session, {
         entity: "ChalanAdvance",
         entityId: chalanId,
@@ -485,6 +600,10 @@ export async function deleteChalan(
       await reverseLedger(tx, "CHALAN", chalanId);
       await reverseLedger(tx, "CHALAN_ADVANCE", chalanId);
       await reverseLedger(tx, "CHALAN_BALANCE", chalanId);
+      // release every advance voucher this chalan had consumed
+      await reverseLedger(tx, ADV_ADJ_REF, chalanId);
+      await restoreAdvanceUses(tx, ADV_USE_ADVANCE, chalanId);
+      await restoreAdvanceUses(tx, ADV_USE_BALANCE, chalanId);
       await tx.chalan.update({ where: { id: chalanId }, data: { deletedAt: new Date() } });
 
       // every associated LR returns to PENDING so it can be re-loaded onto a
@@ -516,9 +635,15 @@ const balancePaymentSchema = z.object({
   roundOff: z.number().default(0),
   shortage: z.number().min(0).default(0),
   paymentDate: z.string().min(1, "Payment date is required"),
-  paymentHeadId: z.string().min(1, "Payment head (bank/cash) is required"),
-  paymentMode: z.enum(["CASH", "BANK", "UPI", "CHEQUE", "NEFT_RTGS"]).default("BANK"),
+  paymentHeadId: z.string().optional().nullable(),
+  paymentMode: z
+    .enum(["CASH", "BANK", "UPI", "CHEQUE", "NEFT_RTGS", "ADVANCE_ADJ"])
+    .default("BANK"),
   remarks: z.string().optional().nullable(),
+  /** manual voucher-wise advance adjustment applied to the balance */
+  advanceLines: z
+    .array(z.object({ advanceId: z.string().min(1), amount: z.number() }))
+    .default([]),
 });
 
 /**
@@ -560,27 +685,57 @@ export async function saveBalancePayment(
           error: `POD is only ${podDone}/${operational.length} confirmed — all LRs must have a confirmed POD before balance payment.`,
         };
       }
-      const paidAmount =
+      const settleable =
         Math.round((toNum(chalan.balance) - data.roundOff - data.shortage) * 100) / 100;
-      if (paidAmount < 0) {
+      if (settleable < 0) {
         return { ok: false as const, error: "Round-off + shortage exceed the balance." };
       }
       const paymentDate = new Date(`${data.paymentDate}T00:00:00`);
+
+      // manual advance adjustment first; only the residual moves through bank/cash
+      const advTotal =
+        Math.round(data.advanceLines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+      if (advTotal < 0) {
+        return { ok: false as const, error: "Adjustment amount cannot be negative." };
+      }
+      if (advTotal > settleable + 0.009) {
+        return {
+          ok: false as const,
+          error: `Advance adjusted (${advTotal}) exceeds the payable amount (${settleable}).`,
+        };
+      }
+      const paidAmount = Math.round((settleable - advTotal) * 100) / 100;
+      if (paidAmount > 0.009 && !data.paymentHeadId) {
+        return { ok: false as const, error: "Payment head (bank/cash) is required." };
+      }
+      await applyManualAdvanceUses(tx, {
+        tenantId: session.tenantId,
+        firmId: chalan.firmId,
+        partyId: chalan.brokerId,
+        refType: ADV_USE_BALANCE,
+        refId: chalan.id,
+        refNo: chalan.chalanNo,
+        date: paymentDate,
+        lines: data.advanceLines,
+      });
+
       const after = await tx.chalan.update({
         where: { id: chalan.id },
         data: {
           paymentStatus: "PAID",
           balRoundOff: data.roundOff,
           balShortage: data.shortage,
+          balAdvanceAdjusted: advTotal,
           balPaidAmount: paidAmount,
           balPaymentDate: paymentDate,
-          balPaymentHeadId: data.paymentHeadId,
+          balPaymentHeadId: data.paymentHeadId || null,
           balPaymentMode: data.paymentMode,
           balRemarks: data.remarks || null,
         },
       });
       await reverseLedger(tx, "CHALAN_BALANCE", chalan.id);
-      if (paidAmount > 0) {
+      await postAdvanceAdjustments(tx, session, chalan);
+      if (paidAmount > 0 && data.paymentHeadId) {
         await postLedger(tx, session, [
           {
             date: paymentDate,
@@ -655,6 +810,15 @@ export interface ChalanStatusData {
     mode: string;
     remarks: string;
   }[];
+  /** advance vouchers consumed by this chalan (both sections) */
+  advanceAdjustments: {
+    voucherNo: string;
+    voucherDate: string | null;
+    amount: number;
+    section: string; // Advance | Balance
+    date: string;
+  }[];
+  advanceAdjustedTotal: number;
   advanceTotal: number;
   grandTotal: number;
   balance: number;
@@ -690,13 +854,21 @@ export async function getChalanStatus(
     });
     if (!chalan) return { ok: false as const, error: "Chalan not found" };
 
-    const [broker, vehicle, parties, cities, ledger] = await Promise.all([
+    const [broker, vehicle, parties, cities, ledger, advUses] = await Promise.all([
       tx.party.findUnique({ where: { id: chalan.brokerId } }),
       tx.vehicle.findUnique({ where: { id: chalan.vehicleId } }),
       tx.party.findMany(),
       tx.city.findMany(),
       tx.ledgerEntry.findMany({
-        where: { refId: chalanId, refType: { in: ["CHALAN_ADVANCE", "CHALAN_BALANCE"] } },
+        where: {
+          refId: chalanId,
+          refType: { in: ["CHALAN_ADVANCE", "CHALAN_BALANCE", ADV_ADJ_REF] },
+        },
+        orderBy: { date: "asc" },
+      }),
+      tx.partyAdvanceUse.findMany({
+        where: { refId: chalanId, refType: { in: [ADV_USE_ADVANCE, ADV_USE_BALANCE] } },
+        include: { advance: true },
         orderBy: { date: "asc" },
       }),
     ]);
@@ -752,12 +924,30 @@ export async function getChalanStatus(
         isFinal: chalan.isFinal,
         lrs: lrRows,
         advances: chalan.advances.map((a) => ({
-          name: a.bankName || a.supplierName || a.type.replace(/_/g, " "),
+          name:
+            a.type === "ADVANCE_ADJ"
+              ? `Voucher ${a.advanceVoucherNo ?? "—"}`
+              : a.bankName || a.supplierName || a.type.replace(/_/g, " "),
           amount: toNum(a.amount),
           date: a.date ? a.date.toISOString() : null,
-          mode: a.type === "BANK" ? "Bank" : a.type === "CASH" ? "Cash" : a.type.replace(/_/g, " "),
+          mode:
+            a.type === "BANK"
+              ? "Bank"
+              : a.type === "CASH"
+                ? "Cash"
+                : a.type === "ADVANCE_ADJ"
+                  ? "Advance Adjustment"
+                  : a.type.replace(/_/g, " "),
           remarks: a.remarks ?? "",
         })),
+        advanceAdjustments: advUses.map((u) => ({
+          voucherNo: u.advance?.voucherNo ?? "—",
+          voucherDate: u.advance ? u.advance.date.toISOString() : null,
+          amount: toNum(u.amount),
+          section: u.refType === ADV_USE_ADVANCE ? "Advance" : "Balance",
+          date: u.date.toISOString(),
+        })),
+        advanceAdjustedTotal: advUses.reduce((s, u) => s + toNum(u.amount), 0),
         advanceTotal: toNum(chalan.advanceTotal),
         grandTotal: toNum(chalan.grandTotal),
         balance: toNum(chalan.balance),
