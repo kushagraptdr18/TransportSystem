@@ -335,10 +335,12 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         savedNumber: data.voucherNo,
       });
 
-      // ---- automatic party advance (receive-as-advance / over-payment) ----
-      // Any unallocated remainder of a party receipt becomes an advance
-      // balance for that party — no second voucher is ever needed.
-      if (data.type === "RECEIPT" && data.partyId && !data.accountHeadId) {
+      // ---- automatic party advance (receive-as-advance / over-payment /
+      // advance-payment / over-payment on payables) ----
+      // Any unallocated remainder of a party receipt OR payment becomes an
+      // advance balance for that party — no second voucher is ever needed.
+      const advanceKind = data.type === "RECEIPT" ? "RECEIVED" : "PAID";
+      if ((data.type === "RECEIPT" || data.type === "PAYMENT") && data.partyId && !data.accountHeadId) {
         const unallocated = round2(data.amount - allocatedSum);
         const existingAdv = await tx.partyAdvance.findFirst({
           where: { voucherId: savedId, deletedAt: null },
@@ -354,6 +356,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
               where: { id: existingAdv.id },
               data: {
                 partyId: data.partyId,
+                kind: advanceKind,
                 date: voucherDate,
                 voucherNo: data.voucherNo,
                 amount: unallocated,
@@ -367,6 +370,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
                 firmId: session.firmId,
                 fyId: session.fyId,
                 partyId: data.partyId,
+                kind: advanceKind,
                 date: voucherDate,
                 voucherId: savedId,
                 voucherNo: data.voucherNo,
@@ -609,4 +613,16 @@ export async function getAccountHeadOptions(): Promise<
     tx.accountHead.findMany({ orderBy: { name: "asc" } })
   );
   return heads.map((h) => ({ value: h.id, label: h.name, meta: h.kind }));
+}
+
+/** Open advance balances of a party (shown in the voucher form). */
+export async function getPartyAdvanceInfo(
+  partyId: string
+): Promise<{ received: number; paid: number }> {
+  const session = requireSession();
+  const { partyAdvanceBalance } = await import("@/lib/party-advance");
+  return withTenant(session.tenantId, async (tx) => ({
+    received: await partyAdvanceBalance(tx, session.firmId, partyId, "RECEIVED"),
+    paid: await partyAdvanceBalance(tx, session.firmId, partyId, "PAID"),
+  }));
 }

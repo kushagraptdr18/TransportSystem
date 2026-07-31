@@ -30,11 +30,18 @@ export async function consumeAdvances(
     refType: string;
     refId: string;
     refNo: string;
+    /** RECEIVED = consumable by receivable bills; PAID = by payable docs */
+    kind?: "RECEIVED" | "PAID";
   }
 ): Promise<number> {
   if (opts.amount <= 0) return 0;
   const advances = await tx.partyAdvance.findMany({
-    where: { firmId: opts.firmId, partyId: opts.partyId, deletedAt: null },
+    where: {
+      firmId: opts.firmId,
+      partyId: opts.partyId,
+      kind: opts.kind ?? "RECEIVED",
+      deletedAt: null,
+    },
     orderBy: { date: "asc" },
   });
   let left = opts.amount;
@@ -64,10 +71,15 @@ export async function consumeAdvances(
   return consumed;
 }
 
-/** Open advance balance of a party. */
-export async function partyAdvanceBalance(tx: Tx, firmId: string, partyId: string): Promise<number> {
+/** Open advance balance of a party (by direction). */
+export async function partyAdvanceBalance(
+  tx: Tx,
+  firmId: string,
+  partyId: string,
+  kind: "RECEIVED" | "PAID" = "RECEIVED"
+): Promise<number> {
   const advances = await tx.partyAdvance.findMany({
-    where: { firmId, partyId, deletedAt: null },
+    where: { firmId, partyId, kind, deletedAt: null },
     select: { amount: true, consumedAmount: true },
   });
   return round2(

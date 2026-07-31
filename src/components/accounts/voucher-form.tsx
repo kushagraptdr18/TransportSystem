@@ -35,6 +35,7 @@ import { MasterCombobox, MasterOption } from "@/components/data/master-combobox"
 import {
   saveVoucher,
   getAllocationCandidates,
+  getPartyAdvanceInfo,
   type AllocationCandidate,
 } from "@/app/(app)/accounts/vouchers/actions";
 import {
@@ -151,6 +152,7 @@ export function VoucherForm({
   const [type, setType] = React.useState<"RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL">("RECEIPT");
   const [saving, setSaving] = React.useState(false);
   const [loadingAllocs, setLoadingAllocs] = React.useState(false);
+  const [advInfo, setAdvInfo] = React.useState<{ received: number; paid: number } | null>(null);
 
   const defaults = React.useCallback(
     (t: "RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL"): FormValues => ({
@@ -403,6 +405,9 @@ export function VoucherForm({
                     onChange={(v) => {
                       field.onChange(v);
                       if (!isContra) void loadAllocations(form.getValues("moduleLink"), v);
+                      if (v) {
+                        getPartyAdvanceInfo(v).then(setAdvInfo).catch(() => setAdvInfo(null));
+                      } else setAdvInfo(null);
                     }}
                     placeholder={isContra ? "Select account..." : "Select party..."}
                   />
@@ -546,12 +551,51 @@ export function VoucherForm({
           </CardContent>
         </Card>
 
+        {isJournal && (
+          <p className="rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">
+            <b>Journal voucher — no cash or bank moves.</b> The <b>Debit Party</b> is the ledger
+            that ends up owing more / receiving the value (e.g. the party you are raising a{" "}
+            <b>debit note</b> on, or the head an expense moves TO). The credit account is the
+            ledger whose balance reduces (e.g. the party getting a <b>credit note</b>, a write-off
+            head, or the head an amount moves FROM). Use it for debit/credit notes, ledger
+            transfers, write-offs, reclassifications and rectification entries — use the
+            Adjustments section below for reference-linked notes.
+          </p>
+        )}
         {!isContra && ALLOCATABLE.includes(watched.moduleLink) && (
           <Card>
-            <CardHeader className="pb-2">
+            <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-base">
                 Allocation {loadingAllocs && <span className="text-xs font-normal">loading...</span>}
+                {advInfo && (advInfo.received > 0 || advInfo.paid > 0) && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    {advInfo.received > 0 && `Advance received available: ${formatMoney(advInfo.received)}`}
+                    {advInfo.received > 0 && advInfo.paid > 0 && " · "}
+                    {advInfo.paid > 0 && `Advance paid outstanding: ${formatMoney(advInfo.paid)}`}
+                  </span>
+                )}
               </CardTitle>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                title="Distribute the voucher amount across pending references, oldest first"
+                onClick={() => {
+                  let remaining = Number(form.getValues("amount")) || 0;
+                  fields.forEach((_, i) => {
+                    const row = form.getValues(`allocations.${i}`);
+                    const avail = Math.max(
+                      0,
+                      round2(row.outstanding - (row.tdsAmt || 0) - (row.deduction || 0))
+                    );
+                    const pay = round2(Math.min(avail, Math.max(0, remaining)));
+                    remaining = round2(remaining - pay);
+                    update(i, { ...row, amount: pay });
+                  });
+                }}
+              >
+                Auto Allocate
+              </Button>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto rounded-md border">

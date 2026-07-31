@@ -53,6 +53,7 @@ export default async function AdvanceRegisterPage({
     return {
       date: a.date.toISOString(),
       party: partyName.get(a.partyId) ?? "",
+      kind: a.kind === "PAID" ? "ADV PAID" : "ADV RECEIVED",
       refNo: a.voucherNo ?? "",
       amount,
       consumed,
@@ -97,6 +98,7 @@ export default async function AdvanceRegisterPage({
         columns={[
           { key: "date", header: "Date", kind: "date" },
           { key: "party", header: "Party" },
+          { key: "kind", header: "Type", kind: "badge" },
           { key: "refNo", header: "Voucher No" },
           { key: "amount", header: "Advance Amt", kind: "money" },
           { key: "consumed", header: "Consumed", kind: "money" },

@@ -2334,8 +2334,9 @@ model PartyAdvance {
   firmId         String
   fyId           String
   partyId        String
+  kind           String   @default("RECEIVED") // RECEIVED (from party) | PAID (to party)
   date           DateTime
-  voucherId      String? // receipt voucher that created it
+  voucherId      String? // receipt/payment voucher that created it
   voucherNo      String?
   amount         Decimal  @default(0) @db.Decimal(14, 2)
   consumedAmount Decimal  @default(0) @db.Decimal(14, 2)
