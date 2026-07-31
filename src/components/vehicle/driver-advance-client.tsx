@@ -50,6 +50,7 @@ export interface DriverAdvanceRow {
   voucherRef: string;
   remarks: string;
   status: string;
+  adjustedDate: string | null;
 }
 
 function textToIso(text: string): string {
@@ -159,6 +160,12 @@ export function DriverAdvanceClient({
         ) : (
           <Badge>ADJUSTED</Badge>
         ),
+    },
+    {
+      accessorKey: "adjustedDate",
+      header: "Adjusted Date",
+      cell: ({ row }) =>
+        row.original.adjustedDate ? formatDate(row.original.adjustedDate) : "",
     },
     { accessorKey: "remarks", header: "Remarks" },
     {

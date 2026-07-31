@@ -305,3 +305,62 @@ export async function settleDriverRunningBalance(
     return { ok: false, error: e instanceof Error ? e.message : "Settlement failed" };
   }
 }
+
+// ---------------------------------------------------------------- edit (manual)
+
+const editSettlementSchema = z.object({
+  id: z.string().min(1),
+  date: z.string().min(1, "Date is required"),
+  amount: z.number().refine((v) => v !== 0, "Amount cannot be zero"),
+  tripRef: z.string().nullish(),
+  remarks: z.string().nullish(),
+});
+
+/**
+ * Edit a PENDING settlement entry. Trip-generated rows stay locked — their
+ * amount comes from the trip sheet and must be edited there.
+ */
+export async function updateDriverSettlement(
+  input: unknown
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  const parsed = editSettlementSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const d = parsed.data;
+  await authorize(session, "maintenance", "edit");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const before = await tx.driverSettlement.findFirst({
+        where: { id: d.id, firmId: session.firmId, deletedAt: null },
+      });
+      if (!before) return { ok: false as const, error: "Settlement not found" };
+      if (before.status === "SETTLED") return { ok: false as const, error: "Settled rows cannot be edited." };
+      if (before.tripId) {
+        return {
+          ok: false as const,
+          error: "This entry comes from a trip sheet — edit the trip sheet instead.",
+        };
+      }
+      const after = await tx.driverSettlement.update({
+        where: { id: before.id },
+        data: {
+          date: new Date(`${d.date}T00:00:00`),
+          amount: d.amount,
+          tripRef: d.tripRef?.trim() || null,
+          remarks: d.remarks || null,
+        },
+      });
+      await audit(tx, session, {
+        entity: "DriverSettlement",
+        entityId: before.id,
+        action: "UPDATE",
+        before,
+        after,
+      });
+      revalidatePath(REVALIDATE);
+      return { ok: true as const };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Update failed" };
+  }
+}

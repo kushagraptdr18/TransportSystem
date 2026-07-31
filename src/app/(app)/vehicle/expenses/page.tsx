@@ -93,6 +93,7 @@ export default async function VehicleExpensesPage({
     paymentMode: v.paymentMode ?? "",
     bankPartyId: v.bankPartyId,
     bank: v.bankPartyId ? partyName.get(v.bankPartyId) ?? "" : "",
+    paymentDate: v.paymentDate ? v.paymentDate.toISOString() : null,
     amount: toNum(String(v.amount)),
     refNo: v.refNo ?? "",
     remarks: v.remarks ?? "",

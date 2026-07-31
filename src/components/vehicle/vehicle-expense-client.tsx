@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Plus, Trash2 } from "lucide-react";
+import { Download, Plus, Trash2, Upload } from "lucide-react";
 import { formatDate, formatMoney, parseDdMmYyyy } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,10 @@ import {
   deleteVehicleExpenseTxn,
   saveVehicleExpenseTxn,
 } from "@/app/(app)/vehicle/expenses/actions";
+import {
+  downloadVehicleExpenseTemplate,
+  importVehicleExpenses,
+} from "@/app/(app)/vehicle/expenses/import-actions";
 
 export interface VehicleExpenseItemRow {
   vehicleId: string;
@@ -55,6 +59,7 @@ export interface VehicleExpenseRow {
   paymentMode: string; // "" = credit
   bankPartyId: string | null;
   bank: string;
+  paymentDate: string | null;
   amount: number;
   refNo: string;
   remarks: string;
@@ -84,6 +89,7 @@ const emptyForm = {
   partyId: null as string | null,
   paymentMode: "CASH" as "CASH" | "BANK" | "CREDIT",
   bankPartyId: null as string | null,
+  paymentDateText: formatDate(new Date()),
   refNo: "",
   remarks: "",
   attachmentPath: null as string | null,
@@ -136,6 +142,7 @@ export function VehicleExpenseClient({
       partyId: row.partyId,
       paymentMode: (row.paymentMode || "CREDIT") as "CASH" | "BANK" | "CREDIT",
       bankPartyId: row.bankPartyId,
+      paymentDateText: row.paymentDate ? formatDate(row.paymentDate) : formatDate(row.date),
       refNo: row.refNo,
       remarks: row.remarks,
       attachmentPath: row.attachmentPath,
@@ -156,6 +163,8 @@ export function VehicleExpenseClient({
         partyId: form.partyId,
         paymentMode: form.paymentMode === "CREDIT" ? null : form.paymentMode,
         bankPartyId: form.paymentMode === "CREDIT" ? null : form.bankPartyId,
+        paymentDate:
+          form.paymentMode === "CREDIT" ? null : textToIso(form.paymentDateText) || null,
         refNo: form.refNo,
         remarks: form.remarks,
         attachmentPath: form.attachmentPath,
@@ -297,6 +306,7 @@ export function VehicleExpenseClient({
               { header: "Remarks", key: "remarks" },
             ]}
           />
+          <ImportControls />
           <Button size="sm" onClick={() => { setForm(emptyForm); setOpen(true); }}>
             <Plus className="h-4 w-4" /> New Entry
           </Button>
@@ -406,17 +416,27 @@ export function VehicleExpenseClient({
               </Select>
             </div>
             {form.paymentMode !== "CREDIT" && (
-              <div className="space-y-1">
-                <Label className="text-xs">Cash / Bank Account *</Label>
-                <MasterCombobox
-                  options={bankOptions.filter((b) =>
-                    form.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
-                  )}
-                  value={form.bankPartyId}
-                  onChange={(v) => set({ bankPartyId: v })}
-                  placeholder="Select account..."
-                />
-              </div>
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Cash / Bank Account *</Label>
+                  <MasterCombobox
+                    options={bankOptions.filter((b) =>
+                      form.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                    )}
+                    value={form.bankPartyId}
+                    onChange={(v) => set({ bankPartyId: v })}
+                    placeholder="Select account..."
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Payment Date (may differ from bill date)</Label>
+                  <DateInput
+                    className="h-8"
+                    value={form.paymentDateText}
+                    onChange={(t) => set({ paymentDateText: t })}
+                  />
+                </div>
+              </>
             )}
             <div className="space-y-1">
               <Label className="text-xs">Reference / Bill No</Label>
@@ -514,6 +534,89 @@ export function VehicleExpenseClient({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/** Excel template (dynamic master dropdowns) + bulk import controls */
+function ImportControls() {
+  const router = useRouter();
+  const { toast } = useToast();
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = React.useState<"template" | "import" | null>(null);
+
+  const downloadTemplate = async () => {
+    setBusy("template");
+    try {
+      const res = await downloadVehicleExpenseTemplate();
+      if (!res.ok) {
+        toast({ variant: "destructive", title: "Template failed", description: res.error });
+        return;
+      }
+      const bin = atob(res.base64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "vehicle-expenses-template.xlsx";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast({
+        title: "Template downloaded",
+        description: "Dropdowns contain the current master data. Voucher numbers auto-generate.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const doImport = async (file: File) => {
+    setBusy("import");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const s = await importVehicleExpenses(fd);
+      toast({
+        variant: s.failed > 0 || !s.ok ? "destructive" : undefined,
+        title: `Import finished — Imported: ${s.imported} · Skipped: ${s.skipped} · Failed: ${s.failed}`,
+        description: s.errors.slice(0, 5).join(" | ") || undefined,
+      });
+      router.refresh();
+    } finally {
+      setBusy(null);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  return (
+    <span className="flex items-center gap-1">
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".xlsx,.csv"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void doImport(f);
+        }}
+      />
+      <Button type="button" variant="outline" size="sm" disabled={busy !== null} onClick={downloadTemplate}>
+        <Download className="h-4 w-4" />
+        {busy === "template" ? "Preparing..." : "Excel Template"}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={busy !== null}
+        onClick={() => fileRef.current?.click()}
+      >
+        <Upload className="h-4 w-4" />
+        {busy === "import" ? "Importing..." : "Import Excel"}
+      </Button>
+    </span>
   );
 }
 

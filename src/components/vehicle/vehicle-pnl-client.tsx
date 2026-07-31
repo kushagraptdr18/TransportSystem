@@ -407,7 +407,9 @@ export function VehiclePnlClient({
               </a>
             </Button>
             <Button size="sm" asChild>
-              <a href={`/trips?id=${tripOf?.trip.id}`}>Open Full Trip Sheet</a>
+              <a href={`/trips?id=${tripOf?.trip.id}`} target="_blank" rel="noreferrer">
+                Open Full Trip Sheet
+              </a>
             </Button>
             <Button variant="outline" onClick={() => setTripOf(null)}>
               Close

@@ -48,7 +48,7 @@ const SECTIONS: { title: string; links: { label: string; href: string; icon: typ
   {
     title: "Fleet",
     links: [
-      { label: "Vehicle Report", href: "/vehicle/report", icon: Wrench, desc: "Earnings vs running cost per vehicle" },
+      { label: "Vehicle Profit & Loss", href: "/vehicle/pnl", icon: Wrench, desc: "Vehicle-wise P&L with trip drill-down" },
       { label: "Trip Expenses", href: "/vehicle/trip-expenses", icon: Truck, desc: "Consolidated trip expense lines" },
       { label: "Document Renewals", href: "/masters/vehicle-documents?due=30", icon: ClipboardCheck, desc: "Documents expiring in 30 days" },
     ],

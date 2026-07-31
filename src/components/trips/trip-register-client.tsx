@@ -176,7 +176,7 @@ export function TripRegisterClient({
             ]}
           />
           <Button size="sm" asChild>
-            <Link href="/trips">
+            <Link href="/trips?new=1">
               <Plus className="h-4 w-4" /> New Trip Sheet
             </Link>
           </Button>

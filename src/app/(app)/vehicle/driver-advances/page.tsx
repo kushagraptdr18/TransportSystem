@@ -72,6 +72,7 @@ export default async function DriverAdvancesPage({
     voucherRef: a.voucherRef ?? "",
     remarks: a.remarks ?? "",
     status: a.status,
+    adjustedDate: a.adjustedDate ? a.adjustedDate.toISOString() : null,
   }));
 
   return (

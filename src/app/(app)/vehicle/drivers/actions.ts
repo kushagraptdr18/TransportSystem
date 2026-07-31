@@ -14,7 +14,7 @@ import { audit } from "@/lib/audit";
  * DRIVER) so advances / settlements / salary post to the normal ledger.
  */
 
-const REVALIDATE = "/vehicle/drivers";
+const REVALIDATE = "/masters/drivers";
 
 function toDate(s: string): Date {
   return new Date(s.includes("T") ? s : `${s}T00:00:00`);
@@ -273,5 +273,49 @@ export async function reactivateDriver(
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Update failed" };
+  }
+}
+
+/**
+ * Admin/Owner-only delete (soft). Blocked while the driver is referenced by
+ * advances, settlements, salaries or trip sheets — those must go first.
+ */
+export async function deleteDriver(
+  driverId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  if (session.role !== "ADMIN" && session.role !== "OWNER") {
+    return { ok: false, error: "Only Admin/Owner may delete drivers" };
+  }
+  await authorize(session, "maintenance", "delete");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const before = await tx.driver.findFirst({ where: { id: driverId, deletedAt: null } });
+      if (!before) return { ok: false as const, error: "Driver not found" };
+      const [advances, settlements, salaries, trips] = await Promise.all([
+        tx.driverAdvance.count({ where: { driverId, deletedAt: null } }),
+        tx.driverSettlement.count({ where: { driverId, deletedAt: null } }),
+        tx.driverSalary.count({ where: { driverId, deletedAt: null } }),
+        tx.trip.count({ where: { driverId, deletedAt: null } }),
+      ]);
+      const refs = [
+        advances && `${advances} advance(s)`,
+        settlements && `${settlements} settlement(s)`,
+        salaries && `${salaries} salary record(s)`,
+        trips && `${trips} trip sheet(s)`,
+      ].filter(Boolean);
+      if (refs.length) {
+        return {
+          ok: false as const,
+          error: `Driver is referenced by ${refs.join(", ")} — delete or reassign those first.`,
+        };
+      }
+      await tx.driver.update({ where: { id: driverId }, data: { deletedAt: new Date() } });
+      await audit(tx, session, { entity: "Driver", entityId: driverId, action: "DELETE", before });
+      revalidatePath(REVALIDATE);
+      return { ok: true as const };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Delete failed" };
   }
 }

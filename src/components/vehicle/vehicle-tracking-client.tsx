@@ -110,6 +110,17 @@ export function VehicleTrackingClient({
     [vehicles]
   );
 
+  // custom statuses: defaults + anything ever used + user-created ones
+  const [customStatuses, setCustomStatuses] = React.useState<string[]>([]);
+  const statusOptions = React.useMemo(() => {
+    const set = new Set(ALL_STATUSES);
+    for (const s of snapshots) if (s.status) set.add(s.status.toUpperCase().trim());
+    for (const s of live) if (s.status) set.add(s.status.toUpperCase().trim());
+    for (const s of customStatuses) set.add(s);
+    return Array.from(set);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshots, customStatuses, live.map((r) => r.status).join("|")]);
+
   /** auto-save: debounce per vehicle+field, no save button anywhere */
   const autoSave = (vehicleId: string, patch: Partial<LiveRow>) => {
     setLive((prev) => prev.map((r) => (r.vehicleId === vehicleId ? { ...r, ...patch } : r)));
@@ -329,18 +340,33 @@ export function VehicleTrackingClient({
                       <td className="border p-0.5">
                         <Select
                           value={r.status || undefined}
-                          onValueChange={(v) => autoSave(r.vehicleId, { status: v })}
+                          onValueChange={(v) => {
+                            if (v === "__NEW__") {
+                              const name = window
+                                .prompt("New status name:")
+                                ?.toUpperCase()
+                                .trim();
+                              if (!name) return;
+                              setCustomStatuses((prev) =>
+                                prev.includes(name) ? prev : [...prev, name]
+                              );
+                              autoSave(r.vehicleId, { status: name });
+                              return;
+                            }
+                            autoSave(r.vehicleId, { status: v });
+                          }}
                         >
                           <SelectTrigger className="h-7 border-0 text-xs shadow-none">
                             <SelectValue placeholder="Status..." />
                           </SelectTrigger>
                           <SelectContent>
-                            {ALL_STATUSES.map((s) => (
+                            {statusOptions.map((s) => (
                               <SelectItem key={s} value={s}>
                                 {s.charAt(0) + s.slice(1).toLowerCase()}
                                 {IDLE_STATUSES.includes(s) ? "  (available)" : ""}
                               </SelectItem>
                             ))}
+                            <SelectItem value="__NEW__">+ New Status...</SelectItem>
                           </SelectContent>
                         </Select>
                       </td>

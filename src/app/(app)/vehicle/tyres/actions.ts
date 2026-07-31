@@ -211,3 +211,85 @@ export async function removeTyre(
     return { ok: false, error: e instanceof Error ? e.message : "Removal failed" };
   }
 }
+
+// ---------------------------------------------------------------- edit / delete
+
+const editSchema = z.object({
+  tyreId: z.string().min(1),
+  tyreName: z.string().trim().min(1, "Tyre name is required"),
+  tyreNo: z.string().trim().min(1, "Tyre number is required"),
+  position: z.enum(["HORSE", "TRAILER"]).nullish(), // open cycle only
+  instDate: z.string().nullish(),
+  instKm: z.number().min(0).nullish(),
+});
+
+/** Edit tyre identity (name / number) and, when running, its open cycle. */
+export async function updateTyre(
+  input: unknown
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  const parsed = editSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  const d = parsed.data;
+  await authorize(session, "maintenance", "edit");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const tyre = await tx.tyre.findFirst({
+        where: { id: d.tyreId, firmId: session.firmId },
+        include: { cycles: { where: { removalDate: null } } },
+      });
+      if (!tyre) return { ok: false as const, error: "Tyre not found" };
+      const tyreNo = d.tyreNo.toUpperCase().replace(/\s+/g, "");
+      const dup = await tx.tyre.findFirst({
+        where: { firmId: session.firmId, tyreNo, id: { not: tyre.id } },
+        select: { id: true },
+      });
+      if (dup) return { ok: false as const, error: `Tyre number ${tyreNo} already exists.` };
+      const updated = await tx.tyre.update({
+        where: { id: tyre.id },
+        data: { tyreNo, tyreName: d.tyreName },
+      });
+      const open = tyre.cycles[0];
+      if (open) {
+        await tx.tyreCycle.update({
+          where: { id: open.id },
+          data: {
+            ...(d.position ? { position: d.position } : {}),
+            ...(d.instDate ? { instDate: new Date(`${d.instDate}T00:00:00`) } : {}),
+            ...(d.instKm != null && d.instKm > 0 ? { instKm: d.instKm } : {}),
+          },
+        });
+      }
+      await audit(tx, session, { entity: "Tyre", entityId: tyre.id, action: "UPDATE", before: tyre, after: updated });
+      revalidatePath("/vehicle/tyres");
+      return { ok: true as const };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Update failed" };
+  }
+}
+
+/** Admin/Owner-only hard delete of a wrongly created tyre (cycles cascade). */
+export async function deleteTyre(
+  tyreId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  if (session.role !== "ADMIN" && session.role !== "OWNER") {
+    return { ok: false, error: "Only Admin/Owner may delete tyres" };
+  }
+  await authorize(session, "maintenance", "delete");
+  try {
+    await withTenant(session.tenantId, async (tx) => {
+      const before = await tx.tyre.findFirstOrThrow({
+        where: { id: tyreId, firmId: session.firmId },
+        include: { cycles: true },
+      });
+      await tx.tyre.delete({ where: { id: tyreId } });
+      await audit(tx, session, { entity: "Tyre", entityId: tyreId, action: "DELETE", before });
+    });
+    revalidatePath("/vehicle/tyres");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Delete failed" };
+  }
+}

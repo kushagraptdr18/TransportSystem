@@ -336,7 +336,7 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
       // no duplicates possible.
       await tx.driverAdvance.updateMany({
         where: { tripId: savedId },
-        data: { status: "PENDING", tripId: null },
+        data: { status: "PENDING", tripId: null, adjustedDate: null },
       });
       if (data.driverId && data.advanceIds.length) {
         await tx.driverAdvance.updateMany({
@@ -346,7 +346,8 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
             status: "PENDING",
             deletedAt: null,
           },
-          data: { status: "ADJUSTED", tripId: savedId },
+          // adjusted date = trip sheet finalization (save) date
+          data: { status: "ADJUSTED", tripId: savedId, adjustedDate: new Date() },
         });
       }
 
@@ -431,7 +432,7 @@ export async function deleteTrip(id: string): Promise<{ ok: true } | { ok: false
       // release consumed driver advances; drop the pending settlement row
       await tx.driverAdvance.updateMany({
         where: { tripId: id },
-        data: { status: "PENDING", tripId: null },
+        data: { status: "PENDING", tripId: null, adjustedDate: null },
       });
       await tx.driverSettlement.updateMany({
         where: { tripId: id, status: "PENDING" },

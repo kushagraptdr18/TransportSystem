@@ -25,6 +25,7 @@ import { FileUploadField } from "@/components/data/file-upload-field";
 import { FilterBar } from "@/components/data/filter-bar";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import {
+  deleteDriver,
   exitDriver,
   reactivateDriver,
   saveDriver,
@@ -105,9 +106,11 @@ const DOC_SLOTS: [keyof Pick<typeof emptyForm, "licence" | "aadhaar" | "pan" | "
 export function DriverClient({
   rows,
   vehicleOptions,
+  canDelete = false,
 }: {
   rows: DriverRow[];
   vehicleOptions: MasterOption[];
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -265,6 +268,25 @@ export function DriverClient({
               }
             >
               Re-activate
+            </Button>
+          )}
+          {canDelete && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-destructive"
+              title="Delete driver (blocked if referenced by advances / salaries / trips)"
+              onClick={async () => {
+                if (!confirm(`Delete driver ${row.original.name} (${row.original.driverCode})?`))
+                  return;
+                const res = await deleteDriver(row.original.id);
+                if (res.ok) {
+                  toast({ title: `${row.original.name} deleted` });
+                  router.refresh();
+                } else toast({ variant: "destructive", title: "Cannot delete", description: res.error });
+              }}
+            >
+              Delete
             </Button>
           )}
         </div>

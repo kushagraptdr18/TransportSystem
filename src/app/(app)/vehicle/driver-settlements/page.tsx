@@ -84,6 +84,7 @@ export default async function DriverSettlementsPage({
       amount,
       runningBalance: running,
       status: s.status,
+      isManual: !s.tripId,
       settledDate: s.settledDate ? s.settledDate.toISOString() : null,
       voucherNo: s.voucherNo ?? "",
       remarks: s.remarks ?? "",

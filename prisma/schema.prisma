@@ -2082,6 +2082,7 @@ model DriverAdvance {
   remarks     String?
   status      String   @default("PENDING") // PENDING | ADJUSTED
   tripId      String? // trip sheet that consumed this advance
+  adjustedDate DateTime? // trip sheet finalization date
 
   createdById String?
   createdAt   DateTime  @default(now())
@@ -2208,7 +2209,8 @@ model VehicleExpenseVoucher {
   firmId    String
   fyId      String
   voucherNo String // auto VEX- (expense) / VIN- (income)
-  date      DateTime
+  date      DateTime // bill date
+  paymentDate DateTime? // when cash/bank actually moved (may differ from bill date)
   txnType   String @default("EXPENSE") // EXPENSE | INCOME
   headId    String // AccountHead
   partyId   String? // supplier / party — optional

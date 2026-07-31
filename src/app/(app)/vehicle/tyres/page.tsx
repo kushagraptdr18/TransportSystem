@@ -131,6 +131,7 @@ export default async function TyresPage({
         vehicleOptions={vehicles.map((v) => ({ value: v.id, label: v.number }))}
         tyreNames={nameOptions}
         canEdit={true}
+        canDelete={session.role === "ADMIN" || session.role === "OWNER"}
       />
     </div>
   );

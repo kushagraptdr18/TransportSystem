@@ -25,7 +25,12 @@ export default async function VehicleTrackingPage() {
       where: { firmId: session.firmId, date: { lt: cutoff } },
     });
     const [vehicles, rows] = await Promise.all([
-      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
+      // tracking covers Own & Relative vehicles only — market/broker vehicles
+      // are never tracked here
+      tx.vehicle.findMany({
+        where: { isActive: true, ownershipType: { in: ["OWNER", "RELATIVE"] } },
+        orderBy: { number: "asc" },
+      }),
       tx.vehicleTracking.findMany({
         where: { firmId: session.firmId },
         orderBy: [{ vehicleId: "asc" }, { date: "asc" }],

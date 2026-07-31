@@ -42,6 +42,7 @@ const schema = z.object({
   partyId: z.string().nullish(),
   paymentMode: z.enum(["CASH", "BANK"]).nullish(), // blank = on credit
   bankPartyId: z.string().nullish(),
+  paymentDate: z.string().nullish(), // may differ from the bill date
   refNo: z.string().nullish(),
   remarks: z.string().nullish(),
   attachmentPath: z.string().nullish(),
@@ -97,6 +98,9 @@ export async function saveVehicleExpenseTxn(
         partyId: d.partyId || null,
         paymentMode: d.paymentMode || null,
         bankPartyId: d.paymentMode ? d.bankPartyId || null : null,
+        paymentDate: d.paymentMode
+          ? new Date(`${d.paymentDate || d.date}T00:00:00`)
+          : null,
         amount,
         refNo: d.refNo?.trim() || null,
         remarks: d.remarks || null,
@@ -182,6 +186,7 @@ export async function saveVehicleExpenseTxn(
         if (paid) {
           entries.push({
             ...common,
+            date: values.paymentDate ?? values.date,
             partyId: values.partyId,
             side: headSide,
             amount,
@@ -190,8 +195,10 @@ export async function saveVehicleExpenseTxn(
         }
       }
       if (paid) {
+        // money moves on the PAYMENT date, which may differ from the bill date
         entries.push({
           ...common,
+          date: values.paymentDate ?? values.date,
           partyId: values.bankPartyId!,
           side: moneySide,
           amount,

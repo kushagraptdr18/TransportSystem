@@ -56,17 +56,42 @@ export default async function VehicleExpenseSummaryPage({
     const vehicleById = new Map(vehicles.map((v) => [v.id, v]));
     const headName = new Map(heads.map((h) => [h.id, h.name]));
 
-    const buckets = new Map<string, { expense: number; income: number; count: number }>();
+    // clicking the entry count drills into the register filtered to the group
+    const baseQs = [
+      searchParams.date_from ? `date_from=${searchParams.date_from}` : "",
+      searchParams.date_to ? `date_to=${searchParams.date_to}` : "",
+    ]
+      .filter(Boolean)
+      .join("&");
+    const withBase = (qs: string) => `vehicle/expenses?${[qs, baseQs].filter(Boolean).join("&")}`;
+
+    const buckets = new Map<string, { expense: number; income: number; count: number; link: string }>();
     for (const it of items) {
-      const key =
-        group === "HEAD"
-          ? headName.get(it.voucher.headId) ?? "(unknown head)"
-          : group === "MONTH"
-            ? it.voucher.date.toISOString().slice(0, 7)
-            : group === "TYPE"
-              ? OWNERSHIP_LABEL[vehicleById.get(it.vehicleId)?.ownershipType ?? ""] ?? "Unknown"
-              : vehicleById.get(it.vehicleId)?.number ?? "(unknown vehicle)";
-      const b = buckets.get(key) ?? { expense: 0, income: 0, count: 0 };
+      let key: string;
+      let link: string;
+      if (group === "HEAD") {
+        key = headName.get(it.voucher.headId) ?? "(unknown head)";
+        link = withBase(`head=${it.voucher.headId}`);
+      } else if (group === "MONTH") {
+        key = it.voucher.date.toISOString().slice(0, 7);
+        const start = `${key}-01`;
+        const end = new Date(
+          it.voucher.date.getFullYear(),
+          it.voucher.date.getMonth() + 1,
+          0
+        )
+          .toISOString()
+          .slice(0, 10);
+        link = `vehicle/expenses?date_from=${start}&date_to=${end}`;
+      } else if (group === "TYPE") {
+        const ot = vehicleById.get(it.vehicleId)?.ownershipType ?? "";
+        key = OWNERSHIP_LABEL[ot] ?? "Unknown";
+        link = withBase(`ownership=${ot}`);
+      } else {
+        key = vehicleById.get(it.vehicleId)?.number ?? "(unknown vehicle)";
+        link = withBase(`vehicle=${it.vehicleId}`);
+      }
+      const b = buckets.get(key) ?? { expense: 0, income: 0, count: 0, link };
       const amt = toNum(String(it.amount));
       if (it.voucher.txnType === "INCOME") b.income += amt;
       else b.expense += amt;
@@ -78,6 +103,7 @@ export default async function VehicleExpenseSummaryPage({
         ([key, b]): ReportRow => ({
           group: key,
           entries: b.count,
+          link: b.link,
           expense: Math.round(b.expense * 100) / 100,
           income: Math.round(b.income * 100) / 100,
           net: Math.round((b.expense - b.income) * 100) / 100,
@@ -112,7 +138,7 @@ export default async function VehicleExpenseSummaryPage({
         title={`${groupLabel}-wise summary (${rows.length} group${rows.length === 1 ? "" : "s"})`}
         columns={[
           { key: "group", header: groupLabel },
-          { key: "entries", header: "Entries" },
+          { key: "entries", header: "Entries", linkBase: "/", linkParamKey: "link" },
           { key: "expense", header: "Expense", kind: "money" },
           { key: "income", header: "Income", kind: "money" },
           { key: "net", header: "Net Cost", kind: "money" },

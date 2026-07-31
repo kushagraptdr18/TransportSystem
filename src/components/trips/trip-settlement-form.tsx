@@ -60,6 +60,11 @@ export interface TripSettlementInitial {
   calcMethod: string;
   docs: { refType: "CHALAN" | "BROKER_SLIP"; refId: string }[];
   tollExpenseType: string;
+  tollAmount: number;
+  actualDiesel: number;
+  actualAdvance: number;
+  advanceIds: string[];
+  ureaQty: number;
   ureaRate: number;
   ureaExpenseType: string;
   loadingKm: number;
@@ -149,24 +154,32 @@ export function TripSettlementForm({
   const selected = pendingDocs.filter((d) => selectedDocs.has(`${d.refType}:${d.refId}`));
   const docFreight = r2(selected.reduce((s, d) => s + d.freight, 0));
 
-  // ---- left side fetches ----
+  // ---- left side: SNAPSHOT by default on saved trips ----
+  // A finalized trip sheet is frozen — view & edit show the values saved at
+  // final-save time. Live fetching only runs for new sheets, or after the
+  // user explicitly clicks "Fetch New Data".
+  const [liveMode, setLiveMode] = React.useState(!initial?.id);
   const [exp, setExp] = React.useState<{
     dieselTotal: number;
     tollTotal: number;
     rows: TripFetchedExpenseRow[];
-  }>({ dieselTotal: 0, tollTotal: 0, rows: [] });
+  }>({
+    dieselTotal: initial?.actualDiesel ?? 0,
+    tollTotal: initial?.tollAmount ?? 0,
+    rows: [],
+  });
   const [advances, setAdvances] = React.useState<{ total: number; rows: DriverAdvanceFetchRow[] }>({
-    total: 0,
+    total: initial?.actualAdvance ?? 0,
     rows: [],
   });
   const [urea, setUrea] = React.useState<{
     totalQty: number;
     rows: { id: string; date: string; destination: string; qty: number; remarks: string }[];
-  }>({ totalQty: 0, rows: [] });
+  }>({ totalQty: initial?.ureaQty ?? 0, rows: [] });
   const [popup, setPopup] = React.useState<"DIESEL" | "ADVANCE" | "UREA" | null>(null);
 
   React.useEffect(() => {
-    if (!vehicleId || !fromIso || !toIso) return;
+    if (!liveMode || !vehicleId || !fromIso || !toIso) return;
     let cancelled = false;
     fetchVehicleExpensesForTrip({ vehicleId, dateFrom: fromIso, dateTo: toIso })
       .then((r) => !cancelled && setExp(r))
@@ -178,8 +191,9 @@ export function TripSettlementForm({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vehicleId, fromIso, toIso]);
+  }, [liveMode, vehicleId, fromIso, toIso]);
   React.useEffect(() => {
+    if (!liveMode) return;
     if (!driverId || !fromIso || !toIso) {
       setAdvances({ total: 0, rows: [] });
       return;
@@ -198,7 +212,7 @@ export function TripSettlementForm({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [driverId, vehicleId, fromIso, toIso]);
+  }, [liveMode, driverId, vehicleId, fromIso, toIso]);
 
   const [tollType, setTollType] = React.useState<"DRIVER" | "COMPANY">(
     initial?.tollExpenseType === "COMPANY" ? "COMPANY" : "DRIVER"
@@ -333,7 +347,12 @@ export function TripSettlementForm({
         toDate: toIso,
         calcMethod,
         docs: selected.map((d) => ({ refType: d.refType, refId: d.refId })),
-        advanceIds: driverId ? advances.rows.map((a) => a.id) : [],
+        // snapshot mode keeps the previously linked advances untouched
+        advanceIds: liveMode
+          ? driverId
+            ? advances.rows.map((a) => a.id)
+            : []
+          : initial?.advanceIds ?? [],
         tollExpenseType: tollType,
         tollAmount: exp.tollTotal,
         actualDiesel: exp.dieselTotal,
@@ -365,7 +384,8 @@ export function TripSettlementForm({
           title: initial?.id ? "Trip sheet updated" : "Trip sheet saved",
           description: `Driver balance ${signed(driverBalance)} posted to the +/- register.`,
         });
-        router.push(`/trips?id=${res.id}`);
+        // register-first workflow: always return to the register after save
+        router.push("/trips/register");
         router.refresh();
       } else toast({ variant: "destructive", title: res.error });
     } finally {
@@ -379,8 +399,33 @@ export function TripSettlementForm({
     <div className="space-y-4">
       {/* -------- step 1 -------- */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
           <CardTitle className="text-base">Step 1 — Trip Details</CardTitle>
+          {initial?.id && (
+            <div className="flex items-center gap-2">
+              {!liveMode ? (
+                <>
+                  <Badge variant="secondary">Saved snapshot — frozen at final save</Badge>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setLiveMode(true);
+                      toast({
+                        title: "Fetching new data...",
+                        description:
+                          "Latest expenses, advances and urea are being loaded — save to keep the new version.",
+                      });
+                    }}
+                  >
+                    Fetch New Data
+                  </Button>
+                </>
+              ) : (
+                <Badge>Live data — save to freeze the new version</Badge>
+              )}
+            </div>
+          )}
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-6">
           <Field label="Trip No">

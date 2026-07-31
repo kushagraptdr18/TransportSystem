@@ -13,7 +13,7 @@ const catLabel = (c: string) =>
 export default async function TripExpensesPage({
   searchParams,
 }: {
-  searchParams: { vehicle?: string; category?: string };
+  searchParams: { vehicle?: string; category?: string; date_from?: string; date_to?: string };
 }) {
   const session = requireSession();
   await authorize(session, "trips", "view");
@@ -28,6 +28,18 @@ export default async function TripExpensesPage({
             fyId: session.fyId,
             deletedAt: null,
             ...(searchParams.vehicle ? { vehicleId: searchParams.vehicle } : {}),
+            ...(searchParams.date_from || searchParams.date_to
+              ? {
+                  tripDate: {
+                    ...(searchParams.date_from
+                      ? { gte: new Date(searchParams.date_from + "T00:00:00") }
+                      : {}),
+                    ...(searchParams.date_to
+                      ? { lte: new Date(searchParams.date_to + "T23:59:59") }
+                      : {}),
+                  },
+                }
+              : {}),
           },
         },
         include: { trip: true },
@@ -45,6 +57,7 @@ export default async function TripExpensesPage({
   const categories = Array.from(new Set(rows.map((r) => r.category)));
 
   const filters: FilterDef[] = [
+    { type: "daterange", key: "date", label: "Trip Date" },
     {
       type: "combobox",
       key: "vehicle",
@@ -72,7 +85,7 @@ export default async function TripExpensesPage({
       <SimpleReport
         title={`${rows.length} expense lines`}
         columns={[
-          { key: "tripNo", header: "Trip No" },
+          { key: "tripNo", header: "Trip No", linkBase: "/", linkParamKey: "link" },
           { key: "tripDate", header: "Trip Date", kind: "date" },
           { key: "vehicle", header: "Vehicle" },
           { key: "category", header: "Category", kind: "badge" },
@@ -81,6 +94,7 @@ export default async function TripExpensesPage({
         ]}
         rows={rows.map((r) => ({
           tripNo: r.trip.tripNo,
+          link: `trips?id=${r.tripId}`,
           tripDate: r.trip.tripDate.toISOString(),
           vehicle: vehicleById.get(r.trip.vehicleId) ?? "",
           category: catLabel(r.category),

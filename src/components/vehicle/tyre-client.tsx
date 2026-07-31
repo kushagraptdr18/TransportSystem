@@ -30,7 +30,13 @@ import { DateInput } from "@/components/data/date-input";
 import { ExportButton } from "@/components/data/export-button";
 import { FilterBar } from "@/components/data/filter-bar";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
-import { createTyre, removeTyre, transferTyre } from "@/app/(app)/vehicle/tyres/actions";
+import {
+  createTyre,
+  deleteTyre,
+  removeTyre,
+  transferTyre,
+  updateTyre,
+} from "@/app/(app)/vehicle/tyres/actions";
 
 export interface TyreCycleRow {
   vehicle: string;
@@ -86,11 +92,13 @@ export function TyreClient({
   vehicleOptions,
   tyreNames,
   canEdit,
+  canDelete = false,
 }: {
   rows: TyreRow[];
   vehicleOptions: MasterOption[];
   tyreNames: string[];
   canEdit: boolean;
+  canDelete?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -119,6 +127,15 @@ export function TyreClient({
   });
 
   const [viewOf, setViewOf] = React.useState<TyreRow | null>(null);
+
+  const [editOf, setEditOf] = React.useState<TyreRow | null>(null);
+  const [edit, setEdit] = React.useState({
+    tyreName: "",
+    tyreNo: "",
+    position: "HORSE" as "HORSE" | "TRAILER",
+    instDateText: "",
+    instKm: 0,
+  });
 
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, done: () => void) => {
     setBusy(true);
@@ -199,6 +216,50 @@ export function TyreClient({
           >
             <Eye className="h-3.5 w-3.5" /> View
           </Button>
+          {canEdit && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              title="Edit tyre details"
+              onClick={() => {
+                const open = row.original.cycles.find((c) => !c.removalDate);
+                setEdit({
+                  tyreName: row.original.tyreName,
+                  tyreNo: row.original.tyreNo,
+                  position: (open?.position ?? "HORSE") as "HORSE" | "TRAILER",
+                  instDateText: open ? formatDate(open.instDate) : "",
+                  instKm: open?.instKm ?? 0,
+                });
+                setEditOf(row.original);
+              }}
+            >
+              Edit
+            </Button>
+          )}
+          {canDelete && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs text-destructive"
+              title="Delete tyre (Admin/Owner only)"
+              onClick={async () => {
+                if (
+                  !confirm(
+                    `Delete tyre ${row.original.tyreNo} and its complete history? This cannot be undone.`
+                  )
+                )
+                  return;
+                const res = await deleteTyre(row.original.id);
+                if (res.ok) {
+                  toast({ title: `Tyre ${row.original.tyreNo} deleted` });
+                  router.refresh();
+                } else toast({ variant: "destructive", title: "Delete failed", description: res.error });
+              }}
+            >
+              Delete
+            </Button>
+          )}
           {canEdit && row.original.status === "RUNNING" && (
             <>
               <Button
@@ -594,6 +655,97 @@ export function TyreClient({
               }
             >
               {busy ? "Saving..." : "Remove Tyre"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ---------------- edit tyre ---------------- */}
+      <Dialog open={!!editOf} onOpenChange={(o) => !o && setEditOf(null)}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Edit Tyre {editOf?.tyreNo}</DialogTitle>
+            <DialogDescription>
+              Tyre number stays unique. Movement history is not affected — only the identity and
+              (for running tyres) the current installation details change.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Tyre Name *</Label>
+              <Input
+                className="h-8"
+                list="tyre-name-options"
+                value={edit.tyreName}
+                onChange={(e) => setEdit((f) => ({ ...f, tyreName: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Tyre Number * (unique)</Label>
+              <Input
+                className="h-8 uppercase"
+                value={edit.tyreNo}
+                onChange={(e) => setEdit((f) => ({ ...f, tyreNo: e.target.value }))}
+              />
+            </div>
+            {editOf?.status === "RUNNING" && (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Position (current cycle)</Label>
+                  <Select
+                    value={edit.position}
+                    onValueChange={(v) => setEdit((f) => ({ ...f, position: v as "HORSE" | "TRAILER" }))}
+                  >
+                    <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="HORSE">Horse</SelectItem>
+                      <SelectItem value="TRAILER">Trailer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Installation Date (current cycle)</Label>
+                  <DateInput
+                    className="h-8"
+                    value={edit.instDateText}
+                    onChange={(t) => setEdit((f) => ({ ...f, instDateText: t }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Installation KM (current cycle)</Label>
+                  <Input
+                    type="number"
+                    className="h-8 text-right"
+                    value={edit.instKm ? String(edit.instKm) : ""}
+                    onChange={(e) => setEdit((f) => ({ ...f, instKm: Number(e.target.value) || 0 }))}
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOf(null)} disabled={busy}>Cancel</Button>
+            <Button
+              disabled={busy || !edit.tyreName.trim() || !edit.tyreNo.trim()}
+              onClick={() =>
+                run(
+                  () =>
+                    updateTyre({
+                      tyreId: editOf!.id,
+                      tyreName: edit.tyreName,
+                      tyreNo: edit.tyreNo,
+                      position: edit.position,
+                      instDate: edit.instDateText ? textToIso(edit.instDateText) : null,
+                      instKm: edit.instKm || null,
+                    }),
+                  () => {
+                    toast({ title: "Tyre updated" });
+                    setEditOf(null);
+                  }
+                )
+              }
+            >
+              {busy ? "Saving..." : "Save Changes"}
             </Button>
           </DialogFooter>
         </DialogContent>

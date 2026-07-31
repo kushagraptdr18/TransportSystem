@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { peekDocNumber } from "@/lib/sequences";
@@ -12,11 +13,14 @@ export const dynamic = "force-dynamic";
 export default async function TripEntryPage({
   searchParams,
 }: {
-  searchParams: { id?: string };
+  searchParams: { id?: string; new?: string };
 }) {
+  // register-first workflow: the module always opens on the register; the
+  // entry page is reached via "New Trip Sheet" or a row's View/Edit
+  if (!searchParams.id && !searchParams.new) redirect("/trips/register");
   const session = requireSession();
 
-  const { vehicles, drivers, driverByVehicle, banks, nextNo, trip, docs } = await withTenant(
+  const { vehicles, drivers, driverByVehicle, banks, nextNo, trip, docs, linkedAdvanceIds } = await withTenant(
     session.tenantId,
     async (tx) => {
       const [vehicleRows, driverRows, openAssignments, banks, nextNo] = await Promise.all([
@@ -38,6 +42,9 @@ export default async function TripEntryPage({
       const docs = trip
         ? await tx.tripDoc.findMany({ where: { tripId: trip.id } })
         : [];
+      const linkedAdvances = trip
+        ? await tx.driverAdvance.findMany({ where: { tripId: trip.id }, select: { id: true } })
+        : [];
       const driverIds = new Set(driverRows.map((d) => d.id));
       return {
         // trip sheets: Own / Relative vehicles only (market = chalan workflow)
@@ -57,6 +64,7 @@ export default async function TripEntryPage({
         nextNo,
         trip,
         docs,
+        linkedAdvanceIds: linkedAdvances.map((a) => a.id),
       };
     }
   );
@@ -75,6 +83,11 @@ export default async function TripEntryPage({
           refId: d.refId,
         })),
         tollExpenseType: trip.tollExpenseType,
+        tollAmount: toNum(String(trip.tollAmount)),
+        actualDiesel: toNum(String(trip.actualDiesel)),
+        actualAdvance: toNum(String(trip.actualAdvance)),
+        advanceIds: linkedAdvanceIds,
+        ureaQty: toNum(String(trip.ureaQty)),
         ureaRate: toNum(String(trip.ureaRate)),
         ureaExpenseType: trip.ureaExpenseType,
         loadingKm: toNum(String(trip.loadingKm)),

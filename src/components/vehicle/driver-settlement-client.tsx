@@ -34,6 +34,7 @@ import {
   deleteDriverSettlement,
   saveDriverSettlement,
   settleDriverRunningBalance,
+  updateDriverSettlement,
 } from "@/app/(app)/vehicle/driver-settlements/actions";
 
 export interface DriverSettlementRow {
@@ -47,6 +48,7 @@ export interface DriverSettlementRow {
   amount: number;
   runningBalance: number;
   status: string;
+  isManual: boolean;
   settledDate: string | null;
   voucherNo: string;
   remarks: string;
@@ -82,6 +84,7 @@ export function DriverSettlementClient({
 
   const [newOpen, setNewOpen] = React.useState(false);
   const [form, setForm] = React.useState({
+    id: null as string | null,
     dateText: formatDate(new Date()),
     driverId: null as string | null,
     vehicleId: null as string | null,
@@ -181,6 +184,28 @@ export function DriverSettlementClient({
                 )}
               </Button>
             )}
+          {row.original.status === "PENDING" && row.original.isManual && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-xs"
+              title="Edit manual entry (trip-generated rows are edited via their trip sheet)"
+              onClick={() => {
+                setForm({
+                  id: row.original.id,
+                  dateText: formatDate(row.original.date),
+                  driverId: row.original.driverId,
+                  vehicleId: null,
+                  tripRef: row.original.tripRef,
+                  amount: row.original.amount,
+                  remarks: row.original.remarks,
+                });
+                setNewOpen(true);
+              }}
+            >
+              Edit
+            </Button>
+          )}
           {canDelete && row.original.status === "PENDING" && (
             <Button
               variant="ghost"
@@ -225,7 +250,21 @@ export function DriverSettlementClient({
               { header: "Remarks", key: "remarks" },
             ]}
           />
-          <Button size="sm" onClick={() => setNewOpen(true)}>
+          <Button
+            size="sm"
+            onClick={() => {
+              setForm({
+                id: null,
+                dateText: formatDate(new Date()),
+                driverId: null,
+                vehicleId: null,
+                tripRef: "",
+                amount: 0,
+                remarks: "",
+              });
+              setNewOpen(true);
+            }}
+          >
             <Plus className="h-4 w-4" /> Manual Entry
           </Button>
         </div>
@@ -321,16 +360,24 @@ export function DriverSettlementClient({
               onClick={async () => {
                 setBusy(true);
                 try {
-                  const res = await saveDriverSettlement({
-                    date: textToIso(form.dateText),
-                    driverId: form.driverId ?? "",
-                    vehicleId: form.vehicleId,
-                    tripRef: form.tripRef,
-                    amount: form.amount,
-                    remarks: form.remarks,
-                  });
+                  const res = form.id
+                    ? await updateDriverSettlement({
+                        id: form.id,
+                        date: textToIso(form.dateText),
+                        amount: form.amount,
+                        tripRef: form.tripRef,
+                        remarks: form.remarks,
+                      })
+                    : await saveDriverSettlement({
+                        date: textToIso(form.dateText),
+                        driverId: form.driverId ?? "",
+                        vehicleId: form.vehicleId,
+                        tripRef: form.tripRef,
+                        amount: form.amount,
+                        remarks: form.remarks,
+                      });
                   if (res.ok) {
-                    toast({ title: "Settlement entry saved" });
+                    toast({ title: form.id ? "Settlement entry updated" : "Settlement entry saved" });
                     setNewOpen(false);
                     router.refresh();
                   } else toast({ variant: "destructive", title: "Save failed", description: res.error });

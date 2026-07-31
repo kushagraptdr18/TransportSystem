@@ -158,6 +158,14 @@ export default async function TripPrintPage({ params }: { params: { id: string }
                   <>
                     <tr>
                       <td className={cell}>
+                        Loading KM: <b>{n(trip.loadingKm).toLocaleString("en-IN")}</b> · Unloading
+                        KM: <b>{n(trip.unloadingKm).toLocaleString("en-IN")}</b> · New Loading KM:{" "}
+                        <b>{n(trip.newLoadingKm).toLocaleString("en-IN")}</b>
+                      </td>
+                      <td className={cell} />
+                    </tr>
+                    <tr>
+                      <td className={cell}>
                         Distance 1: {dist1} km ÷ {n(trip.dieselAvg)} × {n(trip.dieselRate)}
                       </td>
                       <td className={`${cell} text-right`}>
