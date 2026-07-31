@@ -32,6 +32,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
 import { DateInput } from "@/components/data/date-input";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
@@ -314,24 +315,17 @@ export function VoucherEntry({
   return (
     <div className="space-y-4">
       {/* ---------- type selector ---------- */}
-      <div className="grid gap-2 sm:grid-cols-4">
-        {(Object.keys(TYPE_META) as VType[]).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => pickType(t)}
-            className={`rounded-lg border p-3 text-left transition-colors ${
-              type === t ? "border-primary bg-primary/5 ring-1 ring-primary" : "hover:bg-muted/50"
-            }`}
-          >
-            <div className="flex items-center gap-2 font-semibold">
+      <Tabs value={type} onValueChange={(v) => pickType(v as VType)}>
+        <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
+          {(Object.keys(TYPE_META) as VType[]).map((t) => (
+            <TabsTrigger key={t} value={t} className="flex items-center gap-2 py-2">
               {TYPE_META[t].icon}
               {TYPE_META[t].title} Voucher
-            </div>
-            <div className="mt-0.5 text-xs text-muted-foreground">{TYPE_META[t].hint}</div>
-          </button>
-        ))}
-      </div>
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+      <p className="text-xs text-muted-foreground">{TYPE_META[type].hint}</p>
 
       {/* ---------- header ---------- */}
       <Card>
