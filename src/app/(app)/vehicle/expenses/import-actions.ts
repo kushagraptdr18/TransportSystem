@@ -116,14 +116,54 @@ export async function downloadVehicleExpenseTemplate(): Promise<
   }
 }
 
+/**
+ * Flexible date recognition for Excel imports. Accepts:
+ *   YYYY-MM-DD / YYYY/MM/DD, DD/MM/YYYY, DD-MM-YYYY, MM/DD/YYYY, MM-DD-YYYY,
+ *   2-digit years, Excel serial numbers, and ISO datetime strings.
+ * Ambiguity rule: when both parts could be a month (e.g. 05/06/2026) the
+ * value is read as DD/MM (Indian convention). A part > 12 disambiguates
+ * automatically (e.g. 06/25/2026 → MM/DD).
+ */
 function parseAnyDate(v: string): string | null {
   const t = v.trim();
-  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+  if (!t) return null;
+  const iso = (y: number, m: number, d: number): string | null => {
+    if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+    const dt = new Date(y, m - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return null;
+    return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  };
+  // Excel serial number (days since 1899-12-30)
+  if (/^\d+(\.\d+)?$/.test(t)) {
+    const serial = parseFloat(t);
+    if (serial > 20000 && serial < 80000) {
+      const dt = new Date(Date.UTC(1899, 11, 30) + Math.round(serial) * 86400000);
+      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+    }
+    return null;
+  }
+  // ISO / YYYY first
+  let m = t.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (m) return iso(+m[1], +m[2], +m[3]);
+  // day-month-year or month-day-year with / - .
+  m = t.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
+  if (m) {
+    const a = +m[1];
+    const b = +m[2];
+    let y = +m[3];
+    if (y < 100) y += y >= 70 ? 1900 : 2000;
+    if (a > 12 && b <= 12) return iso(y, b, a); // DD/MM
+    if (b > 12 && a <= 12) return iso(y, a, b); // MM/DD
+    return iso(y, b, a); // ambiguous → DD/MM (Indian convention)
+  }
+  // "1 Apr 2026" / "01-Apr-26" style via Date fallback
+  const parsed = new Date(t);
+  if (!isNaN(parsed.getTime())) {
+    return iso(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
+  }
   const d = parseDdMmYyyy(t);
   if (!d) return null;
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${mm}-${dd}`;
+  return iso(d.getFullYear(), d.getMonth() + 1, d.getDate());
 }
 
 export async function importVehicleExpenses(fd: FormData): Promise<ImportSummary> {

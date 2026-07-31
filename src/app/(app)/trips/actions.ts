@@ -566,9 +566,23 @@ export async function getPendingTripDocs(input: {
   excludeTripId?: string | null;
 }): Promise<PendingTripDoc[]> {
   const session = requireSession();
+  // Inclusive, timezone-safe boundaries: documents may have been stored at
+  // LOCAL midnight or UTC midnight depending on how the date reached the
+  // server, so take the earlier of the two day-starts and the later of the
+  // two day-ends. A chalan dated exactly on From/To always matches.
+  const dayStart = (s: string) => {
+    const local = new Date(`${s}T00:00:00`);
+    const utc = new Date(`${s}T00:00:00Z`);
+    return local < utc ? local : utc;
+  };
+  const dayEnd = (s: string) => {
+    const local = new Date(`${s}T23:59:59.999`);
+    const utc = new Date(`${s}T23:59:59.999Z`);
+    return local > utc ? local : utc;
+  };
   const range = {
-    gte: toDate(input.dateFrom),
-    lte: new Date(`${input.dateTo}T23:59:59`),
+    gte: dayStart(input.dateFrom),
+    lte: dayEnd(input.dateTo),
   };
   return withTenant(session.tenantId, async (tx) => {
     const linked = await tx.tripDoc.findMany({

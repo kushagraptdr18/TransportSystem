@@ -185,6 +185,21 @@ export default async function TripPrintPage({ params }: { params: { id: string }
                       </td>
                     </tr>
                     <tr>
+                      <td className={cell}>Total Diesel Cost (rounded)</td>
+                      <td className={`${cell} text-right font-semibold`}>
+                        {formatMoney(
+                          Math.round(
+                            (n(trip.dieselAvg) > 0
+                              ? (dist1 / n(trip.dieselAvg)) * n(trip.dieselRate)
+                              : 0) +
+                              (n(trip.dieselAvg2) > 0
+                                ? (dist2 / n(trip.dieselAvg2)) * n(trip.dieselRate)
+                                : 0)
+                          )
+                        )}
+                      </td>
+                    </tr>
+                    <tr>
                       <td className={cell}>Driver Advance</td>
                       <td className={`${cell} text-right`}>{formatMoney(n(trip.apprDriverAdvance))}</td>
                     </tr>

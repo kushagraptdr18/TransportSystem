@@ -249,6 +249,42 @@ export function VehicleTrackingClient({
                 Tracking data is available only for the last {retentionDays} days.
               </span>
             )}
+            <span className="ml-auto">
+              <ExportButton
+                rows={
+                  asOfRows
+                    ? asOfRows.map((r) => ({
+                        vehicle: r.vehicle,
+                        transporterName: r.transporterName,
+                        fromLocation: r.fromLocation,
+                        toLocation: r.toLocation,
+                        currentLocation: r.currentLocation,
+                        status: r.status,
+                        asOn: formatDate(r.date),
+                      }))
+                    : live.map((r) => ({
+                        vehicle: vehicleNo.get(r.vehicleId) ?? "",
+                        transporterName: r.transporterName,
+                        fromLocation: r.fromLocation,
+                        toLocation: r.toLocation,
+                        currentLocation: r.currentLocation,
+                        status: r.status,
+                        asOn: r.lastUpdated ? formatDate(r.lastUpdated) : "",
+                      }))
+                }
+                fileName={asOfRows ? `vehicle-tracking-as-on-${dateText.replace(/\//g, "-")}` : "vehicle-tracking"}
+                sheetName="Vehicle Tracking"
+                columns={[
+                  { header: "Vehicle No", key: "vehicle" },
+                  { header: "Transporter Name", key: "transporterName" },
+                  { header: "From", key: "fromLocation" },
+                  { header: "To", key: "toLocation" },
+                  { header: "Current Location", key: "currentLocation" },
+                  { header: "Status", key: "status" },
+                  { header: asOfRows ? "As On" : "Last Updated", key: "asOn" },
+                ]}
+              />
+            </span>
           </div>
 
           {asOfRows ? (

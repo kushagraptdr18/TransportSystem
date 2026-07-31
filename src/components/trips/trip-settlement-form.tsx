@@ -277,7 +277,8 @@ export function TripSettlementForm({
   const dist2 = newLoadingKm > 0 ? Math.max(0, newLoadingKm - unloadingKm) : 0;
   const fuel1 = dieselAvg > 0 ? r2((dist1 / dieselAvg) * dieselRate) : 0;
   const fuel2 = dieselAvg2 > 0 ? r2((dist2 / dieselAvg2) * dieselRate) : 0;
-  const totalDieselCost = r2(fuel1 + fuel2);
+  // Total Diesel Cost is a whole rupee (standard rounding: .50 rounds up)
+  const totalDieselCost = Math.round(fuel1 + fuel2);
   const fooding = r2(foodingDays * foodingRate);
 
   // approved total (compared with actuals for the DRIVER settlement)

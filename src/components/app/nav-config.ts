@@ -131,6 +131,7 @@ export const NAV: NavGroup[] = [
       { label: "Driver Advance", href: "/vehicle/driver-advances" },
       { label: "Driver +/- Settlement", href: "/vehicle/driver-settlements" },
       { label: "Driver Salary", href: "/vehicle/driver-salary" },
+      { label: "Driver Final Settlement", href: "/vehicle/driver-fnf" },
       { label: "AdBlue (Urea) Stock", href: "/vehicle/adblue" },
       { label: "Vehicle Tracking", href: "/vehicle/tracking" },
       { label: "Vehicle Profit & Loss", href: "/vehicle/pnl" },

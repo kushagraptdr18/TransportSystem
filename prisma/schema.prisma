@@ -2286,3 +2286,39 @@ model TripDoc {
   @@unique([tenantId, refType, refId])
   @@index([tripId])
 }
+
+// ============ DRIVER FINAL SETTLEMENT (F&F) ============
+// One-time full & final settlement when a driver leaves: settles running
+// salary, shortages, pending advances and the +/- negative balance in a
+// single locked document with its own settlement number.
+
+model DriverFnf {
+  id           String   @id @default(cuid())
+  tenantId     String
+  firmId       String
+  fyId         String
+  settlementNo String // auto DFS-0001
+  driverId     String
+  date         DateTime
+  lastWorkingDate DateTime?
+
+  grossSalary       Decimal @default(0) @db.Decimal(14, 2) // running salary outstanding
+  shortageAdjust    Decimal @default(0) @db.Decimal(14, 2)
+  advanceAdjust     Decimal @default(0) @db.Decimal(14, 2)
+  negativeAdjust    Decimal @default(0) @db.Decimal(14, 2) // driver +/- negative balance recovered
+  otherRecoveries   Decimal @default(0) @db.Decimal(14, 2)
+  otherPayments     Decimal @default(0) @db.Decimal(14, 2) // incentives / bonuses
+  finalPayable      Decimal @default(0) @db.Decimal(14, 2) // +pay driver / −receive from driver
+
+  paymentMode String? // CASH | BANK
+  bankPartyId String?
+  refNo       String?
+  remarks     String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, settlementNo])
+  @@index([tenantId, driverId])
+}
