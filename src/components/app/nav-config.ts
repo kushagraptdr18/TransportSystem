@@ -113,6 +113,8 @@ export const NAV: NavGroup[] = [
       { label: "Outstanding (Receivables)", href: "/accounts/outstanding" },
       { label: "Outstanding Payables", href: "/accounts/payables" },
       { label: "TDS Report", href: "/accounts/tds" },
+      { label: "TDS Receivable", href: "/accounts/tds-receivable" },
+      { label: "Advance Register", href: "/accounts/advances" },
       { label: "TDS Payable Register", href: "/accounts/tds-report" },
       { label: "Staff Payroll & Advances", href: "/accounts/staff" },
       { label: "Office Income & Expense", href: "/accounts/office" },

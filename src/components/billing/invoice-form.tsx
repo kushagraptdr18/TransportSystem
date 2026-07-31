@@ -36,6 +36,7 @@ import { DateInput } from "@/components/data/date-input";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import { PartyCreateDialog } from "@/components/masters/inline-dialogs";
 import {
+  getPartyAdvanceBalance,
   getPartyBillingDetails,
   getPendingLrsForParty,
   resolveBulkLrs,
@@ -189,6 +190,17 @@ export function InvoiceForm({
   const [subject, setSubject] = React.useState(initial?.subject ?? "");
   const [vehicleText, setVehicleText] = React.useState(initial?.vehicleText ?? "");
   const [advance, setAdvance] = React.useState(initial?.advance ?? 0);
+  // open party advance balance (auto-created by receipt vouchers)
+  const [availableAdvance, setAvailableAdvance] = React.useState(0);
+  React.useEffect(() => {
+    if (!partyId) {
+      setAvailableAdvance(0);
+      return;
+    }
+    getPartyAdvanceBalance(partyId)
+      .then(setAvailableAdvance)
+      .catch(() => setAvailableAdvance(0));
+  }, [partyId]);
   const [gstApplicable, setGstApplicable] = React.useState(
     kind === "GST" ? true : initial?.gstApplicable ?? false
   );
@@ -663,7 +675,15 @@ export function InvoiceForm({
             </div>
           </div>
           {kind !== "GST" && <Num label="TDS %" value={tdsPct} onChange={setTdsPct} />}
-          <Num label="Advance" value={advance} onChange={setAdvance} />
+          <Num
+            label={
+              availableAdvance > 0
+                ? `Advance (available: ${formatMoney(availableAdvance)})`
+                : "Advance"
+            }
+            value={advance}
+            onChange={setAdvance}
+          />
           <div className="space-y-1">
             <Label className="text-xs">Vehicle (text)</Label>
             <Input className="h-8" value={vehicleText} onChange={(e) => setVehicleText(e.target.value)} />

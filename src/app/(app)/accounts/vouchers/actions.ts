@@ -31,6 +31,10 @@ const adjustmentSchema = z.object({
 const allocationSchema = z.object({
   refId: z.string().min(1),
   refNo: z.string().min(1),
+  /** per-row module — set when the grid runs in "All modules" mode */
+  refType: z
+    .enum(["BILLING", "GST_BILLING", "FREIGHT_CHALLAN", "BROKER_ENTRY", "LORRY_HIRE", "CASH_MEMO"])
+    .nullish(),
   billAmt: z.number().min(0).default(0),
   tdsPct: z.number().min(0).default(0),
   tdsAmt: z.number().min(0).default(0),
@@ -140,7 +144,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       };
       const allocations = data.allocations.map((a) => ({
         tenantId: session.tenantId,
-        refType: data.moduleLink as ModuleLink,
+        refType: (a.refType ?? data.moduleLink) as ModuleLink,
         refId: a.refId,
         refNo: a.refNo,
         billAmt: a.billAmt,
@@ -151,6 +155,52 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         amount: a.amount,
         remarks: a.remarks || null,
       }));
+
+      // ---- validation: never over-settle, never allocate beyond the voucher
+      const allocatedSum = round2(data.allocations.reduce((s, a) => s + a.amount, 0));
+      if (allocatedSum > data.amount + 0.01) {
+        throw new Error(
+          `Allocated ${allocatedSum} exceeds the voucher amount ${data.amount}.`
+        );
+      }
+      {
+        const byType = new Map<ModuleLink, typeof data.allocations>();
+        for (const a of data.allocations) {
+          const t = (a.refType ?? data.moduleLink) as ModuleLink;
+          byType.set(t, [...(byType.get(t) ?? []), a]);
+        }
+        for (const [refType, rows] of Array.from(byType.entries())) {
+          const refIds = rows.map((r) => r.refId);
+          const already = await allocatedByRef(tx, refType, refIds, data.id);
+          // gross document value per ref, per module
+          const gross = new Map<string, number>();
+          if (refType === "BILLING" || refType === "GST_BILLING") {
+            const invs = await tx.invoice.findMany({ where: { id: { in: refIds } } });
+            invs.forEach((i) => gross.set(i.id, round2(Number(i.grandTotal) - Number(i.advance))));
+          } else if (refType === "FREIGHT_CHALLAN") {
+            const cs = await tx.chalan.findMany({ where: { id: { in: refIds } } });
+            cs.forEach((c) => gross.set(c.id, Number(c.balance)));
+          } else if (refType === "BROKER_ENTRY") {
+            const ss = await tx.brokerSlip.findMany({ where: { id: { in: refIds } } });
+            ss.forEach((s) => gross.set(s.id, Number(s.vBalance)));
+          } else if (refType === "LORRY_HIRE") {
+            const hs = await tx.hireSlip.findMany({ where: { id: { in: refIds } } });
+            hs.forEach((h) => gross.set(h.id, Number(h.balance)));
+          } else if (refType === "CASH_MEMO") {
+            const ds = await tx.delivery.findMany({ where: { id: { in: refIds } } });
+            ds.forEach((d2) => gross.set(d2.id, Number(d2.total)));
+          }
+          for (const r of rows) {
+            const pending = round2((gross.get(r.refId) ?? Infinity) - (already.get(r.refId) ?? 0));
+            const settle = round2(r.amount + r.tdsAmt + r.deduction);
+            if (settle > pending + 0.01) {
+              throw new Error(
+                `Ref ${r.refNo}: adjustment ${settle} exceeds the pending amount ${pending}. Duplicate or over-settlement is not allowed.`
+              );
+            }
+          }
+        }
+      }
 
       let savedId: string;
       if (data.id) {
@@ -285,6 +335,59 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         savedNumber: data.voucherNo,
       });
 
+      // ---- automatic party advance (receive-as-advance / over-payment) ----
+      // Any unallocated remainder of a party receipt becomes an advance
+      // balance for that party — no second voucher is ever needed.
+      if (data.type === "RECEIPT" && data.partyId && !data.accountHeadId) {
+        const unallocated = round2(data.amount - allocatedSum);
+        const existingAdv = await tx.partyAdvance.findFirst({
+          where: { voucherId: savedId, deletedAt: null },
+        });
+        if (unallocated > 0.009) {
+          if (existingAdv) {
+            if (Number(existingAdv.consumedAmount) > unallocated + 0.01) {
+              throw new Error(
+                `Advance from this voucher is already consumed (${existingAdv.consumedAmount}) — cannot reduce it below that.`
+              );
+            }
+            await tx.partyAdvance.update({
+              where: { id: existingAdv.id },
+              data: {
+                partyId: data.partyId,
+                date: voucherDate,
+                voucherNo: data.voucherNo,
+                amount: unallocated,
+                remarks: data.remarks || null,
+              },
+            });
+          } else {
+            await tx.partyAdvance.create({
+              data: {
+                tenantId: session.tenantId,
+                firmId: session.firmId,
+                fyId: session.fyId,
+                partyId: data.partyId,
+                date: voucherDate,
+                voucherId: savedId,
+                voucherNo: data.voucherNo,
+                amount: unallocated,
+                remarks: data.remarks || null,
+              },
+            });
+          }
+        } else if (existingAdv) {
+          if (Number(existingAdv.consumedAmount) > 0.009) {
+            throw new Error(
+              "This voucher's advance has already been consumed by a bill — it cannot be fully allocated now."
+            );
+          }
+          await tx.partyAdvance.update({
+            where: { id: existingAdv.id },
+            data: { deletedAt: new Date() },
+          });
+        }
+      }
+
       return savedId;
     });
 
@@ -310,6 +413,15 @@ export async function deleteVoucher(
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.voucher.findUniqueOrThrow({ where: { id } });
+      const adv = await tx.partyAdvance.findFirst({ where: { voucherId: id, deletedAt: null } });
+      if (adv && Number(adv.consumedAmount) > 0.009) {
+        throw new Error(
+          "The advance created by this voucher is already consumed by a bill — remove that adjustment first."
+        );
+      }
+      if (adv) {
+        await tx.partyAdvance.update({ where: { id: adv.id }, data: { deletedAt: new Date() } });
+      }
       await tx.voucher.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "VOUCHER", id);
       await audit(tx, session, { entity: "Voucher", entityId: id, action: "DELETE", before });
@@ -331,6 +443,8 @@ export interface AllocationCandidate {
   billAmt: number;
   outstanding: number;
   tdsPct: number;
+  /** source module (needed when the grid runs in "All modules" mode) */
+  module: ModuleLink;
 }
 
 /** Sum of amounts already allocated to a set of refs (excluding a voucher being edited). */
@@ -362,16 +476,21 @@ async function allocatedByRef(
  *  - CASH_MEMO: deliveries
  */
 export async function getAllocationCandidates(input: {
-  moduleLink: ModuleLink;
+  moduleLink: ModuleLink | "ALL";
   partyId?: string | null;
   voucherId?: string | null;
 }): Promise<AllocationCandidate[]> {
   const session = requireSession();
-  const { moduleLink, partyId, voucherId } = input;
+  const { partyId, voucherId } = input;
+  const links: ModuleLink[] =
+    input.moduleLink === "ALL"
+      ? ["BILLING", "GST_BILLING", "FREIGHT_CHALLAN", "BROKER_ENTRY", "LORRY_HIRE", "CASH_MEMO"]
+      : [input.moduleLink];
 
   return withTenant(session.tenantId, async (tx) => {
     const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null as null };
     const out: AllocationCandidate[] = [];
+    for (const moduleLink of links) {
 
     if (moduleLink === "BILLING" || moduleLink === "GST_BILLING") {
       const invoices = await tx.invoice.findMany({
@@ -394,6 +513,7 @@ export async function getAllocationCandidates(input: {
             billAmt: bill,
             outstanding,
             tdsPct: Number(inv.tdsPct),
+            module: moduleLink,
           });
       }
     } else if (moduleLink === "FREIGHT_CHALLAN") {
@@ -412,6 +532,7 @@ export async function getAllocationCandidates(input: {
             billAmt: Number(c.grandTotal),
             outstanding,
             tdsPct: Number(c.tdsPct),
+            module: moduleLink,
           });
       }
     } else if (moduleLink === "BROKER_ENTRY") {
@@ -433,6 +554,7 @@ export async function getAllocationCandidates(input: {
             billAmt: Number(s.vNetAmt),
             outstanding,
             tdsPct: Number(s.vTdsPct),
+            module: moduleLink,
           });
       }
     } else if (moduleLink === "LORRY_HIRE") {
@@ -451,6 +573,7 @@ export async function getAllocationCandidates(input: {
             billAmt: Number(s.totalHire),
             outstanding,
             tdsPct: 0,
+            module: moduleLink,
           });
       }
     } else if (moduleLink === "CASH_MEMO") {
@@ -469,8 +592,10 @@ export async function getAllocationCandidates(input: {
             billAmt: Number(d.total),
             outstanding,
             tdsPct: 0,
+            module: moduleLink,
           });
       }
+    }
     }
     return out;
   });

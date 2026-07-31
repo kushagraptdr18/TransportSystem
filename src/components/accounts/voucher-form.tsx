@@ -44,6 +44,7 @@ import {
 } from "@/lib/adjust-engine";
 
 const MODULE_LINKS = [
+  "ALL",
   "BILLING",
   "LORRY_HIRE",
   "BROKER_ENTRY",
@@ -55,6 +56,7 @@ const MODULE_LINKS = [
 ] as const;
 
 const ALLOCATABLE: string[] = [
+  "ALL",
   "BILLING",
   "GST_BILLING",
   "FREIGHT_CHALLAN",
@@ -66,6 +68,7 @@ const ALLOCATABLE: string[] = [
 const allocationSchema = z.object({
   refId: z.string(),
   refNo: z.string(),
+  module: z.string().default("BILLING"),
   billAmt: z.coerce.number().min(0).default(0),
   outstanding: z.coerce.number().min(0).default(0),
   tdsPct: z.coerce.number().min(0).default(0),
@@ -154,7 +157,8 @@ export function VoucherForm({
       voucherNo: peekNumbers[t] ?? "1",
       voucherDate: formatDate(new Date()),
       entryType: t === "CONTRA" ? "CONTRA" : "CASH",
-      moduleLink: "OTHERS",
+      // default = All: the grid fetches pending documents across every module
+      moduleLink: t === "RECEIPT" || t === "PAYMENT" ? "ALL" : "OTHERS",
       partyId: null,
       vehicleId: null,
       accountHeadId: null,
@@ -212,13 +216,14 @@ export function VoucherForm({
     setLoadingAllocs(true);
     try {
       const candidates: AllocationCandidate[] = await getAllocationCandidates({
-        moduleLink: moduleLink as (typeof MODULE_LINKS)[number],
+        moduleLink: moduleLink as never,
         partyId,
       });
       replace(
         candidates.map((c) => ({
           refId: c.refId,
           refNo: c.refNo,
+          module: c.module,
           billAmt: c.billAmt,
           outstanding: c.outstanding,
           tdsPct: c.tdsPct,
@@ -249,7 +254,7 @@ export function VoucherForm({
         voucherNo: values.voucherNo,
         voucherDate: toIso(values.voucherDate),
         entryType: values.entryType,
-        moduleLink: values.moduleLink,
+        moduleLink: values.moduleLink === "ALL" ? "OTHERS" : values.moduleLink,
         partyId: values.partyId,
         vehicleId: values.vehicleId,
         accountHeadId: values.accountHeadId,
@@ -277,6 +282,7 @@ export function VoucherForm({
           .map((a) => ({
             refId: a.refId,
             refNo: a.refNo,
+            refType: a.module as never,
             billAmt: a.billAmt,
             tdsPct: a.tdsPct,
             tdsAmt: a.tdsAmt,
@@ -553,6 +559,7 @@ export function VoucherForm({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Ref No</TableHead>
+                      <TableHead>Module</TableHead>
                       <TableHead className="text-right">Bill Amt</TableHead>
                       <TableHead className="text-right">Outstanding</TableHead>
                       <TableHead className="w-20 text-right">TDS %</TableHead>
@@ -567,14 +574,18 @@ export function VoucherForm({
                   <TableBody>
                     {fields.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="h-16 text-center text-muted-foreground">
-                          No open documents.
+                        <TableCell colSpan={9} className="h-16 text-center text-muted-foreground">
+                          No open documents — a party receipt saved without allocations is stored
+                          automatically as an Advance for the party.
                         </TableCell>
                       </TableRow>
                     ) : (
                       fields.map((f, i) => (
                         <TableRow key={f.id}>
                           <TableCell>{f.refNo}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                            {f.module.replace(/_/g, " ")}
+                          </TableCell>
                           <TableCell className="text-right tabular-nums">
                             {formatMoney(f.billAmt)}
                           </TableCell>

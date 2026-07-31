@@ -2322,3 +2322,45 @@ model DriverFnf {
   @@unique([firmId, fyId, settlementNo])
   @@index([tenantId, driverId])
 }
+
+// ============ PARTY ADVANCES ============
+// Money received without (or beyond) an outstanding reference. Created
+// automatically by receipt vouchers (unallocated remainder / over-payment)
+// and consumed later by bills. Balance = amount - consumedAmount.
+
+model PartyAdvance {
+  id             String   @id @default(cuid())
+  tenantId       String
+  firmId         String
+  fyId           String
+  partyId        String
+  date           DateTime
+  voucherId      String? // receipt voucher that created it
+  voucherNo      String?
+  amount         Decimal  @default(0) @db.Decimal(14, 2)
+  consumedAmount Decimal  @default(0) @db.Decimal(14, 2)
+  remarks        String?
+
+  uses PartyAdvanceUse[]
+
+  createdAt DateTime  @default(now())
+  deletedAt DateTime?
+
+  @@index([tenantId, firmId, partyId])
+  @@index([tenantId, voucherId])
+}
+
+model PartyAdvanceUse {
+  id        String       @id @default(cuid())
+  tenantId  String
+  advanceId String
+  advance   PartyAdvance @relation(fields: [advanceId], references: [id], onDelete: Cascade)
+  refType   String // INVOICE | ...
+  refId     String
+  refNo     String
+  amount    Decimal      @default(0) @db.Decimal(14, 2)
+  date      DateTime     @default(now())
+
+  @@index([tenantId, refType, refId])
+  @@index([advanceId])
+}

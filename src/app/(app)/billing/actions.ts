@@ -7,6 +7,7 @@ import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { computeInvoice, parseBulkLrNumbers } from "@/lib/calc/invoice";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
+import { consumeAdvances, partyAdvanceBalance, restoreAdvanceUses } from "@/lib/party-advance";
 import { gstSplit, stateCodeFromGstin } from "@/lib/calc/gst";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
@@ -88,6 +89,14 @@ export async function getPartyBillingDetails(partyId: string): Promise<PartyBill
       vendorCode: party.vendorCode ?? "",
     };
   });
+}
+
+/** Open advance balance of a party (auto-created by receipt vouchers). */
+export async function getPartyAdvanceBalance(partyId: string): Promise<number> {
+  const session = requireSession();
+  return withTenant(session.tenantId, (tx) =>
+    partyAdvanceBalance(tx, session.firmId, partyId)
+  );
 }
 
 export async function getPartyStateCode(partyId: string): Promise<string | null> {
@@ -621,6 +630,21 @@ export async function saveInvoice(
         });
       }
 
+      // party advance auto-consume: the invoice's Advance amount draws down
+      // the party's open advance balance FIFO (restore-then-reconsume on edit)
+      await restoreAdvanceUses(tx, "INVOICE", invoiceId);
+      if (data.advance > 0) {
+        await consumeAdvances(tx, {
+          tenantId: session.tenantId,
+          firmId: session.firmId,
+          partyId: data.partyId,
+          amount: data.advance,
+          refType: "INVOICE",
+          refId: invoiceId,
+          refNo: data.invoiceNo,
+        });
+      }
+
       // ledger: debit the customer (receivable), credit freight income —
       // re-posted on every save so edits stay in sync
       await reverseLedger(tx, "INVOICE", invoiceId);
@@ -697,6 +721,7 @@ export async function deleteInvoice(
       });
     }
     await tx.invoiceLr.deleteMany({ where: { invoiceId: id } });
+    await restoreAdvanceUses(tx, "INVOICE", id);
     await reverseLedger(tx, "INVOICE", id);
     await tx.invoice.update({ where: { id }, data: { deletedAt: new Date() } });
     await audit(tx, session, {
