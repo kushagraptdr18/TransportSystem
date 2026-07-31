@@ -2,8 +2,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { peekDocNumber } from "@/lib/sequences";
 import { getPartyOptions, getBankOptions, getVehicleOptions } from "@/lib/lookups";
-import { VoucherForm, RecentVoucher } from "@/components/accounts/voucher-form";
-import { getAccountHeadOptions } from "./actions";
+import { VoucherEntry, RecentVoucher } from "@/components/accounts/voucher-entry";
 import { VoucherType, DocNumberType } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -13,11 +12,10 @@ const TYPES: VoucherType[] = ["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL"];
 export default async function VouchersPage() {
   const session = requireSession();
 
-  const [partyOptions, bankOptions, vehicleOptions, accountHeadOptions] = await Promise.all([
+  const [partyOptions, bankOptions, vehicleOptions] = await Promise.all([
     getPartyOptions(),
     getBankOptions(),
     getVehicleOptions(),
-    getAccountHeadOptions(),
   ]);
 
   const { peekNumbers, recent } = await withTenant(session.tenantId, async (tx) => {
@@ -59,12 +57,11 @@ export default async function VouchersPage() {
   return (
     <div className="space-y-4 p-4">
       <h1 className="text-xl font-semibold">Voucher Entry</h1>
-      <VoucherForm
+      <VoucherEntry
         peekNumbers={peekNumbers}
         partyOptions={partyOptions}
         bankOptions={bankOptions}
         vehicleOptions={vehicleOptions}
-        accountHeadOptions={accountHeadOptions}
         recent={recent}
       />
     </div>

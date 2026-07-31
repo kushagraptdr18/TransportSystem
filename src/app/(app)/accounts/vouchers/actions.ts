@@ -156,11 +156,12 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         remarks: a.remarks || null,
       }));
 
-      // ---- validation: never over-settle, never allocate beyond the voucher
+      // ---- validation: never over-settle, never allocate beyond the money
+      // moved (net amount = header amount − TDS − deductions)
       const allocatedSum = round2(data.allocations.reduce((s, a) => s + a.amount, 0));
-      if (allocatedSum > data.amount + 0.01) {
+      if (allocatedSum > netAmount + 0.01) {
         throw new Error(
-          `Allocated ${allocatedSum} exceeds the voucher amount ${data.amount}.`
+          `Allocated ${allocatedSum} exceeds the received/paid amount ${netAmount}.`
         );
       }
       {
@@ -341,7 +342,8 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // advance balance for that party — no second voucher is ever needed.
       const advanceKind = data.type === "RECEIPT" ? "RECEIVED" : "PAID";
       if ((data.type === "RECEIPT" || data.type === "PAYMENT") && data.partyId && !data.accountHeadId) {
-        const unallocated = round2(data.amount - allocatedSum);
+        // advance = money moved that no reference consumed
+        const unallocated = round2(netAmount - allocatedSum);
         const existingAdv = await tx.partyAdvance.findFirst({
           where: { voucherId: savedId, deletedAt: null },
         });
