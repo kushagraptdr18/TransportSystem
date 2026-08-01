@@ -79,6 +79,10 @@ function StatusLine({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Balance still open once cash, shortage and round-off are accounted for. */
+const openBalance = (balance: number, paid: number, shortage: number, roundOff: number) =>
+  Math.max(0, Math.round((balance - paid - shortage - roundOff) * 100) / 100);
+
 const statusOf = (r: BrokerRegisterRow, side: "P" | "V") =>
   brokerBalanceStatus({
     side,
@@ -559,6 +563,17 @@ export function BrokerRegisterTable({
                 <StatusLine label="Broker Freight" value={formatMoney(statusRow.pFreight)} />
                 <StatusLine label="Advance Given" value={formatMoney(statusRow.pAdvance)} />
                 <StatusLine label="Balance Amount" value={formatMoney(statusRow.pBalance)} />
+                {/* what was knocked off the balance, so the received figure
+                    reconciles instead of just looking short */}
+                {statusRow.pShortage > 0 && (
+                  <StatusLine label="Less: Shortage" value={formatMoney(statusRow.pShortage)} />
+                )}
+                {Math.abs(statusRow.pRoundOff) > 0.009 && (
+                  <StatusLine
+                    label={statusRow.pRoundOff > 0 ? "Less: Round Off" : "Add: Round Off"}
+                    value={formatMoney(Math.abs(statusRow.pRoundOff))}
+                  />
+                )}
                 <StatusLine
                   label="Payment Received"
                   value={
@@ -577,6 +592,15 @@ export function BrokerRegisterTable({
                 <StatusLine label="Owner Freight" value={formatMoney(statusRow.vFreight)} />
                 <StatusLine label="Advance Paid" value={formatMoney(statusRow.vAdvance)} />
                 <StatusLine label="Balance Amount" value={formatMoney(statusRow.vBalance)} />
+                {statusRow.vShortage > 0 && (
+                  <StatusLine label="Less: Shortage" value={formatMoney(statusRow.vShortage)} />
+                )}
+                {Math.abs(statusRow.vRoundOff) > 0.009 && (
+                  <StatusLine
+                    label={statusRow.vRoundOff > 0 ? "Less: Round Off" : "Add: Round Off"}
+                    value={formatMoney(Math.abs(statusRow.vRoundOff))}
+                  />
+                )}
                 <StatusLine
                   label="Payment Made"
                   value={
@@ -597,21 +621,31 @@ export function BrokerRegisterTable({
                     value={formatMoney(statusRow.pNetAmt)}
                   />
                   <StatusLine label="Total Owner Payable" value={formatMoney(statusRow.vNetAmt)} />
+                  {/* outstanding is the balance less everything that settled
+                      it — cash, shortage and round-off. Showing the full
+                      balance until the status flips read as unpaid even after
+                      a part payment. */}
                   <StatusLine
                     label="Outstanding (Receivable)"
-                    value={
-                      statusRow.pPaymentStatus === "RECEIVED"
-                        ? formatMoney(0)
-                        : formatMoney(statusRow.pBalance)
-                    }
+                    value={formatMoney(
+                      openBalance(
+                        statusRow.pBalance,
+                        statusRow.pPaidAmount,
+                        statusRow.pShortage,
+                        statusRow.pRoundOff
+                      )
+                    )}
                   />
                   <StatusLine
                     label="Outstanding (Payable)"
-                    value={
-                      statusRow.vPaymentStatus === "PAID"
-                        ? formatMoney(0)
-                        : formatMoney(statusRow.vBalance)
-                    }
+                    value={formatMoney(
+                      openBalance(
+                        statusRow.vBalance,
+                        statusRow.vPaidAmount,
+                        statusRow.vShortage,
+                        statusRow.vRoundOff
+                      )
+                    )}
                   />
                   <StatusLine
                     label="Settlement Status"

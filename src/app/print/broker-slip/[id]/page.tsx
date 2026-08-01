@@ -169,6 +169,9 @@ export default async function BrokerSlipPrintPage({
     const status = isP ? pStatus : vStatus;
     const paid = isP ? toNum(slip.pPaidAmount) : toNum(slip.vPaidAmount);
     const paymentDate = isP ? slip.pPaymentDate : slip.vPaymentDate;
+    // deducted at settlement — shown so the printed balance reconciles
+    const shortage = isP ? toNum(slip.pShortage) : toNum(slip.vShortage);
+    const roundOff = isP ? toNum(slip.pRoundOff) : toNum(slip.vRoundOff);
 
     return (
       <div className="mx-auto max-w-[190mm] break-after-page border border-black p-4 text-sm">
@@ -275,15 +278,54 @@ export default async function BrokerSlipPrintPage({
                     {formatMoney(balance)}
                   </td>
                 </tr>
+                {/* the balance is settled by cash PLUS whatever was knocked off
+                    it — without these two lines the printed figure looks short
+                    by the shortage and round-off with no explanation */}
+                {shortage > 0 && (
+                  <tr>
+                    <td colSpan={2} className="border border-black px-1 py-0.5">
+                      Less: Shortage
+                    </td>
+                    <td className="border border-black px-1 py-0.5 text-right">
+                      {`(-) ${formatMoney(shortage)}`}
+                    </td>
+                  </tr>
+                )}
+                {Math.abs(roundOff) > 0.009 && (
+                  <tr>
+                    <td colSpan={2} className="border border-black px-1 py-0.5">
+                      {roundOff > 0 ? "Less: Round Off" : "Add: Round Off"}
+                    </td>
+                    <td className="border border-black px-1 py-0.5 text-right">
+                      {`${roundOff > 0 ? "(-) " : "(+) "}${formatMoney(Math.abs(roundOff))}`}
+                    </td>
+                  </tr>
+                )}
+                {(shortage > 0 || Math.abs(roundOff) > 0.009) && (
+                  <tr className="font-semibold">
+                    <td colSpan={2} className="border border-black px-1 py-0.5">
+                      {isP ? "Net Receivable" : "Net Payable"}
+                    </td>
+                    <td className="border border-black px-1 py-0.5 text-right">
+                      {formatMoney(Math.round((balance - shortage - roundOff) * 100) / 100)}
+                    </td>
+                  </tr>
+                )}
+                <tr>
+                  <td colSpan={2} className="border border-black px-1 py-0.5">
+                    {isP ? "Amount Received" : "Amount Paid"}
+                  </td>
+                  <td className="border border-black px-1 py-0.5 text-right">
+                    {formatMoney(paid)}
+                    {paymentDate ? ` on ${formatDate(paymentDate)}` : ""}
+                  </td>
+                </tr>
                 <tr>
                   <td colSpan={2} className="border border-black px-1 py-0.5">
                     Balance Status
                   </td>
                   <td className="border border-black px-1 py-0.5 text-right font-semibold">
                     {status}
-                    {status !== "Pending" && paid > 0
-                      ? ` — ${formatMoney(paid)}${paymentDate ? ` on ${formatDate(paymentDate)}` : ""}`
-                      : ""}
                   </td>
                 </tr>
               </tbody>
