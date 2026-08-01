@@ -23,48 +23,14 @@ import type { PendingLrRow } from "@/components/fleet/lr-picker";
  *  never clobbers what the other section consumed. */
 const ADV_USE_ADVANCE = "CHALAN_ADVANCE_ADJ";
 const ADV_USE_BALANCE = "CHALAN_BALANCE_ADJ";
-/** Ledger refType for the adjustment postings (both sections share it). */
-const ADV_ADJ_REF = "ADVANCE_ADJUSTMENT";
-
 /**
- * Re-post every advance adjustment of a chalan from the stored use rows.
- * Both sections post under one ledger refType, so this always re-derives the
- * full set from the DB and both callers may run it independently.
- * Debit the broker (his hire payable drops), credit the advance head (the
- * advance we were carrying is released) — a balanced pair per voucher.
+ * Legacy ledger refType. An advance adjustment is NOT a financial transaction —
+ * the advance voucher already moved the money and already debited the broker,
+ * so adjusting it against a chalan is pure reference mapping and must not post
+ * anything. Earlier builds posted a pair here, which double-debited the broker;
+ * the refType survives only so those rows get reversed away on save / delete.
  */
-async function postAdvanceAdjustments(
-  tx: Tx,
-  session: ReturnType<typeof requireSession>,
-  chalan: { id: string; chalanNo: string; brokerId: string }
-) {
-  await reverseLedger(tx, ADV_ADJ_REF, chalan.id);
-  const uses = await tx.partyAdvanceUse.findMany({
-    where: { refId: chalan.id, refType: { in: [ADV_USE_ADVANCE, ADV_USE_BALANCE] } },
-    include: { advance: true },
-    orderBy: { date: "asc" },
-  });
-  if (!uses.length) return;
-  const headId = await ensureAccountHead(tx, session, "Advance to Broker", "EXPENSE");
-  const entries: Parameters<typeof postLedger>[2] = [];
-  for (const u of uses) {
-    const amount = toNum(u.amount);
-    if (amount <= 0) continue;
-    const voucherNo = u.advance?.voucherNo ?? "—";
-    const common = {
-      date: u.date,
-      refType: ADV_ADJ_REF,
-      refId: chalan.id,
-      refNo: `${chalan.chalanNo} / ${voucherNo}`,
-      narration: `Advance adjusted from Voucher ${voucherNo} against Chalan ${chalan.chalanNo}`,
-    };
-    entries.push(
-      { ...common, partyId: chalan.brokerId, side: "DEBIT", amount },
-      { ...common, accountHeadId: headId, side: "CREDIT", amount }
-    );
-  }
-  await postLedger(tx, session, entries);
-}
+const ADV_ADJ_REF = "ADVANCE_ADJUSTMENT";
 
 /**
  * Open advance vouchers of a chalan's broker, both directions, for manual
@@ -481,8 +447,8 @@ export async function saveChalanAdvances(
       const entries: Parameters<typeof postLedger>[2] = [];
       for (const r of rows) {
         if (r.amount <= 0) continue;
-        // adjustments are posted separately (ADVANCE_ADJUSTMENT refType) so the
-        // ledger names both the voucher and the chalan
+        // an adjustment posts nothing: the advance voucher already debited the
+        // broker, so linking it to this chalan is reference mapping only
         if (r.type === "ADVANCE_ADJ") continue;
         let creditLeg: { partyId?: string; accountHeadId?: string } | null = null;
         if (r.type === "BANK") {
@@ -514,7 +480,9 @@ export async function saveChalanAdvances(
         );
       }
       await postLedger(tx, session, entries);
-      await postAdvanceAdjustments(tx, session, chalan);
+      // adjustments are reference links, not transactions — nothing is posted;
+      // only stale rows from the earlier (incorrect) design are cleared
+      await reverseLedger(tx, ADV_ADJ_REF, chalan.id);
       await audit(tx, session, {
         entity: "ChalanAdvance",
         entityId: chalanId,
@@ -734,7 +702,9 @@ export async function saveBalancePayment(
         },
       });
       await reverseLedger(tx, "CHALAN_BALANCE", chalan.id);
-      await postAdvanceAdjustments(tx, session, chalan);
+      // adjustments are reference links, not transactions — nothing is posted;
+      // only stale rows from the earlier (incorrect) design are cleared
+      await reverseLedger(tx, ADV_ADJ_REF, chalan.id);
       if (paidAmount > 0 && data.paymentHeadId) {
         await postLedger(tx, session, [
           {
@@ -862,7 +832,7 @@ export async function getChalanStatus(
       tx.ledgerEntry.findMany({
         where: {
           refId: chalanId,
-          refType: { in: ["CHALAN_ADVANCE", "CHALAN_BALANCE", ADV_ADJ_REF] },
+          refType: { in: ["CHALAN_ADVANCE", "CHALAN_BALANCE"] },
         },
         orderBy: { date: "asc" },
       }),

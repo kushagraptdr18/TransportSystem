@@ -114,6 +114,17 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     const voucherById = new Map(vouchers.map((v) => [v.id, v]));
     const officeById = new Map(officeTxns.map((o) => [o.id, o]));
 
+    // Advance adjustments are settlement history, not transactions: the voucher
+    // below already moved the money. Hang the history off the voucher row so the
+    // ledger shows where the advance went without a second debit/credit.
+    const advances = voucherIds.length
+      ? await tx.partyAdvance.findMany({
+          where: { voucherId: { in: voucherIds }, deletedAt: null },
+          include: { uses: { orderBy: { date: "asc" } } },
+        })
+      : [];
+    const advByVoucher = new Map(advances.map((a) => [a.voucherId ?? "", a]));
+
     const trackRunning = !params.refNo && (!!params.partyId || !!params.headId);
     let running = 0;
     if (params.partyId) {
@@ -149,8 +160,27 @@ export async function ledgerBookRows(params: BookParams): Promise<{
 
       let voucherNo = "";
       let payment = "";
+      let adjustments = "";
       if (e.refType === "VOUCHER") {
         const v = voucherById.get(e.refId);
+        const adv = advByVoucher.get(e.refId);
+        // only the advance-holder's own leg carries the history — the bank leg
+        // of the same voucher would otherwise repeat it
+        if (adv && e.partyId === adv.partyId) {
+          const amount = toNum(String(adv.amount));
+          const consumed = toNum(String(adv.consumedAmount));
+          adjustments = JSON.stringify({
+            voucherNo: adv.voucherNo ?? "",
+            amount,
+            consumed,
+            remaining: Math.round((amount - consumed) * 100) / 100,
+            uses: adv.uses.map((u) => ({
+              refNo: u.refNo,
+              amount: toNum(String(u.amount)),
+              date: u.date.toISOString(),
+            })),
+          });
+        }
         if (v) {
           voucherNo = v.voucherNo;
           payment = [
@@ -161,10 +191,6 @@ export async function ledgerBookRows(params: BookParams): Promise<{
             .filter(Boolean)
             .join(" | ");
         }
-      } else if (e.refType === "ADVANCE_ADJUSTMENT") {
-        // refNo is "<chalan no> / <voucher no>" — surface the voucher separately
-        voucherNo = e.refNo.split(" / ").slice(1).join(" / ");
-        payment = "Advance adjustment";
       } else if (e.refType === "OFFICE_TXN") {
         const o = officeById.get(e.refId);
         if (o) {
@@ -189,6 +215,7 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         voucherNo,
         payment,
         narration: e.narration ?? "",
+        adjustments,
         debit,
         credit,
         balance: trackRunning
@@ -208,6 +235,7 @@ export const BOOK_COLUMNS = [
   { key: "voucherNo", header: "Voucher No" },
   { key: "payment", header: "Bank / Instrument" },
   { key: "narration", header: "Narration" },
+  { key: "adjustments", header: "Adjustments", kind: "adjustments" as const },
   { key: "debit", header: "Debit", kind: "money" as const },
   { key: "credit", header: "Credit", kind: "money" as const },
   { key: "balance", header: "Balance" },
