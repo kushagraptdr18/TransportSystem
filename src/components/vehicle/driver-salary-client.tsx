@@ -105,6 +105,7 @@ export function DriverSalaryClient({
   allDriverOptions,
   bankOptions,
   canDelete,
+  hideTitle = false,
 }: {
   rows: DriverSalaryRow[];
   shortages: ShortageRow[];
@@ -112,6 +113,8 @@ export function DriverSalaryClient({
   allDriverOptions: MasterOption[];
   bankOptions: MasterOption[];
   canDelete: boolean;
+  /** set when rendered inside the grouped Driver Management page */
+  hideTitle?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -316,7 +319,7 @@ export function DriverSalaryClient({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Driver Salary</h1>
+        {hideTitle ? <div /> : <h1 className="text-xl font-semibold">Driver Salary</h1>}
         <div className="flex gap-2">
           <ExportButton
             rows={rows}

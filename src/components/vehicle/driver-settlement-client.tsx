@@ -71,12 +71,15 @@ export function DriverSettlementClient({
   vehicleOptions,
   bankOptions,
   canDelete,
+  hideTitle = false,
 }: {
   rows: DriverSettlementRow[];
   driverOptions: MasterOption[];
   vehicleOptions: MasterOption[];
   bankOptions: MasterOption[];
   canDelete: boolean;
+  /** set when rendered inside the grouped Driver Management page */
+  hideTitle?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -231,7 +234,11 @@ export function DriverSettlementClient({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Driver +/- Settlement Register</h1>
+        {hideTitle ? (
+          <div />
+        ) : (
+          <h1 className="text-xl font-semibold">Driver +/- Settlement Register</h1>
+        )}
         <div className="flex gap-2">
           <ExportButton
             rows={rows}

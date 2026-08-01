@@ -81,10 +81,13 @@ export function DriverFnfClient({
   rows,
   driverOptions,
   bankOptions,
+  hideTitle = false,
 }: {
   rows: FnfRow[];
   driverOptions: MasterOption[];
   bankOptions: MasterOption[];
+  /** set when rendered inside the grouped Driver Management page */
+  hideTitle?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -193,7 +196,11 @@ export function DriverFnfClient({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Driver Final Settlement (F&amp;F)</h1>
+        {hideTitle ? (
+          <div />
+        ) : (
+          <h1 className="text-xl font-semibold">Driver Final Settlement (F&amp;F)</h1>
+        )}
         <div className="flex gap-2">
           <ExportButton
             rows={rows}

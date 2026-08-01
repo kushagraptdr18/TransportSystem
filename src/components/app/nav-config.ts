@@ -129,10 +129,8 @@ export const NAV: NavGroup[] = [
       { label: "Vehicle Expenses", href: "/vehicle/expenses" },
       { label: "Vehicle Expense Summary", href: "/vehicle/expense-summary" },
       { label: "Tyre Management", href: "/vehicle/tyres" },
-      { label: "Driver Advance", href: "/vehicle/driver-advances" },
-      { label: "Driver +/- Settlement", href: "/vehicle/driver-settlements" },
-      { label: "Driver Salary", href: "/vehicle/driver-salary" },
-      { label: "Driver Final Settlement", href: "/vehicle/driver-fnf" },
+      // salary, +/- settlement, advance and F&F are tabs of one screen
+      { label: "Driver Management", href: "/vehicle/driver-management" },
       { label: "AdBlue (Urea) Stock", href: "/vehicle/adblue" },
       { label: "Vehicle Tracking", href: "/vehicle/tracking" },
       { label: "Vehicle Profit & Loss", href: "/vehicle/pnl" },
