@@ -33,6 +33,8 @@ const docSlot = z.object({ path: z.string().nullish(), name: z.string().nullish(
 const driverSchema = z.object({
   id: z.string().nullish(),
   name: z.string().trim().min(1, "Driver name is required"),
+  /** existing DRIVER-group ledger to link; blank auto-creates one */
+  partyId: z.string().nullish(),
   mobile: z.string().nullish(),
   emergencyContact: z.string().nullish(),
   address: z.string().nullish(),
@@ -86,14 +88,45 @@ export async function saveDriver(
         policeName: slot(d.police).name,
       };
 
+      // The driver's ledger is a DRIVER-group party. The user may pick an
+      // existing one (or create one inline, which lands in the Ledger Master
+      // under the Driver group); leaving it blank auto-creates one as before.
+      // Either way the two stay in step from here on.
+      const pickedParty = d.partyId
+        ? await tx.party.findFirst({ where: { id: d.partyId } })
+        : null;
+      if (d.partyId && !pickedParty) return { ok: false as const, error: "Driver ledger not found" };
+      if (pickedParty && pickedParty.ledgerGroup !== "DRIVER") {
+        return { ok: false as const, error: "Selected ledger is not in the Driver group" };
+      }
+      if (pickedParty) {
+        // one ledger belongs to one driver, else advances/settlements collide
+        const clash = await tx.driver.findFirst({
+          where: { partyId: pickedParty.id, deletedAt: null, ...(d.id ? { id: { not: d.id } } : {}) },
+        });
+        if (clash) {
+          return {
+            ok: false as const,
+            error: `Ledger "${pickedParty.name}" is already linked to driver ${clash.name} (${clash.driverCode})`,
+          };
+        }
+      }
+
       let id: string;
       let driverCode: string;
       if (d.id) {
         const before = await tx.driver.findFirstOrThrow({ where: { id: d.id, deletedAt: null } });
-        const updated = await tx.driver.update({ where: { id: d.id }, data: values });
-        // keep the linked ledger party's name in sync
-        if (before.partyId && before.name !== d.name) {
-          await tx.party.update({ where: { id: before.partyId }, data: { name: d.name } });
+        const partyId = pickedParty?.id ?? before.partyId;
+        const updated = await tx.driver.update({
+          where: { id: d.id },
+          data: { ...values, partyId },
+        });
+        // keep the linked ledger in sync with the driver's own details
+        if (partyId) {
+          await tx.party.update({
+            where: { id: partyId },
+            data: { name: d.name, mobile: d.mobile || null },
+          });
         }
         id = updated.id;
         driverCode = updated.driverCode;
@@ -101,14 +134,16 @@ export async function saveDriver(
       } else {
         driverCode = await nextDriverCode(tx, session.firmId);
         // ledger party so advances / settlements / salary hit real ledgers
-        const party = await tx.party.create({
-          data: {
-            tenantId: session.tenantId,
-            name: d.name,
-            ledgerGroup: "DRIVER",
-            mobile: d.mobile || null,
-          },
-        });
+        const party =
+          pickedParty ??
+          (await tx.party.create({
+            data: {
+              tenantId: session.tenantId,
+              name: d.name,
+              ledgerGroup: "DRIVER",
+              mobile: d.mobile || null,
+            },
+          }));
         const created = await tx.driver.create({
           data: {
             tenantId: session.tenantId,

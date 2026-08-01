@@ -14,7 +14,7 @@ export default async function DriversPage({
   const session = requireSession();
   await authorize(session, "maintenance", "view");
 
-  const { drivers, vehicles } = await withTenant(session.tenantId, async (tx) => {
+  const { drivers, vehicles, driverLedgers } = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.DriverWhereInput = { firmId: session.firmId, deletedAt: null };
     if (searchParams.q) {
       where.OR = [
@@ -29,7 +29,7 @@ export default async function DriversPage({
     if (searchParams.vehicle) {
       where.assignments = { some: { vehicleId: searchParams.vehicle } };
     }
-    const [drivers, vehicles] = await Promise.all([
+    const [drivers, vehicles, driverLedgers] = await Promise.all([
       tx.driver.findMany({
         where,
         include: {
@@ -39,11 +39,18 @@ export default async function DriversPage({
         orderBy: { createdAt: "desc" },
       }),
       tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
+      // every ledger in the Driver group is selectable from Driver Master
+      tx.party.findMany({
+        where: { ledgerGroup: "DRIVER", isActive: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, mobile: true },
+      }),
     ]);
-    return { drivers, vehicles };
+    return { drivers, vehicles, driverLedgers };
   });
 
   const vehicleNo = new Map(vehicles.map((v) => [v.id, v.number]));
+  const ledgerName = new Map(driverLedgers.map((p) => [p.id, p.name]));
 
   const rows: DriverRow[] = drivers.map((d) => {
     const open = d.assignments.find((a) => !a.toDate);
@@ -51,6 +58,8 @@ export default async function DriversPage({
       id: d.id,
       driverCode: d.driverCode,
       name: d.name,
+      partyId: d.partyId,
+      partyName: d.partyId ? ledgerName.get(d.partyId) ?? "" : "",
       mobile: d.mobile ?? "",
       emergencyContact: d.emergencyContact ?? "",
       address: d.address ?? "",
@@ -82,6 +91,11 @@ export default async function DriversPage({
       <DriverClient
         rows={rows}
         vehicleOptions={vehicles.map((v) => ({ value: v.id, label: v.number }))}
+        driverLedgerOptions={driverLedgers.map((p) => ({
+          value: p.id,
+          label: p.name,
+          meta: p.mobile ?? undefined,
+        }))}
         canDelete={session.role === "ADMIN" || session.role === "OWNER"}
       />
     </div>

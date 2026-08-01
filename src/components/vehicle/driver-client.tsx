@@ -24,6 +24,7 @@ import { ExportButton } from "@/components/data/export-button";
 import { FileUploadField } from "@/components/data/file-upload-field";
 import { FilterBar } from "@/components/data/filter-bar";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
+import { PartyCombobox } from "@/components/fleet/fields";
 import {
   deleteDriver,
   exitDriver,
@@ -41,6 +42,9 @@ export interface DriverRow {
   id: string;
   driverCode: string;
   name: string;
+  /** linked DRIVER-group ledger */
+  partyId: string | null;
+  partyName: string;
   mobile: string;
   emergencyContact: string;
   address: string;
@@ -79,6 +83,7 @@ const emptySlot: DocSlot = { path: null, name: null };
 const emptyForm = {
   id: null as string | null,
   name: "",
+  partyId: null as string | null,
   mobile: "",
   emergencyContact: "",
   address: "",
@@ -106,10 +111,13 @@ const DOC_SLOTS: [keyof Pick<typeof emptyForm, "licence" | "aadhaar" | "pan" | "
 export function DriverClient({
   rows,
   vehicleOptions,
+  driverLedgerOptions,
   canDelete = false,
 }: {
   rows: DriverRow[];
   vehicleOptions: MasterOption[];
+  /** every DRIVER-group ledger, so Driver Master and Ledger Master stay in step */
+  driverLedgerOptions: MasterOption[];
   canDelete?: boolean;
 }) {
   const router = useRouter();
@@ -158,6 +166,7 @@ export function DriverClient({
     setForm({
       id: r.id,
       name: r.name,
+      partyId: r.partyId,
       mobile: r.mobile,
       emergencyContact: r.emergencyContact,
       address: r.address,
@@ -182,6 +191,12 @@ export function DriverClient({
   const columns: ColumnDef<DriverRow>[] = [
     { accessorKey: "driverCode", header: "Code" },
     { accessorKey: "name", header: "Driver Name" },
+    {
+      accessorKey: "partyName",
+      header: "Ledger",
+      cell: ({ row }) =>
+        row.original.partyName || <span className="text-muted-foreground">—</span>,
+    },
     { accessorKey: "mobile", header: "Mobile" },
     {
       accessorKey: "currentVehicle",
@@ -362,6 +377,23 @@ export function DriverClient({
               <Input className="h-8" value={form.mobile} onChange={(e) => set({ mobile: e.target.value })} />
             </div>
             <div className="space-y-1">
+              <Label className="text-xs">Driver Ledger</Label>
+              <PartyCombobox
+                options={driverLedgerOptions}
+                value={form.partyId}
+                onChange={(v, opt) =>
+                  // a blank driver name follows the ledger, so the two never
+                  // drift apart on first entry
+                  set({ partyId: v, name: form.name || opt?.label || "" })
+                }
+                ledgerGroup="DRIVER"
+                placeholder="Auto-create from driver name..."
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Every Driver-group ledger appears here. Leave blank to create one automatically.
+              </p>
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Emergency Contact</Label>
               <Input
                 className="h-8"
@@ -450,6 +482,7 @@ export function DriverClient({
                     saveDriver({
                       id: form.id,
                       name: form.name,
+                      partyId: form.partyId,
                       mobile: form.mobile,
                       emergencyContact: form.emergencyContact,
                       address: form.address,

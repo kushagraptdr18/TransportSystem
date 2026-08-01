@@ -337,31 +337,63 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
       // ledger accrual: hire expense vs broker/owner payable — the advances and
       // balance payment then debit the broker against this credit
       await reverseLedger(tx, "CHALAN", id);
-      if (fields.grandTotal > 0) {
-        const hireHeadId = await ensureAccountHead(tx, session, "Lorry Hire Expense", "EXPENSE");
-        const common = {
-          date: fields.chalanDate,
-          refType: "CHALAN",
-          refId: id,
-          refNo: fields.chalanNo,
-        };
-        await postLedger(tx, session, [
-          {
-            ...common,
-            accountHeadId: hireHeadId,
-            side: "DEBIT",
-            amount: fields.grandTotal,
-            narration: `Lorry hire — chalan ${fields.chalanNo}`,
-          },
+      // Every component of the settlement posts on its own line so the ledger
+      // shows exactly how the payable was arrived at, instead of one opaque
+      // net figure. Earnings credit the broker against an expense head;
+      // deductions debit him back against a recovery / income head. The two
+      // sides net to grandTotal, which is what computeChalan produces.
+      const common = {
+        date: fields.chalanDate,
+        refType: "CHALAN",
+        refId: id,
+        refNo: fields.chalanNo,
+      };
+      const entries: Parameters<typeof postLedger>[2] = [];
+      const tag = `chalan ${fields.chalanNo}`;
+
+      const earning = async (label: string, amount: number, headName: string) => {
+        if (amount <= 0) return;
+        const headId = await ensureAccountHead(tx, session, headName, "EXPENSE");
+        entries.push(
+          { ...common, accountHeadId: headId, side: "DEBIT", amount, narration: `${label} — ${tag}` },
           {
             ...common,
             partyId: fields.brokerId,
             side: "CREDIT",
-            amount: fields.grandTotal,
-            narration: `Hire payable against chalan ${fields.chalanNo}`,
+            amount,
+            narration: `${label} payable — ${tag}`,
+          }
+        );
+      };
+      const deduction = async (label: string, amount: number, headName: string) => {
+        if (amount <= 0) return;
+        const headId = await ensureAccountHead(tx, session, headName, "INCOME");
+        entries.push(
+          {
+            ...common,
+            partyId: fields.brokerId,
+            side: "DEBIT",
+            amount,
+            narration: `${label} deducted — ${tag}`,
           },
-        ]);
-      }
+          { ...common, accountHeadId: headId, side: "CREDIT", amount, narration: `${label} — ${tag}` }
+        );
+      };
+
+      await earning("Lorry hire", fields.freight, "Lorry Hire Expense");
+      await earning("Detention", fields.detention, "Detention Charges");
+      await earning("ODC", fields.odcAmt, "ODC Charges");
+      await earning("Fine slip", fields.fineSlip, "Fine Slip Charges");
+      await earning("Other charges", fields.otherAmt, "Other Chalan Charges");
+
+      await deduction("LD charge", fields.ldCharge, "LD Charge Recovered");
+      await deduction("Shortage", fields.shortageAmt, "Shortage Recovered");
+      await deduction("Commission", fields.commissionAmt, "Commission Income");
+      await deduction("TDS", fields.tdsAmt, "TDS Payable");
+      await deduction("Mamool", fields.mamool, "Mamool Recovered");
+      await deduction("Courier", fields.courierCharge, "Courier Recovered");
+
+      await postLedger(tx, session, entries);
       await audit(tx, session, {
         entity: "Chalan",
         entityId: id,
@@ -711,30 +743,62 @@ export async function saveBalancePayment(
       // adjustments are reference links, not transactions — nothing is posted;
       // only stale rows from the earlier (incorrect) design are cleared
       await reverseLedger(tx, ADV_ADJ_REF, chalan.id);
+
+      // Shortage and round-off reduce what we hand over, so without their own
+      // entries the broker would stay credited for money he never receives and
+      // his ledger would never close. Each posts against a recovery head.
+      const balCommon = {
+        date: paymentDate,
+        refType: "CHALAN_BALANCE",
+        refId: chalan.id,
+        refNo: chalan.chalanNo,
+      };
+      const balEntries: Parameters<typeof postLedger>[2] = [];
       if (paidAmount > 0 && data.paymentHeadId) {
-        await postLedger(tx, session, [
+        balEntries.push(
           {
-            date: paymentDate,
+            ...balCommon,
             partyId: data.paymentHeadId,
             side: "CREDIT",
             amount: paidAmount,
-            refType: "CHALAN_BALANCE",
-            refId: chalan.id,
-            refNo: chalan.chalanNo,
             narration: `Balance payment for chalan ${chalan.chalanNo} (${data.paymentMode})`,
           },
           {
-            date: paymentDate,
+            ...balCommon,
             partyId: chalan.brokerId,
             side: "DEBIT",
             amount: paidAmount,
-            refType: "CHALAN_BALANCE",
-            refId: chalan.id,
-            refNo: chalan.chalanNo,
             narration: `Balance settled${data.remarks ? " — " + data.remarks : ""}`,
-          },
-        ]);
+          }
+        );
       }
+      for (const [label, signed, headName] of [
+        ["Shortage", data.shortage, "Shortage Recovered"],
+        ["Round off", data.roundOff, "Round Off"],
+      ] as const) {
+        if (Math.abs(signed) <= 0.009) continue;
+        // a negative round-off means we paid a little extra, so the legs flip
+        const amount = Math.abs(signed);
+        const headId = await ensureAccountHead(tx, session, headName, "INCOME");
+        const brokerSide = signed > 0 ? "DEBIT" : "CREDIT";
+        balEntries.push(
+          {
+            ...balCommon,
+            partyId: chalan.brokerId,
+            side: brokerSide,
+            amount,
+            narration: `${label} ${signed > 0 ? "deducted" : "added"} at balance payment — chalan ${chalan.chalanNo}`,
+          },
+          {
+            ...balCommon,
+            accountHeadId: headId,
+            side: signed > 0 ? "CREDIT" : "DEBIT",
+            amount,
+            narration: `${label} — chalan ${chalan.chalanNo}`,
+          }
+        );
+      }
+      await postLedger(tx, session, balEntries);
       await audit(tx, session, {
         entity: "Chalan",
         entityId: chalan.id,
