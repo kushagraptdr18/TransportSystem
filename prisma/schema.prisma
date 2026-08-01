@@ -2147,6 +2147,9 @@ model ShortageEntry {
   amount          Decimal @default(0) @db.Decimal(14, 2)
   recoveredAmount Decimal @default(0) @db.Decimal(14, 2)
   remarks  String?
+  /** raised only to absorb a recovery that had nothing open to match — it is
+   *  not a real shortage expense, so the shortage ledger skips it */
+  autoRaised Boolean @default(false)
 
   recoveries ShortageRecovery[]
 
@@ -2173,6 +2176,9 @@ model ShortageRecovery {
   refNo      String
   /** DRIVER | OWNER | BROKER | PARTY | BANK */
   source     String
+  /** who it was recovered FROM — may differ from the entry's own party */
+  partyId    String?
+  driverId   String?
   amount     Decimal       @default(0) @db.Decimal(14, 2)
   remarks    String?
 

@@ -53,6 +53,8 @@ export async function raiseShortage(
     driverId?: string | null;
     amount: number;
     remarks?: string | null;
+    /** raised only to absorb an unmatched recovery — kept out of the ledger */
+    autoRaised?: boolean;
   }
 ): Promise<string | null> {
   const amount = round2(opts.amount);
@@ -81,6 +83,7 @@ export async function raiseShortage(
     partyKind: opts.partyKind,
     amount,
     remarks: opts.remarks ?? null,
+    autoRaised: opts.autoRaised ?? false,
   };
 
   const id = existing
@@ -97,8 +100,12 @@ export async function raiseShortage(
         })
       ).id;
 
-  // the charge itself: shortage head debited, the answerable ledger credited
+  // the charge itself: the shortage head is debited. An auto-raised entry is a
+  // bookkeeping placeholder for a recovery that had nothing to match, not a
+  // real expense, so it posts nothing — otherwise every recovery would cancel
+  // itself out on the ledger.
   await reverseLedger(tx, SHORTAGE_REF, id);
+  if (opts.autoRaised) return id;
   const headId = await shortageHeadId(tx, session);
   const entries: LedgerPostEntry[] = [
     {
@@ -197,6 +204,8 @@ export async function recoverShortage(
         refId: opts.refId,
         refNo: opts.refNo,
         source: opts.source,
+        partyId: opts.partyId ?? null,
+        driverId: opts.driverId ?? null,
         amount: take,
         remarks: opts.remarks ?? null,
       },
@@ -215,6 +224,7 @@ export async function recoverShortage(
       driverId: opts.driverId,
       amount: left,
       remarks: opts.remarks,
+      autoRaised: true,
     });
     if (raisedId) {
       await tx.shortageEntry.update({
@@ -230,6 +240,8 @@ export async function recoverShortage(
           refId: opts.refId,
           refNo: opts.refNo,
           source: opts.source,
+          partyId: opts.partyId ?? null,
+          driverId: opts.driverId ?? null,
           amount: left,
           remarks: opts.remarks ?? null,
         },
