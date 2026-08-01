@@ -1,51 +1,48 @@
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
-import { withTenant } from "@/lib/db";
-import { ProductsClient } from "@/components/masters/products-client";
+import { PageHeader } from "@/components/app/page-header";
+import { TabNav, type TabDef } from "@/components/app/tab-nav";
+import { ProductGroupsTab } from "./groups-tab";
+import { ProductsTab } from "./products-tab";
+import { UnitsTab } from "./units-tab";
 
-export default async function ProductsPage({
+export const dynamic = "force-dynamic";
+
+const BASE = "/masters/products";
+
+const TABS: TabDef[] = [
+  { value: "groups", label: "Product Groups" },
+  { value: "products", label: "Products" },
+  { value: "units", label: "Units" },
+];
+
+const SUBTITLE: Record<string, string> = {
+  groups: "Categories products are filed under.",
+  products: "What the firm carries, with its group and default unit.",
+  units: "Units of measure and their conversion value.",
+};
+
+/** Product Master — groups, products and units in one screen. */
+export default async function ProductMasterPage({
   searchParams,
 }: {
-  searchParams: { q?: string; groupId?: string };
+  searchParams: { tab?: string; q?: string; group?: string };
 }) {
   const session = requireSession();
   await authorize(session, "masters", "view");
-  const q = searchParams.q?.trim();
-  const groupId = searchParams.groupId;
 
-  const { rows, groups, units } = await withTenant(session.tenantId, async (tx) => {
-    const rows = await tx.product.findMany({
-      where: {
-        ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
-        ...(groupId ? { groupId } : {}),
-      },
-      include: { group: true },
-      orderBy: { name: "asc" },
-    });
-    const groups = await tx.productGroup.findMany({ orderBy: { name: "asc" } });
-    const units = await tx.unit.findMany({ orderBy: { name: "asc" } });
-    return { rows, groups, units };
-  });
+  const tab = TABS.some((t) => t.value === searchParams.tab)
+    ? (searchParams.tab as string)
+    : "products";
 
-  const canDelete = session.role === "ADMIN" || session.role === "OWNER";
   return (
-    <ProductsClient
-      rows={rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        groupId: r.groupId,
-        groupName: r.group.name,
-        unit: r.unit,
-        hsnCode: r.hsnCode,
-        productType: r.productType,
-        gstPct: Number(r.gstPct),
-        type: r.type,
-        className: r.className,
-        division: r.division,
-      }))}
-      groupOptions={groups.map((g) => ({ value: g.id, label: g.name }))}
-      unitOptions={units.map((u) => ({ value: u.name, label: u.name }))}
-      canDelete={canDelete}
-    />
+    <div className="space-y-4 p-4">
+      <PageHeader title="Product Master" subtitle={SUBTITLE[tab]} />
+      <TabNav tabs={TABS} active={tab} basePath={BASE} />
+      {/* only the active tab is queried */}
+      {tab === "groups" && <ProductGroupsTab searchParams={searchParams} />}
+      {tab === "products" && <ProductsTab searchParams={searchParams} />}
+      {tab === "units" && <UnitsTab searchParams={searchParams} />}
+    </div>
   );
 }

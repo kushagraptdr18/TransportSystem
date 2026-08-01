@@ -15,10 +15,19 @@ const columns: ColumnDef<Row, unknown>[] = [
   { accessorKey: "value", header: "Value", meta: { numeric: true } },
 ];
 
-export function UnitsClient({ rows, canDelete }: { rows: Row[]; canDelete: boolean }) {
+export function UnitsClient({
+  rows,
+  canDelete,
+  embedded,
+}: {
+  rows: Row[];
+  canDelete: boolean;
+  embedded?: boolean;
+}) {
   return (
     <SimpleMaster
       title="Unit"
+      embedded={embedded}
       rows={rows}
       columns={columns}
       exportColumns={[

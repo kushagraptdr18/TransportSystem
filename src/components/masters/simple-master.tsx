@@ -58,6 +58,8 @@ export interface FieldDef {
 
 interface SimpleMasterProps<T> {
   title: string;
+  /** rendered inside a tabbed screen that owns the heading and padding */
+  embedded?: boolean;
   newLabel?: string;
   rows: T[];
   columns: ColumnDef<T, unknown>[];
@@ -82,6 +84,7 @@ interface SimpleMasterProps<T> {
 
 export function SimpleMaster<T>({
   title,
+  embedded = false,
   newLabel = "New",
   rows,
   columns,
@@ -290,9 +293,11 @@ export function SimpleMaster<T>({
   };
 
   return (
-    <div className="space-y-4 p-4">
+    <div className={embedded ? "space-y-4" : "space-y-4 p-4"}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">{title}</h1>
+        {/* inside a tabbed screen the page owns the heading; the empty div
+            keeps the action bar right-aligned */}
+        {embedded ? <div /> : <h1 className="text-xl font-semibold">{title}</h1>}
         <div className="flex items-center gap-2">
           {importConfig && <ImportButton config={importConfig} />}
           <ExportButton rows={rows} columns={exportColumns} fileName={exportName} />

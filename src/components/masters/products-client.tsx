@@ -44,15 +44,18 @@ export function ProductsClient({
   groupOptions,
   unitOptions,
   canDelete,
+  embedded,
 }: {
   rows: Row[];
   groupOptions: MasterOption[];
   unitOptions: MasterOption[];
   canDelete: boolean;
+  embedded?: boolean;
 }) {
   return (
     <SimpleMaster
       title="Product"
+      embedded={embedded}
       rows={rows}
       columns={columns}
       exportColumns={[

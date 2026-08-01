@@ -24,10 +24,19 @@ const columns: ColumnDef<Row, unknown>[] = [
   },
 ];
 
-export function DocumentMasterClient({ rows, canDelete }: { rows: Row[]; canDelete: boolean }) {
+export function DocumentMasterClient({
+  rows,
+  canDelete,
+  embedded,
+}: {
+  rows: Row[];
+  canDelete: boolean;
+  embedded?: boolean;
+}) {
   return (
     <SimpleMaster
       title="Document Type"
+      embedded={embedded}
       rows={rows}
       columns={columns}
       exportColumns={[

@@ -7,12 +7,14 @@ import { DriverSettlementClient } from "@/components/vehicle/driver-settlement-c
 import { DriverAdvanceClient } from "@/components/vehicle/driver-advance-client";
 import { DriverFnfClient } from "@/components/vehicle/driver-fnf-client";
 import { loadAdvanceTab, loadFnfTab, loadSalaryTab, loadSettlementTab } from "./_data";
+import { DriverInfoTab } from "./info-tab";
 
 export const dynamic = "force-dynamic";
 
 const BASE = "/vehicle/driver-management";
 
 const TABS: TabDef[] = [
+  { value: "info", label: "Driver Info" },
   { value: "salary", label: "Driver Salary" },
   { value: "settlement", label: "Driver Settlement" },
   { value: "advance", label: "Driver Advance" },
@@ -20,7 +22,7 @@ const TABS: TabDef[] = [
 ];
 
 const SUBTITLE =
-  "Salary, +/- settlement, advances and full & final settlement for every driver — one place, one ledger.";
+  "Driver records, salary, +/- settlement, advances and full & final settlement — one place, one ledger.";
 
 /**
  * Driver Management — the four driver money screens grouped behind one header
@@ -45,7 +47,7 @@ export default async function DriverManagementPage({
 
   const tab = TABS.some((t) => t.value === searchParams.tab)
     ? (searchParams.tab as string)
-    : "salary";
+    : "info";
 
   return (
     <div className="space-y-4 p-4">
@@ -53,6 +55,7 @@ export default async function DriverManagementPage({
       <TabNav tabs={TABS} active={tab} basePath={BASE} />
       {/* only the active tab is loaded, so this costs no more than the
           single-purpose pages it replaces */}
+      {tab === "info" && <DriverInfoTab searchParams={searchParams} />}
       {tab === "salary" && <SalaryTab filters={searchParams} />}
       {tab === "settlement" && <SettlementTab filters={searchParams} />}
       {tab === "advance" && <AdvanceTab filters={searchParams} />}

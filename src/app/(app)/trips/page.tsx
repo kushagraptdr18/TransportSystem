@@ -1,127 +1,48 @@
-import { redirect } from "next/navigation";
 import { requireSession } from "@/lib/session";
-import { withTenant } from "@/lib/db";
-import { peekDocNumber } from "@/lib/sequences";
-import { toNum } from "@/lib/utils";
-import {
-  TripSettlementForm,
-  type TripSettlementInitial,
-} from "@/components/trips/trip-settlement-form";
+import { authorize } from "@/lib/authz";
+import { PageHeader } from "@/components/app/page-header";
+import { TabNav, type TabDef } from "@/components/app/tab-nav";
+import { TripSheetsTab } from "./sheets-tab";
+import { TripExpensesTab } from "./expenses-tab";
 
 export const dynamic = "force-dynamic";
 
-export default async function TripEntryPage({
+const BASE = "/trips";
+
+const TABS: TabDef[] = [
+  { value: "sheets", label: "Trip Sheets" },
+  { value: "expenses", label: "Trip Expenses" },
+];
+
+const SUBTITLE: Record<string, string> = {
+  sheets:
+    "Every trip settles separately — Raigarh → Chennai and Chennai → Raigarh are two independent trip sheets, even for the same vehicle.",
+  expenses: "Expenses are recorded on each trip sheet; this is a consolidated register.",
+};
+
+/** Trip Management — trip sheet entry and the consolidated expense register. */
+export default async function TripManagementPage({
   searchParams,
 }: {
-  searchParams: { id?: string; new?: string };
+  searchParams: Record<string, string | undefined>;
 }) {
-  // register-first workflow: the module always opens on the register; the
-  // entry page is reached via "New Trip Sheet" or a row's View/Edit
-  if (!searchParams.id && !searchParams.new) redirect("/trips/register");
   const session = requireSession();
+  await authorize(session, "maintenance", "view");
 
-  const { vehicles, drivers, driverByVehicle, banks, nextNo, trip, docs, linkedAdvanceIds } = await withTenant(
-    session.tenantId,
-    async (tx) => {
-      const [vehicleRows, driverRows, openAssignments, banks, nextNo] = await Promise.all([
-        tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
-        tx.driver.findMany({
-          where: { firmId: session.firmId, deletedAt: null, status: "ACTIVE" },
-          orderBy: { name: "asc" },
-        }),
-        tx.driverAssignment.findMany({ where: { toDate: null } }),
-        tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
-          orderBy: { name: "asc" },
-        }),
-        peekDocNumber(tx, { firmId: session.firmId, fyId: session.fyId, docType: "TRIP" }),
-      ]);
-      const trip = searchParams.id
-        ? await tx.trip.findFirst({ where: { id: searchParams.id, deletedAt: null } })
-        : null;
-      const docs = trip
-        ? await tx.tripDoc.findMany({ where: { tripId: trip.id } })
-        : [];
-      const linkedAdvances = trip
-        ? await tx.driverAdvance.findMany({ where: { tripId: trip.id }, select: { id: true } })
-        : [];
-      const driverIds = new Set(driverRows.map((d) => d.id));
-      return {
-        // trip sheets: Own / Relative vehicles only (market = chalan workflow)
-        vehicles: vehicleRows
-          .filter((v) => v.ownershipType !== "BROKER")
-          .map((v) => ({
-            value: v.id,
-            label: `${v.number}${v.ownershipType === "RELATIVE" ? " (Relative)" : ""}`,
-          })),
-        drivers: driverRows.map((d) => ({ value: d.id, label: `${d.name} (${d.driverCode})` })),
-        driverByVehicle: Object.fromEntries(
-          openAssignments
-            .filter((a) => driverIds.has(a.driverId))
-            .map((a) => [a.vehicleId, a.driverId])
-        ) as Record<string, string>,
-        banks: banks.map((b) => ({ value: b.id, label: b.name, meta: b.ledgerGroup })),
-        nextNo,
-        trip,
-        docs,
-        linkedAdvanceIds: linkedAdvances.map((a) => a.id),
-      };
-    }
-  );
-
-  const initial: TripSettlementInitial | null = trip
-    ? {
-        id: trip.id,
-        tripNo: trip.tripNo,
-        fromDate: (trip.fromDate ?? trip.tripDate).toISOString(),
-        toDate: (trip.toDate ?? trip.returnDate ?? trip.tripDate).toISOString(),
-        vehicleId: trip.vehicleId,
-        driverId: trip.driverId,
-        calcMethod: trip.calcMethod,
-        docs: docs.map((d) => ({
-          refType: d.refType as "CHALAN" | "BROKER_SLIP",
-          refId: d.refId,
-        })),
-        tollExpenseType: trip.tollExpenseType,
-        tollAmount: toNum(String(trip.tollAmount)),
-        actualDiesel: toNum(String(trip.actualDiesel)),
-        actualAdvance: toNum(String(trip.actualAdvance)),
-        advanceIds: linkedAdvanceIds,
-        ureaQty: toNum(String(trip.ureaQty)),
-        ureaRate: toNum(String(trip.ureaRate)),
-        ureaExpenseType: trip.ureaExpenseType,
-        loadingKm: toNum(String(trip.loadingKm)),
-        unloadingKm: toNum(String(trip.unloadingKm)),
-        newLoadingKm: toNum(String(trip.newLoadingKm)),
-        dieselAvg: toNum(String(trip.dieselAvg)),
-        dieselAvg2: toNum(String(trip.dieselAvg2)),
-        dieselRate: toNum(String(trip.dieselRate)),
-        apprDriverAdvance: toNum(String(trip.apprDriverAdvance)),
-        roadBillExp: toNum(String(trip.roadBillExp)),
-        foodingDays: toNum(String(trip.foodingDays)),
-        foodingRate: toNum(String(trip.foodingRate)),
-        rtoExp: toNum(String(trip.rtoExp)),
-        fixedTripExp: toNum(String(trip.fixedTripExp)),
-      }
-    : null;
+  const tab = TABS.some((t) => t.value === searchParams.tab)
+    ? (searchParams.tab as string)
+    : "sheets";
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="text-xl font-semibold">
-        {initial ? `Edit Trip Sheet ${initial.tripNo}` : "Trip Sheet Entry (Trip Settlement)"}
-      </h1>
-      <p className="text-sm text-muted-foreground">
-        Every trip settles separately — Raigarh → Chennai and Chennai → Raigarh are two
-        independent trip sheets, even for the same vehicle.
-      </p>
-      <TripSettlementForm
-        vehicles={vehicles}
-        drivers={drivers}
-        driverByVehicle={driverByVehicle}
-        bankOptions={banks}
-        nextTripNo={nextNo ?? "1"}
-        initial={initial}
-      />
+      <PageHeader title="Trip Management" subtitle={SUBTITLE[tab]} />
+      <TabNav tabs={TABS} active={tab} basePath={BASE} />
+      {/* only the active tab is queried */}
+      {tab === "expenses" ? (
+        <TripExpensesTab searchParams={searchParams} />
+      ) : (
+        <TripSheetsTab searchParams={searchParams} />
+      )}
     </div>
   );
 }

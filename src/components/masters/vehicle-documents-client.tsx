@@ -79,15 +79,18 @@ export function VehicleDocumentsClient({
   docTypeOptions,
   vehicleOptions,
   canDelete,
+  embedded,
 }: {
   rows: VehicleDocRow[];
   docTypeOptions: MasterOption[];
   vehicleOptions: MasterOption[];
   canDelete: boolean;
+  embedded?: boolean;
 }) {
   return (
     <SimpleMaster
       title="Document Registration"
+      embedded={embedded}
       newLabel="New Registration"
       rows={rows}
       columns={columns}

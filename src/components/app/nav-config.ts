@@ -34,16 +34,14 @@ export const NAV: NavGroup[] = [
       { label: "Ledger / Parties", href: "/masters/parties" },
       { label: "Bank & Cash Heads", href: "/masters/bank-cash-heads" },
       { label: "Income-Expense Heads", href: "/masters/account-heads" },
-      { label: "Product Groups", href: "/masters/product-groups" },
-      { label: "Products", href: "/masters/products" },
+      // groups, products and units are tabs of one screen
+      { label: "Product Master", href: "/masters/products" },
       { label: "States", href: "/masters/states" },
       { label: "Cities", href: "/masters/cities" },
       { label: "Vehicles", href: "/masters/vehicles" },
-      { label: "Driver Master", href: "/masters/drivers" },
-      { label: "Units", href: "/masters/units" },
       { label: "Rate Setup", href: "/masters/rates" },
+      // types and registrations are tabs of one screen
       { label: "Document Master", href: "/masters/document-master" },
-      { label: "Document Registration", href: "/masters/vehicle-documents" },
     ],
   },
   {
@@ -124,16 +122,14 @@ export const NAV: NavGroup[] = [
     label: "Vehicle",
     icon: Wrench,
     items: [
-      { label: "Trip Sheets", href: "/trips" },
-      { label: "Trip Expenses", href: "/vehicle/trip-expenses" },
-      { label: "Vehicle Expenses", href: "/vehicle/expenses" },
-      { label: "Vehicle Expense Summary", href: "/vehicle/expense-summary" },
-      { label: "Tyre Management", href: "/vehicle/tyres" },
-      // salary, +/- settlement, advance and F&F are tabs of one screen
+      // sheets and expenses are tabs of one screen
+      { label: "Trip Management", href: "/trips" },
+      // expenses, summary, tracking and P&L are tabs of one screen
+      { label: "Vehicle Management", href: "/vehicle/management" },
+      // driver info, salary, +/- settlement, advance and F&F are tabs of one screen
       { label: "Driver Management", href: "/vehicle/driver-management" },
+      { label: "Tyre Management", href: "/vehicle/tyres" },
       { label: "AdBlue (Urea) Stock", href: "/vehicle/adblue" },
-      { label: "Vehicle Tracking", href: "/vehicle/tracking" },
-      { label: "Vehicle Profit & Loss", href: "/vehicle/pnl" },
     ],
   },
   {

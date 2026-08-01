@@ -1,12 +1,10 @@
-import type { Prisma } from "@prisma/client";
+﻿import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { DriverClient, type DriverRow } from "@/components/vehicle/driver-client";
 
-export const dynamic = "force-dynamic";
-
-export default async function DriversPage({
+export async function DriverInfoTab({
   searchParams,
 }: {
   searchParams: { q?: string; vehicle?: string; status?: string };
@@ -87,7 +85,7 @@ export default async function DriversPage({
   });
 
   return (
-    <div className="space-y-4 p-4">
+    <div className="space-y-4">
       <DriverClient
         rows={rows}
         vehicleOptions={vehicles.map((v) => ({ value: v.id, label: v.number }))}

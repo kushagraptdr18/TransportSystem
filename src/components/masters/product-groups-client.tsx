@@ -15,10 +15,19 @@ const columns: ColumnDef<Row, unknown>[] = [
   { accessorKey: "products", header: "Products", meta: { numeric: true } },
 ];
 
-export function ProductGroupsClient({ rows, canDelete }: { rows: Row[]; canDelete: boolean }) {
+export function ProductGroupsClient({
+  rows,
+  canDelete,
+  embedded,
+}: {
+  rows: Row[];
+  canDelete: boolean;
+  embedded?: boolean;
+}) {
   return (
     <SimpleMaster
       title="Product Group"
+      embedded={embedded}
       rows={rows}
       columns={columns}
       exportColumns={[

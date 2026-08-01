@@ -1,3 +1,6 @@
-// Driver Master lives under Masters; implementation shared with the vehicle
-// module's driver actions/components.
-export { default } from "./driver-master-page";
+import { redirect } from "next/navigation";
+
+// Driver Master is the Driver Info tab of Driver Management now.
+export default function DriverMasterRedirect() {
+  redirect("/vehicle/driver-management?tab=info");
+}
