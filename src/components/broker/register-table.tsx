@@ -1,14 +1,13 @@
-"use client";
+﻿"use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Trash2 } from "lucide-react";
-import { formatDate, formatMoney, parseDdMmYyyy } from "@/lib/utils";
+import { formatDate, formatMoney } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
@@ -20,12 +19,9 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import { DataTable, type DataTableColumnMeta } from "@/components/data/data-table";
-import { DateInput } from "@/components/data/date-input";
 import { ExportButton } from "@/components/data/export-button";
-import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import {
   deleteBrokerSlip,
-  saveBrokerBalancePayment,
   setBrokerSlipPodAttached,
   setBrokerSlipPodFile,
 } from "@/app/(app)/broker/actions";
@@ -109,91 +105,17 @@ const money = (
   } satisfies DataTableColumnMeta<BrokerRegisterRow>,
 });
 
-interface PayState {
-  row: BrokerRegisterRow;
-  /** P = broker side (balance received), V = owner side (balance paid) */
-  side: "P" | "V";
-}
-
 export function BrokerRegisterTable({
   data,
   canDelete,
-  bankOptions,
 }: {
   data: BrokerRegisterRow[];
   canDelete: boolean;
-  bankOptions: MasterOption[];
 }) {
   const router = useRouter();
   const { toast } = useToast();
   const [toDelete, setToDelete] = React.useState<BrokerRegisterRow | null>(null);
   const [deleting, setDeleting] = React.useState(false);
-
-  // balance received / paid dialog
-  const [pay, setPay] = React.useState<PayState | null>(null);
-  const [payRoundOff, setPayRoundOff] = React.useState(0);
-  const [payShortage, setPayShortage] = React.useState(0);
-  const [payDateText, setPayDateText] = React.useState(formatDate(new Date()));
-  const [payHeadId, setPayHeadId] = React.useState<string | null>(null);
-  const [payMode, setPayMode] = React.useState("BANK");
-  const [payRemarks, setPayRemarks] = React.useState("");
-  const [paySaving, setPaySaving] = React.useState(false);
-
-  const openPay = (row: BrokerRegisterRow, side: "P" | "V") => {
-    setPay({ row, side });
-    setPayRoundOff(0);
-    setPayShortage(0);
-    setPayDateText(formatDate(new Date()));
-    setPayHeadId(null);
-    setPayMode("BANK");
-    setPayRemarks("");
-  };
-
-  const payBalance = pay ? (pay.side === "P" ? pay.row.pBalance : pay.row.vBalance) : 0;
-  const payPreview = Math.round((payBalance - payRoundOff - payShortage) * 100) / 100;
-
-  const submitPay = async () => {
-    if (!pay) return;
-    const d = parseDdMmYyyy(payDateText);
-    if (!d) {
-      toast({ variant: "destructive", title: "Valid payment date is required" });
-      return;
-    }
-    if (!payHeadId) {
-      toast({ variant: "destructive", title: "Select the bank/cash payment head" });
-      return;
-    }
-    setPaySaving(true);
-    try {
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      const res = await saveBrokerBalancePayment({
-        slipId: pay.row.id,
-        side: pay.side,
-        roundOff: payRoundOff,
-        shortage: payShortage,
-        paymentDate: `${d.getFullYear()}-${mm}-${dd}`,
-        paymentHeadId: payHeadId,
-        paymentMode: payMode as "CASH" | "BANK" | "UPI" | "CHEQUE" | "NEFT_RTGS",
-        remarks: payRemarks,
-      });
-      if (res.ok) {
-        toast({
-          title:
-            pay.side === "P"
-              ? `Balance received — ${formatMoney(res.paidAmount)}`
-              : `Balance paid — ${formatMoney(res.paidAmount)}`,
-          description: "Posted to the bank/cash book and party ledger.",
-        });
-        setPay(null);
-        router.refresh();
-      } else {
-        toast({ variant: "destructive", title: "Payment failed", description: res.error });
-      }
-    } finally {
-      setPaySaving(false);
-    }
-  };
 
   // slip status timeline dialog
   const [statusRow, setStatusRow] = React.useState<BrokerRegisterRow | null>(null);
@@ -302,13 +224,15 @@ export function BrokerRegisterTable({
           ) : (
             <>
               <Badge variant="destructive">Pending</Badge>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={() => openPay(row.original, "P")}
-              >
-                Receive
+              {/* settled inside the slip now, next to the figures it settles,
+                  so it can be reviewed and corrected rather than write-once */}
+              <Button asChild variant="secondary" size="sm" className="h-6 px-2 text-xs">
+                <Link
+                  href={`/broker/slip?id=${row.original.id}#balance-receivable`}
+                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                >
+                  Receive
+                </Link>
               </Button>
             </>
           )}
@@ -330,13 +254,13 @@ export function BrokerRegisterTable({
           ) : (
             <>
               <Badge variant="destructive">Pending</Badge>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={() => openPay(row.original, "V")}
-              >
-                Pay
+              <Button asChild variant="secondary" size="sm" className="h-6 px-2 text-xs">
+                <Link
+                  href={`/broker/slip?id=${row.original.id}#balance-payable`}
+                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                >
+                  Pay
+                </Link>
               </Button>
             </>
           )}
@@ -674,96 +598,6 @@ export function BrokerRegisterTable({
         </DialogContent>
       </Dialog>
 
-      {/* balance received / paid — same behaviour as the chalan balance payment,
-          but with NO dependency on POD status or the POD-attached flag */}
-      <Dialog open={!!pay} onOpenChange={(o) => !o && setPay(null)}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>
-              {pay?.side === "P"
-                ? `Balance Received — slip ${pay?.row.slipNo} (${pay?.row.transporter || "broker"})`
-                : `Balance Paid — slip ${pay?.row.slipNo} (${pay?.row.owner || "owner"})`}
-            </DialogTitle>
-            <DialogDescription>
-              Posts to the bank/cash book and the party ledger, exactly like the chalan balance
-              payment. POD status does not matter here.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label className="text-xs">Balance Amount</Label>
-              <Input className="h-8 text-right tabular-nums" value={formatMoney(payBalance)} readOnly />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Round Off (−)</Label>
-              <Input
-                type="number"
-                step="any"
-                className="h-8 text-right tabular-nums"
-                value={payRoundOff}
-                onChange={(e) => setPayRoundOff(Number(e.target.value) || 0)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Shortage (−)</Label>
-              <Input
-                type="number"
-                step="any"
-                className="h-8 text-right tabular-nums"
-                value={payShortage}
-                onChange={(e) => setPayShortage(Number(e.target.value) || 0)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">{pay?.side === "P" ? "Final Received Amount" : "Final Paid Amount"}</Label>
-              <Input className="h-8 text-right tabular-nums" value={formatMoney(payPreview)} readOnly />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Payment Date</Label>
-              <DateInput className="h-8" value={payDateText} onChange={setPayDateText} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Payment Head (Bank / Cash)</Label>
-              <MasterCombobox
-                options={bankOptions}
-                value={payHeadId}
-                onChange={setPayHeadId}
-                placeholder="Select head..."
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Payment Mode</Label>
-              <select
-                className="h-8 w-full rounded-md border border-input bg-background px-2 text-sm"
-                value={payMode}
-                onChange={(e) => setPayMode(e.target.value)}
-              >
-                <option value="BANK">Bank Transfer</option>
-                <option value="CASH">Cash</option>
-                <option value="UPI">UPI</option>
-                <option value="CHEQUE">Cheque</option>
-                <option value="NEFT_RTGS">NEFT / RTGS</option>
-              </select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Remarks</Label>
-              <Input className="h-8" value={payRemarks} onChange={(e) => setPayRemarks(e.target.value)} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPay(null)} disabled={paySaving}>
-              Cancel
-            </Button>
-            <Button onClick={submitPay} disabled={paySaving}>
-              {paySaving
-                ? "Saving..."
-                : pay?.side === "P"
-                  ? "Save Balance Received"
-                  : "Save Balance Paid"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
         <DialogContent>

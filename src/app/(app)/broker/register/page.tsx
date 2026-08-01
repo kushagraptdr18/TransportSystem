@@ -26,7 +26,7 @@ export default async function BrokerRegisterPage({
 }) {
   const session = requireSession();
 
-  const { rows, vehicles, brokers, banks, cityById, partyById, vehicleById, userById } = await withTenant(
+  const { rows, vehicles, brokers, cityById, partyById, vehicleById, userById } = await withTenant(
     session.tenantId,
     async (tx) => {
       const where: Record<string, unknown> = {
@@ -73,7 +73,6 @@ export default async function BrokerRegisterPage({
         rows: slips,
         vehicles: vehicleRows,
         brokers: partyRows.filter((p) => p.ledgerGroup === "OWNER_BROKER" || p.ledgerGroup === "RELATIVE"),
-        banks: partyRows.filter((p) => p.ledgerGroup === "BANK" || p.ledgerGroup === "CASH"),
         cityById: new Map(cityRows.map((c) => [c.id, c.name])),
         partyById: new Map(partyRows.map((p) => [p.id, p.name])),
         vehicleById: new Map(vehicleRows.map((v) => [v.id, v.number])),
@@ -184,11 +183,8 @@ export default async function BrokerRegisterPage({
         </Button>
       </div>
       <FilterBar filters={filters} />
-      <BrokerRegisterTable
-        data={data}
-        canDelete={canDelete}
-        bankOptions={banks.map((b) => ({ value: b.id, label: b.name, meta: b.ledgerGroup }))}
-      />
+      {/* balance receipt / payment moved into the slip itself */}
+      <BrokerRegisterTable data={data} canDelete={canDelete} />
     </div>
   );
 }

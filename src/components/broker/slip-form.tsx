@@ -43,7 +43,11 @@ import {
   advanceAdjustLines,
 } from "@/components/chalan/advance-adjust-grid";
 import type { OpenAdvance } from "@/lib/party-advance";
-import { getBrokerSlipAdvances, saveBrokerSlip } from "@/app/(app)/broker/actions";
+import {
+  getBrokerSlipAdvances,
+  saveBrokerBalancePayment,
+  saveBrokerSlip,
+} from "@/app/(app)/broker/actions";
 
 export interface SideValues {
   rate: number;
@@ -95,6 +99,20 @@ export interface BrokerSlipFormData {
   unloadDate: string;
   unloadKm?: number | null;
   unloadRemarks: string;
+  /** balance settlement, per side — only present on a saved slip */
+  settle?: { P: SideSettlement; V: SideSettlement };
+}
+
+/** What a side's balance was settled with. */
+export interface SideSettlement {
+  status: string; // PENDING | RECEIVED | PAID
+  roundOff: number;
+  shortage: number;
+  paidAmount: number;
+  paymentDate: string; // ISO or ""
+  paymentHeadId: string | null;
+  paymentMode: string;
+  remarks: string;
 }
 
 const emptySide = (): SideValues => ({
@@ -421,6 +439,181 @@ export function BrokerSlipForm({
   };
   const adjError = (side: "P" | "V") =>
     advanceAdjustError(advOpts[side], adjValues(side), adjPayable(side));
+
+  // ---------- balance settlement ----------
+  // Lives in the slip rather than a register dialog, so it can be reviewed and
+  // corrected alongside the figures it settles — same shape as the chalan.
+  const emptySettle = (): SideSettlement => ({
+    status: "PENDING",
+    roundOff: 0,
+    shortage: 0,
+    paidAmount: 0,
+    paymentDate: "",
+    paymentHeadId: null,
+    paymentMode: "BANK",
+    remarks: "",
+  });
+  const [settle, setSettle] = React.useState<{ P: SideSettlement; V: SideSettlement }>(
+    initial?.settle ?? { P: emptySettle(), V: emptySettle() }
+  );
+  const [settleDateText, setSettleDateText] = React.useState<{ P: string; V: string }>({
+    P: initial?.settle?.P.paymentDate ? isoToText(initial.settle.P.paymentDate) : formatDate(new Date()),
+    V: initial?.settle?.V.paymentDate ? isoToText(initial.settle.V.paymentDate) : formatDate(new Date()),
+  });
+  const [settling, setSettling] = React.useState<"P" | "V" | null>(null);
+
+  const setSide2 = (side: "P" | "V", patch: Partial<SideSettlement>) =>
+    setSettle((s) => ({ ...s, [side]: { ...s[side], ...patch } }));
+
+  const settleBalance = (side: "P" | "V") => (side === "P" ? pTotals.balance : vTotals.balance);
+  const settlePreview = (side: "P" | "V") =>
+    Math.round((settleBalance(side) - settle[side].roundOff - settle[side].shortage) * 100) / 100;
+
+  const submitSettle = async (side: "P" | "V") => {
+    if (!form.id) return;
+    const d = parseDdMmYyyy(settleDateText[side]);
+    if (!d) {
+      toast({ variant: "destructive", title: "Valid payment date is required" });
+      return;
+    }
+    if (settlePreview(side) > 0.009 && !settle[side].paymentHeadId) {
+      toast({ variant: "destructive", title: "Select the bank/cash head" });
+      return;
+    }
+    setSettling(side);
+    try {
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const res = await saveBrokerBalancePayment({
+        slipId: form.id,
+        side,
+        roundOff: settle[side].roundOff,
+        shortage: settle[side].shortage,
+        paymentDate: `${d.getFullYear()}-${mm}-${dd}`,
+        paymentHeadId: settle[side].paymentHeadId,
+        paymentMode: settle[side].paymentMode as
+          | "CASH"
+          | "BANK"
+          | "UPI"
+          | "CHEQUE"
+          | "NEFT_RTGS",
+        remarks: settle[side].remarks,
+      });
+      if (res.ok) {
+        setSide2(side, {
+          status: side === "P" ? "RECEIVED" : "PAID",
+          paidAmount: res.paidAmount,
+        });
+        toast({
+          title:
+            side === "P"
+              ? `Balance received — ${formatMoney(res.paidAmount)}`
+              : `Balance paid — ${formatMoney(res.paidAmount)}`,
+          description: "Posted to the bank/cash book and party ledger.",
+        });
+        router.refresh();
+      } else {
+        toast({ variant: "destructive", title: "Settlement failed", description: res.error });
+      }
+    } finally {
+      setSettling(null);
+    }
+  };
+
+  const settleCard = (side: "P" | "V") => {
+    const isP = side === "P";
+    const s = settle[side];
+    const done = isP ? s.status === "RECEIVED" : s.status === "PAID";
+    return (
+      <Card id={isP ? "balance-receivable" : "balance-payable"}>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center justify-between text-base">
+            <span>{isP ? "Balance Receivable" : "Balance Payable"}</span>
+            {done ? (
+              <Badge>{isP ? "Received" : "Paid"}</Badge>
+            ) : (
+              <Badge variant="destructive">Pending</Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          <Num label="Balance Amount" value={settleBalance(side)} disabled />
+          <Num
+            label="Round Off (−)"
+            value={s.roundOff}
+            onChange={(n) => setSide2(side, { roundOff: n })}
+          />
+          <Num
+            label="Shortage (−)"
+            value={s.shortage}
+            onChange={(n) => setSide2(side, { shortage: n })}
+          />
+          <Num
+            label={isP ? "Final Amount Received" : "Final Amount Paid"}
+            value={settlePreview(side)}
+            disabled
+          />
+          <div className="space-y-1">
+            <Label className="text-xs">Payment Date</Label>
+            <DateInput
+              className="h-8"
+              value={settleDateText[side]}
+              onChange={(t) => setSettleDateText((p) => ({ ...p, [side]: t }))}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Bank / Cash Head</Label>
+            <MasterCombobox
+              options={bankCashOptions}
+              value={s.paymentHeadId}
+              onChange={(v) => setSide2(side, { paymentHeadId: v })}
+              placeholder="Select head..."
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Payment Mode</Label>
+            <Select
+              value={s.paymentMode}
+              onValueChange={(v) => setSide2(side, { paymentMode: v })}
+            >
+              <SelectTrigger className="h-8">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="BANK">Bank Transfer</SelectItem>
+                <SelectItem value="CASH">Cash</SelectItem>
+                <SelectItem value="UPI">UPI</SelectItem>
+                <SelectItem value="CHEQUE">Cheque</SelectItem>
+                <SelectItem value="NEFT_RTGS">NEFT / RTGS</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Remarks</Label>
+            <Input
+              className="h-8"
+              value={s.remarks}
+              onChange={(e) => setSide2(side, { remarks: e.target.value })}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void submitSettle(side)}
+              disabled={settling !== null}
+            >
+              {settling === side
+                ? "Saving..."
+                : done
+                  ? `Update Balance ${isP ? "Receipt" : "Payment"}`
+                  : `Save Balance ${isP ? "Receipt" : "Payment"}`}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   // legacy rows (pre head-kind) fall back to a sensible kind
   const advanceKind = (a: BrokerAdvance): AdvanceHeadKind =>
@@ -1019,6 +1212,15 @@ export function BrokerSlipForm({
           </div>
         </CardContent>
       </Card>
+
+      {/* balance settlement — one block per side, in the same left/right order
+          as the two sides above. Only a saved slip has a balance to settle. */}
+      {form.id && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {settleCard("P")}
+          {settleCard("V")}
+        </div>
+      )}
 
       {/* trip km + payment summary */}
       <div className="grid gap-4 lg:grid-cols-2">

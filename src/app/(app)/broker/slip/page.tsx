@@ -170,6 +170,29 @@ export default async function BrokerSlipPage({
       unloadDate: iso(slip.unloadDate),
       unloadKm: slip.unloadKm == null ? null : n(slip.unloadKm),
       unloadRemarks: slip.unloadRemarks ?? "",
+      // balance settlement is edited in the slip itself, not a register dialog
+      settle: {
+        P: {
+          status: slip.pPaymentStatus,
+          roundOff: n(slip.pRoundOff),
+          shortage: n(slip.pShortage),
+          paidAmount: n(slip.pPaidAmount),
+          paymentDate: iso(slip.pPaymentDate),
+          paymentHeadId: slip.pPaymentHeadId,
+          paymentMode: slip.pPaymentMode ?? "BANK",
+          remarks: slip.pPaymentRemarks ?? "",
+        },
+        V: {
+          status: slip.vPaymentStatus,
+          roundOff: n(slip.vRoundOff),
+          shortage: n(slip.vShortage),
+          paidAmount: n(slip.vPaidAmount),
+          paymentDate: iso(slip.vPaymentDate),
+          paymentHeadId: slip.vPaymentHeadId,
+          paymentMode: slip.vPaymentMode ?? "BANK",
+          remarks: slip.vPaymentRemarks ?? "",
+        },
+      },
     };
   }
 
