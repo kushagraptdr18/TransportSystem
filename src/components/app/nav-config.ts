@@ -94,14 +94,20 @@ export const NAV: NavGroup[] = [
     label: "Billing",
     icon: ReceiptText,
     items: [
-      { label: "Billing (Part Truck)", href: "/billing/part-truck" },
       { label: "Billing (Full Truck)", href: "/billing/full-truck" },
-      { label: "Billing (Manual)", href: "/billing/manual" },
-      { label: "GST Invoice", href: "/billing/gst" },
       { label: "Bill Submission", href: "/billing/submission" },
       { label: "Billing Register", href: "/billing/register" },
       { label: "Rate Change Register", href: "/billing/rate-change" },
       { label: "Trip Closure Intimation", href: "/billing/trip-closure" },
+      // the less-used bill types sit behind one flyout, last in the menu
+      {
+        label: "Others",
+        items: [
+          { label: "Billing (Part Truck)", href: "/billing/part-truck" },
+          { label: "Billing (Manual)", href: "/billing/manual" },
+          { label: "GST Invoice", href: "/billing/gst" },
+        ],
+      },
     ],
   },
   {
