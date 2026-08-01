@@ -7,13 +7,7 @@ import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { ensureAccountHead, postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
-import {
-  SHORTAGE_HEAD,
-  raiseShortage,
-  recoverShortage,
-  releaseShortage,
-  releaseShortageRecoveries,
-} from "@/lib/shortage";
+import { recoverShortage } from "@/lib/shortage";
 import { resolveRelativeOwner } from "@/lib/relative-owner";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
@@ -64,20 +58,38 @@ export async function saveDriverShortage(
           remarks: d.remarks || null,
         },
       });
-      // mirror into the common shortage register, so a driver shortage sits
-      // alongside every other module's in one report and on one ledger
+      // Recording a driver shortage IS the recovery: the driver is answerable
+      // for it, so it comes back off the shortage ledger here and the driver is
+      // debited. Deducting it later in salary / F&F must NOT post again.
       const driver = await tx.driver.findUnique({ where: { id: d.driverId } });
-      await raiseShortage(tx, session, {
+      const refNo = d.tripRef?.trim() || `SHT-${driver?.driverCode ?? ""}`;
+      await recoverShortage(tx, session, {
         date: created.date,
         module: "DRIVER",
         refId: created.id,
-        refNo: d.tripRef?.trim() || `SHT-${driver?.driverCode ?? ""}`,
+        refNo,
+        source: "DRIVER",
         partyKind: "DRIVER",
         partyId: driver?.partyId ?? null,
         driverId: d.driverId,
         amount: d.amount,
         remarks: d.remarks || null,
       });
+      // the driver owes it — the counter leg of the recovery
+      if (driver?.partyId) {
+        await postLedger(tx, session, [
+          {
+            date: created.date,
+            refType: "DRIVER_SHORTAGE",
+            refId: created.id,
+            refNo,
+            partyId: driver.partyId,
+            side: "DEBIT",
+            amount: d.amount,
+            narration: `Shortage recorded against ${driver.name}${d.tripRef ? ` (trip ${d.tripRef})` : ""}`,
+          },
+        ]);
+      }
       await audit(tx, session, {
         entity: "DriverShortage",
         entityId: created.id,
@@ -248,22 +260,13 @@ export async function processDriverSalary(
           ...common,
           partyId: driver.partyId,
           side: "CREDIT" as const,
-          amount: round2(netPayable + d.advanceAdjust),
-          narration: `Salary payable ${d.month}${d.advanceAdjust ? " (incl. advance recovery)" : ""}`,
+          // the shortage was already debited to the driver when it was
+          // recorded, so crediting it back here nets it off — the shortage
+          // ledger is touched exactly once, at recording
+          amount: round2(netPayable + d.advanceAdjust + shortageDeduction),
+          narration: `Salary payable ${d.month}${d.advanceAdjust ? " (incl. advance recovery)" : ""}${shortageDeduction ? " (incl. shortage adjustment)" : ""}`,
         },
       ];
-      // shortage recovered from the driver posts to the one common Shortage
-      // ledger, through the register, so it shows in the settlement report
-      if (shortageDeduction > 0) {
-        const head = await ensureAccountHead(tx, session, SHORTAGE_HEAD, "EXPENSE");
-        entries.push({
-          ...common,
-          accountHeadId: head,
-          side: "CREDIT" as const,
-          amount: shortageDeduction,
-          narration: `Shortage recovered from driver — salary ${d.month} (${driver.name})`,
-        });
-      }
       if (d.otherDeductions > 0) {
         const head = await ensureAccountHead(tx, session, "Salary Deductions (Driver)", "INCOME");
         entries.push({
@@ -296,22 +299,6 @@ export async function processDriverSalary(
         );
       }
       await postLedger(tx, session, entries);
-      // register the recovery against the driver's open shortages (FIFO)
-      await releaseShortageRecoveries(tx, "DRIVER", id);
-      if (shortageDeduction > 0) {
-        await recoverShortage(tx, session, {
-          date: salaryDate,
-          module: "DRIVER",
-          refId: id,
-          refNo: `DSAL-${d.month}`,
-          source: "DRIVER",
-          partyId: driver.partyId,
-          driverId: d.driverId,
-          partyKind: "DRIVER",
-          amount: shortageDeduction,
-          remarks: `Adjusted in salary ${d.month}`,
-        });
-      }
 
       revalidatePath(REVALIDATE);
       return { ok: true as const, id, netPayable };
@@ -468,40 +455,10 @@ export async function payDriverSalaryRunning(
           }
         );
       }
-      if (d.shortageAdjust > 0) {
-        const head = await ensureAccountHead(tx, session, SHORTAGE_HEAD, "EXPENSE");
-        entries.push(
-          {
-            ...common,
-            partyId: driver.partyId,
-            side: "DEBIT" as const,
-            amount: d.shortageAdjust,
-            narration: `Shortage adjusted against salary — ${driver.name}`,
-          },
-          {
-            ...common,
-            accountHeadId: head,
-            side: "CREDIT" as const,
-            amount: d.shortageAdjust,
-            narration: `Shortage recovery via salary (up to ${latest.month})`,
-          }
-        );
-      }
+      // No shortage leg here: the shortage was already debited to the driver
+      // when it was recorded, and that recording is the one and only shortage
+      // posting. Adjusting it against salary just settles his account.
       await postLedger(tx, session, entries);
-      if (d.shortageAdjust > 0) {
-        await recoverShortage(tx, session, {
-          date: paymentDate,
-          module: "DRIVER",
-          refId: common.refId,
-          refNo: common.refNo,
-          source: "DRIVER",
-          partyId: driver.partyId,
-          driverId: latest.driverId,
-          partyKind: "DRIVER",
-          amount: d.shortageAdjust,
-          remarks: `Recovered with running salary payment`,
-        });
-      }
 
       await audit(tx, session, {
         entity: "DriverSalary",
@@ -547,8 +504,9 @@ export async function deleteDriverSalary(
         data: { status: "PENDING", salaryId: null, adjustedAmount: 0 },
       });
       await tx.driverSalary.update({ where: { id }, data: { deletedAt: new Date() } });
+      // nothing to release in the shortage register: salary never posts there,
+      // the DriverShortage record does
       await reverseLedger(tx, "DRIVER_SALARY", id);
-      await releaseShortage(tx, "DRIVER", id);
       await audit(tx, session, { entity: "DriverSalary", entityId: id, action: "DELETE", before });
     });
     revalidatePath(REVALIDATE);

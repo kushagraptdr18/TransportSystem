@@ -147,20 +147,35 @@ export async function recoverShortage(
   // double-counts against the same shortage
   await releaseShortageRecoveries(tx, opts.module, opts.refId);
 
+  // Match this party's own open shortages first, then fall back to any open
+  // shortage in the firm — a shortage raised on one document is routinely
+  // recovered from a different party (driver, then owner, then broker), which
+  // is the whole point of one register.
   const open = opts.shortageId
     ? await tx.shortageEntry.findMany({ where: { id: opts.shortageId, deletedAt: null } })
-    : await tx.shortageEntry.findMany({
-        where: {
-          firmId: session.firmId,
-          deletedAt: null,
-          ...(opts.driverId
-            ? { driverId: opts.driverId }
-            : opts.partyId
-              ? { partyId: opts.partyId }
-              : {}),
-        },
-        orderBy: { date: "asc" },
-      });
+    : await (async () => {
+        const mine = await tx.shortageEntry.findMany({
+          where: {
+            firmId: session.firmId,
+            deletedAt: null,
+            ...(opts.driverId
+              ? { driverId: opts.driverId }
+              : opts.partyId
+                ? { partyId: opts.partyId }
+                : {}),
+          },
+          orderBy: { date: "asc" },
+        });
+        const others = await tx.shortageEntry.findMany({
+          where: {
+            firmId: session.firmId,
+            deletedAt: null,
+            id: { notIn: mine.map((m) => m.id) },
+          },
+          orderBy: { date: "asc" },
+        });
+        return [...mine, ...others];
+      })();
 
   let left = amount;
   for (const s of open) {

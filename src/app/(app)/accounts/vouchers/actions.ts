@@ -12,6 +12,7 @@ import { postLedger, reverseLedger, LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
 import { adjustmentsTotal, applyAdjustments, ensureAdjustmentHead } from "@/lib/adjust-engine";
 import { payableSettlement } from "@/lib/settlement";
+import { raiseShortage, recoverShortage, releaseShortage } from "@/lib/shortage";
 
 const DOC_TYPE_BY_VOUCHER: Record<VoucherType, DocNumberType> = {
   RECEIPT: "VOUCHER_RECEIPT",
@@ -355,6 +356,35 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
 
       await postLedger(tx, session, entries);
 
+      // Per-reference shortage on a voucher allocation. A PAYMENT deducts it
+      // from what we hand over, so it is RECOVERED; a RECEIPT means the party
+      // paid us less, so the company bears it — an EXPENSE. Those are the only
+      // two voucher cases that touch the shortage ledger.
+      // The money leg is already posted above via the header deduction, so the
+      // register only records the document side.
+      await releaseShortage(tx, "VOUCHER", savedId);
+      const allocShortage = round2(
+        data.allocations.reduce((s, a) => s + a.deduction, 0)
+      );
+      if (allocShortage > 0.009 && data.partyId && (data.type === "PAYMENT" || data.type === "RECEIPT")) {
+        const refNos = Array.from(new Set(data.allocations.filter((a) => a.deduction > 0).map((a) => a.refNo)));
+        const shortageArgs = {
+          date: voucherDate,
+          module: "VOUCHER" as const,
+          refId: savedId,
+          refNo: refNos.join(", ") || data.voucherNo,
+          partyId: data.partyId,
+          partyKind: "PARTY" as const,
+          amount: allocShortage,
+          remarks: `${data.type === "PAYMENT" ? "Deducted on" : "Short received against"} voucher ${data.voucherNo}`,
+        };
+        if (data.type === "PAYMENT") {
+          await recoverShortage(tx, session, { ...shortageArgs, source: "PARTY" });
+        } else {
+          await raiseShortage(tx, session, shortageArgs);
+        }
+      }
+
       await syncSequenceTo(tx, {
         tenantId: session.tenantId,
         firmId: session.firmId,
@@ -457,6 +487,7 @@ export async function deleteVoucher(
       }
       await tx.voucher.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "VOUCHER", id);
+      await releaseShortage(tx, "VOUCHER", id);
       await audit(tx, session, { entity: "Voucher", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/accounts/vouchers");
