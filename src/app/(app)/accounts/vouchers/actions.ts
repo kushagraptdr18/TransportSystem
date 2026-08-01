@@ -41,6 +41,8 @@ const allocationSchema = z.object({
   tdsAmt: z.number().min(0).default(0),
   deduction: z.number().min(0).default(0),
   otherAmt: z.number().min(0).default(0),
+  /** round-off may be negative — a little extra paid rather than knocked off */
+  roundOff: z.number().default(0),
   amount: z.number().min(0).default(0),
   remarks: z.string().nullish(),
 });
@@ -153,6 +155,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         tdsAmt: a.tdsAmt,
         deduction: a.deduction,
         otherAmt: a.otherAmt,
+        roundOff: a.roundOff,
         amount: a.amount,
         remarks: a.remarks || null,
       }));
@@ -217,7 +220,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
           }
           for (const r of rows) {
             const pending = round2((gross.get(r.refId) ?? Infinity) - (already.get(r.refId) ?? 0));
-            const settle = round2(r.amount + r.tdsAmt + r.deduction + r.otherAmt);
+            const settle = round2(r.amount + r.tdsAmt + r.deduction + r.otherAmt + r.roundOff);
             if (settle > pending + 0.01) {
               throw new Error(
                 `Ref ${r.refNo}: adjustment ${settle} exceeds the pending amount ${pending}. Duplicate or over-settlement is not allowed.`
@@ -477,7 +480,11 @@ export interface AllocationCandidate {
   module: ModuleLink;
 }
 
-/** Sum of amounts already allocated to a set of refs (excluding a voucher being edited). */
+/**
+ * Amount already settled against a set of refs (excluding a voucher being
+ * edited). Every approved deduction settles the document just like money, so
+ * TDS, shortage, other and round-off count alongside the cash.
+ */
 async function allocatedByRef(
   tx: Tx,
   refType: ModuleLink,
@@ -492,9 +499,20 @@ async function allocatedByRef(
       refId: { in: refIds },
       voucher: { deletedAt: null, ...(excludeVoucherId ? { id: { not: excludeVoucherId } } : {}) },
     },
-    _sum: { amount: true },
+    _sum: { amount: true, tdsAmt: true, deduction: true, otherAmt: true, roundOff: true },
   });
-  return new Map(rows.map((r) => [r.refId, Number(r._sum.amount ?? 0)]));
+  return new Map(
+    rows.map((r) => [
+      r.refId,
+      round2(
+        Number(r._sum.amount ?? 0) +
+          Number(r._sum.tdsAmt ?? 0) +
+          Number(r._sum.deduction ?? 0) +
+          Number(r._sum.otherAmt ?? 0) +
+          Number(r._sum.roundOff ?? 0)
+      ),
+    ])
+  );
 }
 
 /**

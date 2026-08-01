@@ -529,8 +529,11 @@ export function ChalanRegisterClient({
                     <Line
                       label="Settled by Payment Voucher"
                       value={`${formatMoney(status.voucherSettled)}${
-                        status.voucherTds || status.voucherShortage || status.voucherOther
-                          ? ` (TDS ${formatMoney(status.voucherTds)} · shortage ${formatMoney(status.voucherShortage)} · other ${formatMoney(status.voucherOther)})`
+                        status.voucherTds ||
+                        status.voucherShortage ||
+                        status.voucherOther ||
+                        status.voucherRoundOff
+                          ? ` (TDS ${formatMoney(status.voucherTds)} · shortage ${formatMoney(status.voucherShortage)} · other ${formatMoney(status.voucherOther)} · round off ${formatMoney(status.voucherRoundOff)})`
                           : ""
                       }`}
                     />

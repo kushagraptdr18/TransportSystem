@@ -76,6 +76,8 @@ interface SettleRow extends AllocationCandidate {
   tds: number;
   shortage: number;
   other: number;
+  /** may be negative — a little extra paid rather than knocked off */
+  roundOff: number;
   receive: number;
   remarks: string;
 }
@@ -195,6 +197,7 @@ export function VoucherEntry({
             tds: 0,
             shortage: 0,
             other: 0,
+            roundOff: 0,
             receive: 0,
             remarks: "",
           }))
@@ -221,14 +224,17 @@ export function VoucherEntry({
   // ---- live totals ----
   const selected = rows.filter((r) => r.selected);
   const tdsTotal = round2(selected.reduce((s, r) => s + r.tds, 0));
-  const dedTotal = round2(selected.reduce((s, r) => s + r.shortage + r.other, 0));
+  // round-off settles the reference exactly like a deduction, so the party is
+  // still settled gross and the ledger stays balanced
+  const dedTotal = round2(selected.reduce((s, r) => s + r.shortage + r.other + r.roundOff, 0));
+  const roundOffTotal = round2(selected.reduce((s, r) => s + r.roundOff, 0));
   const allocated = round2(selected.reduce((s, r) => s + r.receive, 0));
   const advanceRemainder = round2(money - allocated);
   const gross = round2(money + tdsTotal + dedTotal);
 
   const rowError = (r: SettleRow): string | null => {
     if (!r.selected) return null;
-    const settle = round2(r.receive + r.tds + r.shortage + r.other);
+    const settle = round2(r.receive + r.tds + r.shortage + r.other + r.roundOff);
     if (settle > r.outstanding + 0.01)
       return `settles ${formatMoney(settle)} > outstanding ${formatMoney(r.outstanding)}`;
     if (r.receive < 0 || r.tds < 0 || r.shortage < 0 || r.other < 0) return "negative value";
@@ -241,7 +247,10 @@ export function VoucherEntry({
     let remaining = money;
     setRows((prev) =>
       prev.map((r) => {
-        const avail = Math.max(0, round2(r.outstanding - r.tds - r.shortage - r.other));
+        const avail = Math.max(
+          0,
+          round2(r.outstanding - r.tds - r.shortage - r.other - r.roundOff)
+        );
         const pay = round2(Math.min(avail, Math.max(0, remaining)));
         remaining = round2(remaining - pay);
         return pay > 0 || r.selected ? { ...r, selected: pay > 0 || r.selected, receive: pay } : r;
@@ -278,7 +287,7 @@ export function VoucherEntry({
         adjustments: [],
         allocations: isMoney
           ? selected
-              .filter((r) => r.receive + r.tds + r.shortage + r.other > 0)
+              .filter((r) => Math.abs(r.receive + r.tds + r.shortage + r.other + r.roundOff) > 0)
               .map((r) => ({
                 refId: r.refId,
                 refNo: r.refNo,
@@ -290,6 +299,7 @@ export function VoucherEntry({
                 // other deduction as the distinct figures they are
                 deduction: r.shortage,
                 otherAmt: r.other,
+                roundOff: r.roundOff,
                 amount: r.receive,
                 remarks: r.remarks || null,
               }))
@@ -550,6 +560,7 @@ export function VoucherEntry({
                     <TableHead className="w-24 text-right">TDS</TableHead>
                     <TableHead className="w-24 text-right">Shortage</TableHead>
                     <TableHead className="w-24 text-right">Other Ded.</TableHead>
+                    <TableHead className="w-24 text-right">Round Off</TableHead>
                     <TableHead className="w-28 text-right">
                       {type === "RECEIPT" ? "Receive" : "Pay"}
                     </TableHead>
@@ -559,7 +570,7 @@ export function VoucherEntry({
                 <TableBody>
                   {rows.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} className="h-16 text-center text-muted-foreground">
+                      <TableCell colSpan={12} className="h-16 text-center text-muted-foreground">
                         No pending references — the full amount will be saved as a party{" "}
                         {type === "RECEIPT" ? "advance (received)" : "advance (paid)"}.
                       </TableCell>
@@ -575,7 +586,9 @@ export function VoucherEntry({
                               onCheckedChange={(c) =>
                                 setRow(i, {
                                   selected: !!c,
-                                  ...(c ? {} : { receive: 0, tds: 0, shortage: 0, other: 0 }),
+                                  ...(c
+                                    ? {}
+                                    : { receive: 0, tds: 0, shortage: 0, other: 0, roundOff: 0 }),
                                 })
                               }
                             />
@@ -594,6 +607,7 @@ export function VoucherEntry({
                               ["tds", r.tds],
                               ["shortage", r.shortage],
                               ["other", r.other],
+                              ["roundOff", r.roundOff],
                               ["receive", r.receive],
                             ] as const
                           ).map(([key, val]) => (
@@ -627,13 +641,14 @@ export function VoucherEntry({
             </div>
 
             {/* live totals */}
-            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-5">
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-6">
               {(
                 [
                   [`${type === "RECEIPT" ? "Received" : "Paid"} (Bank/Cash)`, money, ""],
                   ["Allocated to references", allocated, overAllocated ? "text-destructive" : ""],
                   ["TDS", tdsTotal, ""],
-                  ["Shortage + Other Ded.", dedTotal, ""],
+                  ["Shortage + Other Ded.", round2(dedTotal - roundOffTotal), ""],
+                  ["Round Off", roundOffTotal, ""],
                   [
                     advanceRemainder > 0.009
                       ? `→ Party Advance (${type === "RECEIPT" ? "received" : "paid"})`

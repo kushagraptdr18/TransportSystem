@@ -923,13 +923,15 @@ export interface ChalanStatusData {
   balPaidAmount: number;
   balPaymentDate: string | null;
   balPaymentMode: string;
+  /** round-off across both settlement paths (chalan screen + payment voucher) */
   balRoundOff: number;
-  /** shortage across both settlement paths (chalan screen + payment voucher) */
+  /** shortage across both settlement paths */
   balShortage: number;
   /** deductions a Payment Voucher applied to this chalan */
   voucherTds: number;
   voucherShortage: number;
   voucherOther: number;
+  voucherRoundOff: number;
   balRemarks: string;
   payments: {
     date: string;
@@ -1086,13 +1088,14 @@ export async function getChalanStatus(
         balPaidAmount: toNum(chalan.balPaidAmount),
         balPaymentDate: chalan.balPaymentDate ? chalan.balPaymentDate.toISOString() : null,
         balPaymentMode: chalan.balPaymentMode ?? "",
-        balRoundOff: toNum(chalan.balRoundOff),
-        // the voucher's shortage is the chalan's shortage — one figure, shown
-        // identically from either module
+        // a deduction entered on the voucher IS the chalan's deduction — one
+        // figure each, shown identically from either module
+        balRoundOff: toNum(chalan.balRoundOff) + position.voucherRoundOff,
         balShortage: toNum(chalan.balShortage) + position.voucherShortage,
         voucherTds: position.voucherTds,
         voucherShortage: position.voucherShortage,
         voucherOther: position.voucherOther,
+        voucherRoundOff: position.voucherRoundOff,
         balRemarks: chalan.balRemarks ?? "",
         payments: ledger.map((e) => ({
           date: e.date.toISOString(),

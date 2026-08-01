@@ -1402,8 +1402,9 @@ model VoucherAllocation {
   billAmt   Decimal    @default(0) @db.Decimal(14, 2)
   tdsPct    Decimal    @default(0) @db.Decimal(5, 2)
   tdsAmt    Decimal    @default(0) @db.Decimal(12, 2)
-  deduction Decimal    @default(0) @db.Decimal(12, 2)
-  otherAmt  Decimal    @default(0) @db.Decimal(12, 2)
+  deduction Decimal    @default(0) @db.Decimal(12, 2) // shortage
+  otherAmt  Decimal    @default(0) @db.Decimal(12, 2) // other deduction
+  roundOff  Decimal    @default(0) @db.Decimal(12, 2) // may be negative (paid extra)
   amount    Decimal    @default(0) @db.Decimal(14, 2)
   remarks   String?
 

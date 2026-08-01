@@ -34,11 +34,23 @@ export async function settledByRef(
       ...(opts.refIds ? { refId: { in: opts.refIds } } : {}),
       voucher: { deletedAt: null, firmId: opts.firmId, fyId: opts.fyId },
     },
-    select: { refId: true, amount: true, tdsAmt: true, deduction: true },
+    select: {
+      refId: true,
+      amount: true,
+      tdsAmt: true,
+      deduction: true,
+      otherAmt: true,
+      roundOff: true,
+    },
   });
   const map = new Map<string, number>();
   for (const a of allocations) {
-    const settled = Number(a.amount) + Number(a.tdsAmt) + Number(a.deduction);
+    const settled =
+      Number(a.amount) +
+      Number(a.tdsAmt) +
+      Number(a.deduction) +
+      Number(a.otherAmt) +
+      Number(a.roundOff);
     map.set(a.refId, round2((map.get(a.refId) ?? 0) + settled));
   }
   return map;
@@ -72,6 +84,7 @@ export interface PayablePosition {
   voucherTds: number;
   voucherShortage: number;
   voucherOther: number;
+  voucherRoundOff: number;
   settled: number;
   outstanding: number;
   status: SettlementStatus;
@@ -100,10 +113,17 @@ export async function payableSettlement(
             ...(opts.excludeVoucherId ? { id: { not: opts.excludeVoucherId } } : {}),
           },
         },
-        select: { refId: true, amount: true, tdsAmt: true, deduction: true, otherAmt: true },
+        select: {
+          refId: true,
+          amount: true,
+          tdsAmt: true,
+          deduction: true,
+          otherAmt: true,
+          roundOff: true,
+        },
       })
     : [];
-  const zero = () => ({ paid: 0, tds: 0, shortage: 0, other: 0 });
+  const zero = () => ({ paid: 0, tds: 0, shortage: 0, other: 0, roundOff: 0 });
   const byRef = new Map<string, ReturnType<typeof zero>>();
   for (const a of allocations) {
     const acc = byRef.get(a.refId) ?? zero();
@@ -112,6 +132,7 @@ export async function payableSettlement(
     acc.tds = round2(acc.tds + Number(a.tdsAmt));
     acc.shortage = round2(acc.shortage + Number(a.deduction));
     acc.other = round2(acc.other + Number(a.otherAmt));
+    acc.roundOff = round2(acc.roundOff + Number(a.roundOff));
     byRef.set(a.refId, acc);
   }
   const out = new Map<string, PayablePosition>();
@@ -120,7 +141,7 @@ export async function payableSettlement(
       d.ownPaid + d.ownShortage + d.ownRoundOff + (d.ownAdvanceAdjusted ?? 0)
     );
     const v = byRef.get(d.id) ?? zero();
-    const voucherSettled = round2(v.paid + v.tds + v.shortage + v.other);
+    const voucherSettled = round2(v.paid + v.tds + v.shortage + v.other + v.roundOff);
     const settled = round2(ownSettled + voucherSettled);
     const outstanding = round2(d.balance - settled);
     out.set(d.id, {
@@ -131,6 +152,7 @@ export async function payableSettlement(
       voucherTds: v.tds,
       voucherShortage: v.shortage,
       voucherOther: v.other,
+      voucherRoundOff: v.roundOff,
       settled,
       outstanding,
       status: settlementStatus(d.balance, outstanding),
