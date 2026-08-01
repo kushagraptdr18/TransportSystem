@@ -9,6 +9,9 @@ export const dynamic = "force-dynamic";
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/** So a nil deduction reads as a deliberate outcome, not a missing row. */
+const tdsStatus = (amt: number) => (amt > 0.009 ? "DEDUCTED" : "NOT DEDUCTED");
+
 /**
  * TDS PAYABLE Register — TDS OUR company deducts while MAKING payments.
  * Sources: Chalan (owner payment side), Broker Slip (owner payment side),
@@ -22,6 +25,7 @@ export default async function TdsPayableRegisterPage({
     tds?: string;
     party?: string;
     module?: string;
+    status?: string;
     date_from?: string;
     date_to?: string;
   };
@@ -50,11 +54,19 @@ export default async function TdsPayableRegisterPage({
         },
         include: { allocations: true },
       }),
+      // Every TDS-ELIGIBLE chalan and broker slip, deducted or not. Filtering
+      // on tdsAmt > 0 hid the zero-TDS ones, so there was no way to tell a
+      // deliberate nil deduction from one that had simply been missed.
       tx.chalan.findMany({
-        where: { ...scope, tdsAmt: { gt: 0 }, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
+        where: { ...scope, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
       }),
       tx.brokerSlip.findMany({
-        where: { ...scope, vTdsAmt: { gt: 0 }, ...(dateWhere ? { slipDate: dateWhere } : {}) },
+        where: {
+          ...scope,
+          ...(dateWhere ? { slipDate: dateWhere } : {}),
+          // only slips that actually have an owner side to deduct against
+          OR: [{ ownerId: { not: null } }, { vNetAmt: { gt: 0 } }],
+        },
       }),
       tx.party.findMany({ select: { id: true, name: true, pan: true } }),
       tx.financialYear.findFirst({ where: { id: session.fyId } }),
@@ -78,6 +90,7 @@ export default async function TdsPayableRegisterPage({
             tdsPct: toNum(String(a.tdsPct)),
             tdsAmt: toNum(String(a.tdsAmt)),
             net: r2(toNum(String(a.amount))),
+            status: tdsStatus(toNum(String(a.tdsAmt))),
             remarks: a.remarks ?? v.remarks ?? "",
           });
         }
@@ -93,6 +106,7 @@ export default async function TdsPayableRegisterPage({
           tdsPct: 0,
           tdsAmt: toNum(String(v.tdsAmt)),
           net: toNum(String(v.netAmount)),
+          status: tdsStatus(toNum(String(v.tdsAmt))),
           remarks: v.remarks ?? "",
         });
       }
@@ -110,6 +124,7 @@ export default async function TdsPayableRegisterPage({
         tdsPct: toNum(String(c.tdsPct)),
         tdsAmt: toNum(String(c.tdsAmt)),
         net: toNum(String(c.grandTotal)),
+        status: tdsStatus(toNum(String(c.tdsAmt))),
         remarks: c.remarks ?? "",
       });
     }
@@ -126,6 +141,7 @@ export default async function TdsPayableRegisterPage({
         tdsPct: toNum(String(s.vTdsPct)),
         tdsAmt: toNum(String(s.vTdsAmt)),
         net: toNum(String(s.vNetAmt)),
+        status: tdsStatus(toNum(String(s.vTdsAmt))),
         remarks: s.vRemarks ?? "",
       });
     }
@@ -152,6 +168,10 @@ export default async function TdsPayableRegisterPage({
   if (searchParams.tds) {
     filtered = filtered.filter((r) => String(r.tdsPct) === searchParams.tds?.trim());
   }
+  if (searchParams.status) filtered = filtered.filter((r) => r.status === searchParams.status);
+
+  const deductedCount = filtered.filter((r) => r.status === "DEDUCTED").length;
+  const tdsTotal = filtered.reduce((s, r) => s + Number(r.tdsAmt ?? 0), 0);
 
   const filters: FilterDef[] = [
     { type: "text", key: "q", label: "Voucher / Ref No..." },
@@ -173,36 +193,46 @@ export default async function TdsPayableRegisterPage({
         { value: "BROKER SLIP (OWNER)", label: "Broker Slip (Owner)" },
       ],
     },
+    {
+      type: "select",
+      key: "status",
+      label: "TDS Status",
+      options: [
+        { value: "DEDUCTED", label: "Deducted" },
+        { value: "NOT DEDUCTED", label: "Not Deducted" },
+      ],
+    },
   ];
 
   return (
     <div className="space-y-4 p-4">
       <h1 className="page-title">TDS Payable Register</h1>
       <p className="text-sm text-muted-foreground">
-        TDS deducted by OUR company while making payments (challan owner side, broker slip owner
-        side, payment vouchers). Receipt-voucher TDS never appears here — see the TDS Receivable
-        Register.
+        Every TDS-eligible payment — challan owner side, broker slip owner side and payment
+        vouchers — whether TDS was deducted or not, so a nil deduction is visibly deliberate rather
+        than simply absent. Receipt-voucher TDS never appears here; see the TDS Receivable Register.
       </p>
       <FilterBar filters={filters} />
       <SimpleReport
-        title={`${filtered.length} TDS entr${filtered.length === 1 ? "y" : "ies"} — FY ${fyLabel}`}
+        title={`${filtered.length} transaction${filtered.length === 1 ? "" : "s"} — ${deductedCount} with TDS deducted, ${filtered.length - deductedCount} without — ₹${tdsTotal.toLocaleString("en-IN")} TDS — FY ${fyLabel}`}
         columns={[
           { key: "voucherNo", header: "Voucher No" },
-          { key: "date", header: "Voucher Date", kind: "date" },
+          { key: "date", header: "Date", kind: "date" },
           { key: "module", header: "Module", kind: "badge" },
-          { key: "party", header: "Party Name" },
+          { key: "party", header: "Party / Owner" },
           { key: "pan", header: "PAN" },
           { key: "refNo", header: "Reference No" },
-          { key: "invoiceAmount", header: "Invoice Amount", kind: "money" },
+          { key: "invoiceAmount", header: "Bill Amount", kind: "money" },
           { key: "tdsPct", header: "TDS %" },
           { key: "tdsAmt", header: "TDS Amount", kind: "money" },
-          { key: "net", header: "Net Paid", kind: "money" },
+          { key: "net", header: "Net Payment", kind: "money" },
+          { key: "status", header: "TDS Status", kind: "badge" },
           { key: "fy", header: "FY" },
           { key: "remarks", header: "Remarks" },
         ]}
         rows={filtered}
         fileName="tds-payable-register"
-        emptyMessage="No TDS deducted on payments in this period."
+        emptyMessage="No TDS-eligible payments in this period."
       />
     </div>
   );
