@@ -23,10 +23,13 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/app/theme-toggle";
-import { NAV, type NavGroup } from "@/components/app/nav-config";
+import { NAV, type NavGroup, type NavItem } from "@/components/app/nav-config";
 
 export interface TopNavProps {
   firmName: string;
@@ -35,9 +38,18 @@ export interface TopNavProps {
   role: string;
 }
 
+const hrefActive = (href: string, pathname: string) =>
+  pathname === href || pathname.startsWith(href + "/");
+
+/** True when this entry, or anything nested under it, matches the route. */
+function isItemActive(item: NavItem, pathname: string): boolean {
+  if (item.items) return item.items.some((c) => isItemActive(c, pathname));
+  return !!item.href && hrefActive(item.href, pathname);
+}
+
 function isGroupActive(group: NavGroup, pathname: string): boolean {
-  if (group.href) return pathname === group.href || pathname.startsWith(group.href + "/");
-  return group.items?.some((i) => pathname === i.href || pathname.startsWith(i.href + "/")) ?? false;
+  if (group.href) return hrefActive(group.href, pathname);
+  return group.items?.some((i) => isItemActive(i, pathname)) ?? false;
 }
 
 /** Desktop menu bar: one dropdown per module group. */
@@ -79,19 +91,47 @@ function DesktopMenu({ pathname }: { pathname: string }) {
               <ChevronDown className="h-3.5 w-3.5 opacity-60" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-64">
-              {group.items!.map((item) => (
-                <DropdownMenuItem key={item.href + item.label} asChild>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      "w-full cursor-pointer",
-                      pathname === item.href && "bg-primary/10 font-medium"
-                    )}
-                  >
-                    {item.label}
-                  </Link>
-                </DropdownMenuItem>
-              ))}
+              {group.items!.map((item) =>
+                item.items ? (
+                  <DropdownMenuSub key={item.label}>
+                    <DropdownMenuSubTrigger
+                      className={cn(
+                        "cursor-pointer",
+                        isItemActive(item, pathname) && "bg-primary/10 font-medium"
+                      )}
+                    >
+                      {item.label}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-64">
+                      {item.items.map((sub) => (
+                        <DropdownMenuItem key={sub.href} asChild>
+                          <Link
+                            href={sub.href!}
+                            className={cn(
+                              "w-full cursor-pointer",
+                              pathname === sub.href && "bg-primary/10 font-medium"
+                            )}
+                          >
+                            {sub.label}
+                          </Link>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                ) : (
+                  <DropdownMenuItem key={item.href! + item.label} asChild>
+                    <Link
+                      href={item.href!}
+                      className={cn(
+                        "w-full cursor-pointer",
+                        pathname === item.href && "bg-primary/10 font-medium"
+                      )}
+                    >
+                      {item.label}
+                    </Link>
+                  </DropdownMenuItem>
+                )
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         );
@@ -141,21 +181,53 @@ function MobileMenu({
                 <ChevronDown className="h-4 w-4 opacity-60 transition-transform group-open:rotate-180" />
               </summary>
               <div className="mb-1 ml-5 space-y-0.5 border-l-2 border-primary/30 pl-3">
-                {group.items!.map((item) => (
-                  <Link
-                    key={item.href + item.label}
-                    href={item.href}
-                    onClick={onClose}
-                    className={cn(
-                      "block rounded-md px-3 py-2 text-sm",
-                      pathname === item.href
-                        ? "bg-primary/15 font-medium text-foreground"
-                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
-                    )}
-                  >
-                    {item.label}
-                  </Link>
-                ))}
+                {group.items!.map((item) =>
+                  item.items ? (
+                    // a submenu nests one more accordion rather than a flyout,
+                    // which has nothing to hover on a touch screen
+                    <details
+                      key={item.label}
+                      open={isItemActive(item, pathname)}
+                      className="group/sub"
+                    >
+                      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground [&::-webkit-details-marker]:hidden">
+                        <span className="flex-1">{item.label}</span>
+                        <ChevronDown className="h-3.5 w-3.5 opacity-60 transition-transform group-open/sub:rotate-180" />
+                      </summary>
+                      <div className="ml-3 space-y-0.5 border-l border-primary/20 pl-3">
+                        {item.items.map((sub) => (
+                          <Link
+                            key={sub.href}
+                            href={sub.href!}
+                            onClick={onClose}
+                            className={cn(
+                              "block rounded-md px-3 py-2 text-sm",
+                              pathname === sub.href
+                                ? "bg-primary/15 font-medium text-foreground"
+                                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                            )}
+                          >
+                            {sub.label}
+                          </Link>
+                        ))}
+                      </div>
+                    </details>
+                  ) : (
+                    <Link
+                      key={item.href! + item.label}
+                      href={item.href!}
+                      onClick={onClose}
+                      className={cn(
+                        "block rounded-md px-3 py-2 text-sm",
+                        pathname === item.href
+                          ? "bg-primary/15 font-medium text-foreground"
+                          : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      )}
+                    >
+                      {item.label}
+                    </Link>
+                  )
+                )}
               </div>
             </details>
           )

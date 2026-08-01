@@ -13,9 +13,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+/**
+ * A menu entry: either a link, or a nested group of links rendered as a
+ * flyout submenu (desktop) / nested accordion (mobile).
+ */
 export interface NavItem {
   label: string;
-  href: string;
+  /** omitted when this entry is a submenu */
+  href?: string;
+  /** present when this entry opens a submenu instead of navigating */
+  items?: NavItem[];
 }
 
 export interface NavGroup {
@@ -59,13 +66,20 @@ export const NAV: NavGroup[] = [
     items: [
       { label: "Chalan Entry", href: "/chalan" },
       { label: "Chalan Register", href: "/chalan/register" },
-      { label: "Loading Challan", href: "/loading-chalan" },
-      { label: "Unloading / Arrival", href: "/arrival" },
-      { label: "Delivery (Gate Pass / Cash Memo)", href: "/delivery" },
-      { label: "Crossing", href: "/crossing" },
-      { label: "Outward Crossing", href: "/outward-crossing" },
-      { label: "Hire Slip", href: "/hire-slip" },
-      { label: "Summary Entry", href: "/summary" },
+      // the less-used fleet screens sit behind one flyout so the day-to-day
+      // chalan entries stay at the top of the menu
+      {
+        label: "Others",
+        items: [
+          { label: "Loading Challan", href: "/loading-chalan" },
+          { label: "Unloading / Arrival", href: "/arrival" },
+          { label: "Delivery (Gate Pass / Cash Memo)", href: "/delivery" },
+          { label: "Crossing", href: "/crossing" },
+          { label: "Outward Crossing", href: "/outward-crossing" },
+          { label: "Hire Slip", href: "/hire-slip" },
+          { label: "Summary Entry", href: "/summary" },
+        ],
+      },
     ],
   },
   {
