@@ -41,16 +41,35 @@ export default async function TdsPayableRegisterPage({
         }
       : undefined;
 
-  const { rows, parties, fyLabel } = await withTenant(session.tenantId, async (tx) => {
+  const { rows, parties } = await withTenant(session.tenantId, async (tx) => {
     const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null };
-    const [payVouchers, chalans, slips, parties, fy] = await Promise.all([
+    // TDS applies only to hired vehicles. A company-owned vehicle is our own
+    // asset — there is no payee to deduct from, so it never belongs here.
+    const ownVehicleIds = (
+      await tx.vehicle.findMany({
+        where: { ownershipType: "OWNER" },
+        select: { id: true },
+      })
+    ).map((v) => v.id);
+    const notOwnVehicle = ownVehicleIds.length
+      ? { vehicleId: { notIn: ownVehicleIds } }
+      : {};
+
+    const [payVouchers, chalans, slips, parties] = await Promise.all([
       // PAYMENT vouchers only — receipts must never appear in TDS Payable
       tx.voucher.findMany({
         where: {
           ...scope,
           type: "PAYMENT",
           ...(dateWhere ? { voucherDate: dateWhere } : {}),
-          OR: [{ tdsAmt: { gt: 0 } }, { allocations: { some: { tdsAmt: { gt: 0 } } } }],
+          // a voucher against a company-owned vehicle is out too; one with no
+          // vehicle at all cannot be ruled out, so it stays
+          ...(ownVehicleIds.length
+            ? { OR: [{ vehicleId: null }, { vehicleId: { notIn: ownVehicleIds } }] }
+            : {}),
+          AND: [
+            { OR: [{ tdsAmt: { gt: 0 } }, { allocations: { some: { tdsAmt: { gt: 0 } } } }] },
+          ],
         },
         include: { allocations: true },
       }),
@@ -58,18 +77,18 @@ export default async function TdsPayableRegisterPage({
       // on tdsAmt > 0 hid the zero-TDS ones, so there was no way to tell a
       // deliberate nil deduction from one that had simply been missed.
       tx.chalan.findMany({
-        where: { ...scope, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
+        where: { ...scope, ...notOwnVehicle, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
       }),
       tx.brokerSlip.findMany({
         where: {
           ...scope,
+          ...notOwnVehicle,
           ...(dateWhere ? { slipDate: dateWhere } : {}),
           // only slips that actually have an owner side to deduct against
           OR: [{ ownerId: { not: null } }, { vNetAmt: { gt: 0 } }],
         },
       }),
       tx.party.findMany({ select: { id: true, name: true, pan: true } }),
-      tx.financialYear.findFirst({ where: { id: session.fyId } }),
     ]);
     const partyById = new Map(parties.map((p) => [p.id, p]));
 
@@ -80,12 +99,13 @@ export default async function TdsPayableRegisterPage({
       if (allocTds.length) {
         for (const a of allocTds) {
           out.push({
-            voucherNo: v.voucherNo,
             date: v.voucherDate.toISOString(),
             module: "PAYMENT VOUCHER",
             party: p?.name ?? "",
             pan: p?.pan ?? "",
-            refNo: a.refNo,
+            // for a chalan / slip the two are the same number; only a voucher
+            // settling a bill has a distinct reference, so name both there
+            refNo: a.refNo && a.refNo !== v.voucherNo ? `${a.refNo} (${v.voucherNo})` : v.voucherNo,
             invoiceAmount: toNum(String(a.billAmt)),
             tdsPct: toNum(String(a.tdsPct)),
             tdsAmt: toNum(String(a.tdsAmt)),
@@ -96,7 +116,6 @@ export default async function TdsPayableRegisterPage({
         }
       } else if (toNum(String(v.tdsAmt)) > 0) {
         out.push({
-          voucherNo: v.voucherNo,
           date: v.voucherDate.toISOString(),
           module: "PAYMENT VOUCHER",
           party: p?.name ?? "",
@@ -114,7 +133,6 @@ export default async function TdsPayableRegisterPage({
     for (const c of chalans) {
       const p = partyById.get(c.brokerId);
       out.push({
-        voucherNo: c.chalanNo,
         date: c.chalanDate.toISOString(),
         module: "CHALLAN (OWNER)",
         party: p?.name ?? "",
@@ -131,7 +149,6 @@ export default async function TdsPayableRegisterPage({
     for (const s of slips) {
       const p = s.ownerId ? partyById.get(s.ownerId) : undefined;
       out.push({
-        voucherNo: s.slipNo,
         date: s.slipDate.toISOString(),
         module: "BROKER SLIP (OWNER)",
         party: p?.name ?? s.ownerName ?? "",
@@ -148,11 +165,10 @@ export default async function TdsPayableRegisterPage({
     return {
       rows: out.sort((a, b) => String(a.date).localeCompare(String(b.date))),
       parties,
-      fyLabel: fy?.label ?? "",
     };
   });
 
-  let filtered: ReportRow[] = rows.map((r) => ({ ...r, fy: fyLabel }));
+  let filtered: ReportRow[] = rows;
   if (searchParams.party) {
     const name = parties.find((p) => p.id === searchParams.party)?.name ?? "";
     filtered = filtered.filter((r) => r.party === name);
@@ -160,10 +176,7 @@ export default async function TdsPayableRegisterPage({
   if (searchParams.module) filtered = filtered.filter((r) => r.module === searchParams.module);
   if (searchParams.q) {
     const q = searchParams.q.toLowerCase();
-    filtered = filtered.filter(
-      (r) =>
-        String(r.voucherNo).toLowerCase().includes(q) || String(r.refNo).toLowerCase().includes(q)
-    );
+    filtered = filtered.filter((r) => String(r.refNo).toLowerCase().includes(q));
   }
   if (searchParams.tds) {
     filtered = filtered.filter((r) => String(r.tdsPct) === searchParams.tds?.trim());
@@ -174,7 +187,7 @@ export default async function TdsPayableRegisterPage({
   const tdsTotal = filtered.reduce((s, r) => s + Number(r.tdsAmt ?? 0), 0);
 
   const filters: FilterDef[] = [
-    { type: "text", key: "q", label: "Voucher / Ref No..." },
+    { type: "text", key: "q", label: "Reference No..." },
     { type: "text", key: "tds", label: "TDS % (exact)..." },
     { type: "daterange", key: "date", label: "Date" },
     {
@@ -210,24 +223,23 @@ export default async function TdsPayableRegisterPage({
       <p className="text-sm text-muted-foreground">
         Every TDS-eligible payment — challan owner side, broker slip owner side and payment
         vouchers — whether TDS was deducted or not, so a nil deduction is visibly deliberate rather
-        than simply absent. Receipt-voucher TDS never appears here; see the TDS Receivable Register.
+        than simply absent. Only hired vehicles appear; company-owned ones have no payee to deduct
+        from. Receipt-voucher TDS never appears here; see the TDS Receivable Register.
       </p>
       <FilterBar filters={filters} />
       <SimpleReport
-        title={`${filtered.length} transaction${filtered.length === 1 ? "" : "s"} — ${deductedCount} with TDS deducted, ${filtered.length - deductedCount} without — ₹${tdsTotal.toLocaleString("en-IN")} TDS — FY ${fyLabel}`}
+        title={`${filtered.length} transaction${filtered.length === 1 ? "" : "s"} — ${deductedCount} with TDS deducted, ${filtered.length - deductedCount} without — ₹${tdsTotal.toLocaleString("en-IN")} TDS`}
         columns={[
-          { key: "voucherNo", header: "Voucher No" },
           { key: "date", header: "Date", kind: "date" },
+          { key: "refNo", header: "Reference No" },
           { key: "module", header: "Module", kind: "badge" },
           { key: "party", header: "Party / Owner" },
           { key: "pan", header: "PAN" },
-          { key: "refNo", header: "Reference No" },
           { key: "invoiceAmount", header: "Bill Amount", kind: "money" },
           { key: "tdsPct", header: "TDS %" },
           { key: "tdsAmt", header: "TDS Amount", kind: "money" },
           { key: "net", header: "Net Payment", kind: "money" },
           { key: "status", header: "TDS Status", kind: "badge" },
-          { key: "fy", header: "FY" },
           { key: "remarks", header: "Remarks" },
         ]}
         rows={filtered}
