@@ -45,6 +45,8 @@ export interface ChalanRegisterRow {
   roundOff: number;
   paymentStatus: string;
   balPaidAmount: number;
+  /** live bill settlement across this chalan's LRs: NOT BILLED | UNPAID | PARTLY PAID | PAID */
+  billStatus: string;
 }
 
 const sum = (rows: ChalanRegisterRow[], k: keyof ChalanRegisterRow) =>
@@ -54,13 +56,11 @@ export function ChalanRegisterClient({
   rows,
   brokers,
   vehicles,
-  vehicleTypes,
   canDelete,
 }: {
   rows: ChalanRegisterRow[];
   brokers: { value: string; label: string }[];
   vehicles: { value: string; label: string }[];
-  vehicleTypes: string[];
   canDelete: boolean;
 }) {
   const router = useRouter();
@@ -204,6 +204,18 @@ export function ChalanRegisterClient({
         ),
     },
     {
+      accessorKey: "billStatus",
+      header: "Bill Status",
+      // derived live from voucher allocations, so it follows every receipt
+      cell: ({ row }) => {
+        const s = row.original.billStatus;
+        if (s === "NOT BILLED") return <Badge variant="outline">Not Billed</Badge>;
+        if (s === "PAID") return <Badge>Paid</Badge>;
+        if (s === "PARTLY PAID") return <Badge variant="secondary">Partly Paid</Badge>;
+        return <Badge variant="destructive">Unpaid</Badge>;
+      },
+    },
+    {
       id: "actions",
       header: "",
       enableSorting: false,
@@ -285,6 +297,8 @@ export function ChalanRegisterClient({
               { header: "Round Off", key: "roundOff", numeric: true },
               { header: "Status", accessor: (r) => (r.isFinal ? "FINAL" : "DRAFT") },
               { header: "Balance Payment", accessor: (r) => (r.paymentStatus === "PAID" ? "PAID" : "PENDING") },
+              { header: "Bill Status", key: "billStatus" },
+              { header: "Shortage", accessor: (r) => (r.shortageWt > 0 ? "YES" : "NO") },
             ]}
           />
           <Button asChild size="sm">
@@ -298,12 +312,6 @@ export function ChalanRegisterClient({
           { type: "daterange", key: "date", label: "Date" },
           { type: "combobox", key: "broker", label: "Owner / Broker / Relative", options: brokers },
           { type: "combobox", key: "vehicle", label: "Vehicle", options: vehicles },
-          {
-            type: "select",
-            key: "vtype",
-            label: "Vehicle Type",
-            options: vehicleTypes.map((t) => ({ value: t, label: t })),
-          },
           {
             type: "select",
             key: "ownership",
@@ -330,6 +338,15 @@ export function ChalanRegisterClient({
             options: [
               { value: "paid", label: "Paid" },
               { value: "pending", label: "Pending" },
+            ],
+          },
+          {
+            type: "select",
+            key: "shortage",
+            label: "Shortage",
+            options: [
+              { value: "yes", label: "Yes" },
+              { value: "no", label: "No" },
             ],
           },
         ]}

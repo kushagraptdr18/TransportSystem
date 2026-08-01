@@ -95,7 +95,7 @@ export function AdvanceAdjustGrid({
         <div className="p-2 text-sm text-muted-foreground">Loading advances...</div>
       ) : advances.length === 0 ? (
         <div className="p-2 text-sm text-muted-foreground">
-          No advance voucher with an open balance for this party.
+          No advance paid to this party with an open balance.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -104,7 +104,6 @@ export function AdvanceAdjustGrid({
               <tr className="border-b">
                 <th className="p-1 text-left">Voucher No</th>
                 <th className="p-1 text-left">Voucher Date</th>
-                <th className="p-1 text-left">Direction</th>
                 <th className="p-1 text-right">Original Amount</th>
                 <th className="p-1 text-right">Already Adjusted</th>
                 <th className="p-1 text-right">Available Balance</th>
@@ -116,9 +115,6 @@ export function AdvanceAdjustGrid({
                 <tr key={a.id} className="border-b last:border-0">
                   <td className="p-1 font-medium">{a.voucherNo}</td>
                   <td className="p-1">{formatDate(new Date(a.date))}</td>
-                  <td className="p-1 text-xs text-muted-foreground">
-                    {a.kind === "PAID" ? "Advance Paid" : "Advance Received"}
-                  </td>
                   <td className="p-1 text-right tabular-nums">{formatMoney(a.amount)}</td>
                   <td className="p-1 text-right tabular-nums">{formatMoney(a.consumed)}</td>
                   <td className="p-1 text-right tabular-nums">{formatMoney(a.available)}</td>
@@ -133,7 +129,7 @@ export function AdvanceAdjustGrid({
               ))}
               {shown.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-2 text-muted-foreground">
+                  <td colSpan={6} className="p-2 text-muted-foreground">
                     No voucher matches “{search}”.
                   </td>
                 </tr>

@@ -154,6 +154,8 @@ export async function applyManualAdvanceUses(
     refId: string;
     refNo: string;
     date?: Date;
+    /** restrict which advance directions this document may consume */
+    kinds?: string[];
     lines: { advanceId: string; amount: number }[];
   }
 ): Promise<{ advanceId: string; voucherNo: string; amount: number }[]> {
@@ -172,6 +174,11 @@ export async function applyManualAdvanceUses(
       where: { id: advanceId, firmId: opts.firmId, partyId: opts.partyId, deletedAt: null },
     });
     if (!adv) throw new Error("Advance voucher not found for this party");
+    if (opts.kinds && !opts.kinds.includes(adv.kind)) {
+      throw new Error(
+        `Voucher ${adv.voucherNo ?? advanceId} is an advance ${adv.kind.toLowerCase()} and cannot be adjusted here`
+      );
+    }
     const open = round2(Number(adv.amount) - Number(adv.consumedAmount));
     if (amount > open + 0.009) {
       throw new Error(

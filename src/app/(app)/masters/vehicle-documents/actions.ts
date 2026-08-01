@@ -35,16 +35,9 @@ export async function saveVehicleDocument(input: unknown): Promise<ActionResult>
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
       const effectiveDate = parseDateInput(data.effectiveDate);
-      let expiryDate = parseDateInput(data.expiryDate);
-      if (!expiryDate) {
-        // default from the document type's validity period (Document Master)
-        const docType = await tx.documentType.findUnique({ where: { id: data.docTypeId } });
-        const base = effectiveDate ?? entryDate;
-        if (docType?.expiryDays) {
-          expiryDate = new Date(base);
-          expiryDate.setDate(expiryDate.getDate() + docType.expiryDays);
-        }
-      }
+      // Document Master no longer carries a validity period, so the expiry date
+      // is whatever the user entered on the document itself.
+      const expiryDate = parseDateInput(data.expiryDate);
       const values = {
         docTypeId: data.docTypeId,
         vehicleId: data.vehicleId,

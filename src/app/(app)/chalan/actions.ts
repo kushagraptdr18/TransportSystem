@@ -17,6 +17,7 @@ import {
   restoreAdvanceUses,
   type OpenAdvance,
 } from "@/lib/party-advance";
+import { invoiceSettlement } from "@/lib/settlement";
 import type { PendingLrRow } from "@/components/fleet/lr-picker";
 
 /** PartyAdvanceUse refTypes — one per chalan section, so a save in one section
@@ -33,9 +34,11 @@ const ADV_USE_BALANCE = "CHALAN_BALANCE_ADJ";
 const ADV_ADJ_REF = "ADVANCE_ADJUSTMENT";
 
 /**
- * Open advance vouchers of a chalan's broker, both directions, for manual
- * voucher-wise adjustment. `section` decides which of this chalan's own uses
- * are added back to the available balance.
+ * Open advance vouchers of a chalan's broker for manual voucher-wise
+ * adjustment. Only advances we PAID the broker qualify — a chalan settles
+ * money owed to him, so an advance received from him is never adjustable here.
+ * `section` decides which of this chalan's own uses are added back to the
+ * available balance.
  */
 export async function getBrokerAdvances(
   brokerId: string,
@@ -48,6 +51,7 @@ export async function getBrokerAdvances(
     listOpenAdvances(tx, {
       firmId: session.firmId,
       partyId: brokerId,
+      kinds: ["PAID"],
       includeRefType: section === "ADVANCE" ? ADV_USE_ADVANCE : ADV_USE_BALANCE,
       includeRefId: chalanId ?? undefined,
     })
@@ -399,6 +403,7 @@ export async function saveChalanAdvances(
         tenantId: session.tenantId,
         firmId: chalan.firmId,
         partyId: chalan.brokerId,
+        kinds: ["PAID"],
         refType: ADV_USE_ADVANCE,
         refId: chalanId,
         refNo: chalan.chalanNo,
@@ -680,6 +685,7 @@ export async function saveBalancePayment(
         tenantId: session.tenantId,
         firmId: chalan.firmId,
         partyId: chalan.brokerId,
+        kinds: ["PAID"],
         refType: ADV_USE_BALANCE,
         refId: chalan.id,
         refNo: chalan.chalanNo,
@@ -847,11 +853,20 @@ export async function getChalanStatus(
     const cityName = (id: string | null) =>
       id ? cities.find((c) => c.id === id)?.name ?? "" : "";
 
+    // Invoice.balance is frozen at bill-creation time; the real position comes
+    // from live voucher allocations, so a receipt entered later shows here.
+    const settlement = await invoiceSettlement(tx, {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      invoices: chalan.lrs.flatMap(({ lr }) => lr.invoiceLrs.map((il) => il.invoice)),
+    });
+
     const lrRows = chalan.lrs.map(({ lr }) => {
       const inv = lr.invoiceLrs[0]?.invoice ?? null;
-      const invAmount = inv ? toNum(inv.netTotal) : 0;
-      const invReceived = inv ? toNum(inv.advance) : 0;
-      const invBalance = inv ? toNum(inv.balance) : 0;
+      const s = inv ? settlement.get(inv.id) : undefined;
+      const invAmount = s?.net ?? 0;
+      const invReceived = s?.received ?? 0;
+      const invBalance = s?.outstanding ?? 0;
       return {
         lrNo: lr.lrNo,
         lrDate: lr.lrDate.toISOString(),
@@ -866,11 +881,11 @@ export async function getChalanStatus(
         invoiceAmount: invAmount,
         invoiceReceived: invReceived,
         invoiceBalance: invBalance,
-        invoiceStatus: !inv
+        invoiceStatus: !s
           ? "Not Billed"
-          : invBalance <= 0
+          : s.status === "PAID"
             ? "Paid"
-            : invReceived > 0
+            : s.status === "PARTLY PAID"
               ? "Partially Paid"
               : "Pending",
       };

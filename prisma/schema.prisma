@@ -492,7 +492,6 @@ model DocumentType {
   description  String?
   showReminder Boolean @default(true)
   reminderDays Int     @default(30) // days before expiry to start reminding
-  expiryDays   Int     @default(365) // validity period: document expires this many days after issue
 
   registrations VehicleDocument[]
 

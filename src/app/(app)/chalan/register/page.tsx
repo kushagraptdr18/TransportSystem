@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
+import { invoiceSettlement } from "@/lib/settlement";
 import { ChalanRegisterClient, type ChalanRegisterRow } from "./register-client";
 
 export const dynamic = "force-dynamic";
@@ -11,21 +12,17 @@ export default async function ChalanRegisterPage({
   searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
-  const { date_from, date_to, q, broker, vehicle, status, payment, vtype, ownership } = searchParams;
+  const { date_from, date_to, q, broker, vehicle, status, payment, ownership, shortage } =
+    searchParams;
 
-  const [rows, brokers, vehicles] = await withTenant(session.tenantId, async (tx) => {
-    // vehicle-based filters (type / ownership) resolve to a vehicle-id list
+  const [rows, brokers, vehicles, billStatusByChalan] = await withTenant(
+    session.tenantId,
+    async (tx) => {
+    // ownership resolves to a vehicle-id list (it also covers vehicle type)
     const allVehicles = await tx.vehicle.findMany({ orderBy: { number: "asc" } });
-    const vehicleIdFilter =
-      vtype || ownership
-        ? allVehicles
-            .filter(
-              (v) =>
-                (!vtype || (v.vehicleType ?? "") === vtype) &&
-                (!ownership || v.ownershipType === ownership)
-            )
-            .map((v) => v.id)
-        : null;
+    const vehicleIdFilter = ownership
+      ? allVehicles.filter((v) => v.ownershipType === ownership).map((v) => v.id)
+      : null;
 
     const chalans = await tx.chalan.findMany({
       where: {
@@ -50,8 +47,16 @@ export default async function ChalanRegisterPage({
           : payment === "pending"
             ? { paymentStatus: { not: "PAID" } }
             : {}),
+        // shortage weight lives on the LRs' PODs, so filter through the relation
+        ...(shortage === "yes"
+          ? { lrs: { some: { lr: { pods: { some: { shortageWt: { gt: 0 } } } } } } }
+          : shortage === "no"
+            ? { lrs: { none: { lr: { pods: { some: { shortageWt: { gt: 0 } } } } } } }
+            : {}),
       },
-      include: { lrs: { include: { lr: { include: { pods: true } } } } },
+      include: {
+        lrs: { include: { lr: { include: { pods: true, invoiceLrs: { include: { invoice: true } } } } } },
+      },
       orderBy: { chalanDate: "desc" },
     });
     const brokers = await tx.party.findMany({
@@ -59,8 +64,44 @@ export default async function ChalanRegisterPage({
       orderBy: { name: "asc" },
     });
     const vehicles = allVehicles.filter((v) => v.isActive);
-    return [chalans, brokers, vehicles] as const;
-  });
+
+    // Bill status must reflect receipts entered after the bill was raised, so
+    // it is derived from live voucher allocations, never from Invoice.balance
+    // (which is frozen at bill-creation time).
+    const invoices = Array.from(
+      new Map(
+        chalans
+          .flatMap((c) => c.lrs.flatMap((l) => l.lr.invoiceLrs.map((il) => il.invoice)))
+          .map((i) => [i.id, i])
+      ).values()
+    );
+    const settlement = await invoiceSettlement(tx, {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      invoices,
+    });
+    const billStatusByChalan = new Map<string, string>();
+    for (const c of chalans) {
+      const invs = Array.from(
+        new Set(c.lrs.flatMap((l) => l.lr.invoiceLrs.map((il) => il.invoiceId)))
+      );
+      if (invs.length === 0) {
+        billStatusByChalan.set(c.id, "NOT BILLED");
+        continue;
+      }
+      const states = invs.map((id) => settlement.get(id)?.status ?? "UNPAID");
+      billStatusByChalan.set(
+        c.id,
+        states.every((s) => s === "PAID")
+          ? "PAID"
+          : states.every((s) => s === "UNPAID")
+            ? "UNPAID"
+            : "PARTLY PAID"
+      );
+    }
+    return [chalans, brokers, vehicles, billStatusByChalan] as const;
+    }
+  );
 
   const brokerName = (id: string) => brokers.find((b) => b.id === id)?.name ?? "";
   const vehicleNo = (id: string) => vehicles.find((v) => v.id === id)?.number ?? "";
@@ -88,18 +129,14 @@ export default async function ChalanRegisterPage({
     roundOff: Number(c.balRoundOff),
     paymentStatus: c.paymentStatus,
     balPaidAmount: Number(c.balPaidAmount),
+    billStatus: billStatusByChalan.get(c.id) ?? "NOT BILLED",
   }));
-
-  const vehicleTypes = Array.from(
-    new Set(vehicles.map((v) => v.vehicleType).filter((t): t is string => Boolean(t)))
-  ).sort();
 
   return (
     <ChalanRegisterClient
       rows={data}
       brokers={brokers.map((b) => ({ value: b.id, label: b.name }))}
       vehicles={vehicles.map((v) => ({ value: v.id, label: v.number }))}
-      vehicleTypes={vehicleTypes}
       canDelete={session.role === "ADMIN" || session.role === "OWNER"}
     />
   );
