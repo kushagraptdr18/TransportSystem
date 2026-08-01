@@ -80,7 +80,7 @@ export default async function VouchersPage() {
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="text-xl font-semibold">Voucher Entry</h1>
+      {/* the header lives in VoucherEntry — its subtitle follows the tab */}
       <VoucherEntry
         peekNumbers={peekNumbers}
         partyOptions={partyOptions}

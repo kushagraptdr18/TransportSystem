@@ -32,8 +32,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/use-toast";
+import { PageHeader } from "@/components/app/page-header";
+import { TabNav } from "@/components/app/tab-nav";
 import { DateInput } from "@/components/data/date-input";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import {
@@ -333,18 +334,19 @@ export function VoucherEntry({
 
   return (
     <div className="space-y-4">
-      {/* ---------- type selector ---------- */}
-      <Tabs value={type} onValueChange={(v) => pickType(v as VType)}>
-        <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
-          {(Object.keys(TYPE_META) as VType[]).map((t) => (
-            <TabsTrigger key={t} value={t} className="flex items-center gap-2 py-2">
-              {TYPE_META[t].icon}
-              {TYPE_META[t].title} Voucher
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-      <p className="text-xs text-muted-foreground">{TYPE_META[type].hint}</p>
+      {/* ---------- type selector ----------
+          client-state tabs, not links: switching type swaps a live form, and a
+          URL change would remount it and lose whatever was typed */}
+      <PageHeader title="Voucher Entry" subtitle={TYPE_META[type].hint} />
+      <TabNav
+        tabs={(Object.keys(TYPE_META) as VType[]).map((t) => ({
+          value: t,
+          label: `${TYPE_META[t].title} Voucher`,
+          icon: TYPE_META[t].icon,
+        }))}
+        active={type}
+        onSelect={(v) => pickType(v as VType)}
+      />
 
       {/* ---------- header ---------- */}
       <Card>
