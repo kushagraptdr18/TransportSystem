@@ -2,14 +2,8 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import {
-  ArrowLeftRight,
-  BookOpen,
-  Download,
-  Trash2,
-  Upload,
-  Wand2,
-} from "lucide-react";
+import { Trash2, Wand2 } from "lucide-react";
+import { TYPE_META, type VType } from "./voucher-types";
 import { formatDate, formatMoney, parseDdMmYyyy } from "@/lib/utils";
 import { round2 } from "@/lib/calc/tds";
 import { Button } from "@/components/ui/button";
@@ -33,8 +27,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/components/ui/use-toast";
-import { PageHeader } from "@/components/app/page-header";
-import { TabNav } from "@/components/app/tab-nav";
 import { DateInput } from "@/components/data/date-input";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import {
@@ -52,7 +44,7 @@ import {
  * actually moved). Unallocated money automatically becomes a party advance.
  */
 
-export type VType = "RECEIPT" | "PAYMENT" | "JOURNAL" | "CONTRA";
+export type { VType };
 
 export interface RecentVoucher {
   id: string;
@@ -91,50 +83,29 @@ function toIso(text: string): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-const TYPE_META: Record<VType, { title: string; hint: string; icon: React.ReactNode }> = {
-  RECEIPT: {
-    title: "Receipt",
-    hint: "Money IN — from any ledger (party, broker, owner, driver, staff...)",
-    icon: <Download className="h-4 w-4" />,
-  },
-  PAYMENT: {
-    title: "Payment",
-    hint: "Money OUT — to any ledger (owner, supplier, broker, driver, staff...)",
-    icon: <Upload className="h-4 w-4" />,
-  },
-  JOURNAL: {
-    title: "Journal",
-    hint: "Ledger ↔ ledger — debit/credit notes, transfers, write-offs (no cash/bank)",
-    icon: <BookOpen className="h-4 w-4" />,
-  },
-  CONTRA: {
-    title: "Contra",
-    hint: "Bank ↔ Cash / Bank ↔ Bank internal transfer",
-    icon: <ArrowLeftRight className="h-4 w-4" />,
-  },
-};
-
 export function VoucherEntry({
   peekNumbers,
   partyOptions,
   bankOptions,
   vehicleOptions,
   recent,
+  type,
 }: {
   peekNumbers: Record<VType, string>;
   partyOptions: MasterOption[];
   bankOptions: MasterOption[];
   vehicleOptions: MasterOption[];
   recent: Record<VType, RecentVoucher[]>;
+  /** the voucher type being entered — the page owns the tabs */
+  type: VType;
 }) {
   const router = useRouter();
   const { toast } = useToast();
-  const [type, setType] = React.useState<VType>("RECEIPT");
   const [saving, setSaving] = React.useState(false);
   const [loadingRefs, setLoadingRefs] = React.useState(false);
 
   // ---- header state ----
-  const [voucherNo, setVoucherNo] = React.useState(peekNumbers.RECEIPT ?? "1");
+  const [voucherNo, setVoucherNo] = React.useState(peekNumbers[type] ?? "1");
   const [dateText, setDateText] = React.useState(formatDate(new Date()));
   const [mode, setMode] = React.useState<"CASH" | "BANK">("CASH");
   const [bankPartyId, setBankPartyId] = React.useState<string | null>(null);
@@ -176,10 +147,6 @@ export function VoucherEntry({
     [peekNumbers]
   );
 
-  const pickType = (t: VType) => {
-    setType(t);
-    resetAll(t);
-  };
 
   // ---- pending references for the settlement grid ----
   const loadRefs = React.useCallback(
@@ -334,19 +301,6 @@ export function VoucherEntry({
 
   return (
     <div className="space-y-4">
-      {/* ---------- type selector ----------
-          client-state tabs, not links: switching type swaps a live form, and a
-          URL change would remount it and lose whatever was typed */}
-      <PageHeader title="Voucher Entry" subtitle={TYPE_META[type].hint} />
-      <TabNav
-        tabs={(Object.keys(TYPE_META) as VType[]).map((t) => ({
-          value: t,
-          label: `${TYPE_META[t].title} Voucher`,
-          icon: TYPE_META[t].icon,
-        }))}
-        active={type}
-        onSelect={(v) => pickType(v as VType)}
-      />
 
       {/* ---------- header ---------- */}
       <Card>

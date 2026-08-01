@@ -2,15 +2,52 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { peekDocNumber } from "@/lib/sequences";
 import { getPartyOptions, getBankOptions, getVehicleOptions } from "@/lib/lookups";
+import { BookText } from "lucide-react";
+import { PageHeader } from "@/components/app/page-header";
+import { TabNav, type TabDef } from "@/components/app/tab-nav";
 import { VoucherEntry, RecentVoucher } from "@/components/accounts/voucher-entry";
+import { TYPE_META } from "@/components/accounts/voucher-types";
 import { VoucherType, DocNumberType } from "@prisma/client";
+import { VoucherRegisterTab } from "./register-tab";
 
 export const dynamic = "force-dynamic";
 
 const TYPES: VoucherType[] = ["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL"];
+const BASE = "/accounts/vouchers";
 
-export default async function VouchersPage() {
+const TABS: TabDef[] = [
+  ...TYPES.map((t) => ({
+    value: t,
+    label: `${TYPE_META[t].title} Voucher`,
+    icon: TYPE_META[t].icon,
+  })),
+  { value: "REGISTER", label: "Voucher Register", icon: <BookText className="h-4 w-4" /> },
+];
+
+export default async function VouchersPage({
+  searchParams,
+}: {
+  searchParams: Record<string, string | undefined>;
+}) {
   const session = requireSession();
+
+  const tab = TABS.some((t) => t.value === searchParams.tab)
+    ? (searchParams.tab as string)
+    : "RECEIPT";
+
+  // the register is a peer tab, not an entry form — nothing else to load
+  if (tab === "REGISTER") {
+    return (
+      <div className="space-y-4 p-4">
+        <PageHeader
+          title="Vouchers"
+          subtitle="Every receipt, payment, journal and contra voucher entered, with its references and settlement."
+        />
+        <TabNav tabs={TABS} active={tab} basePath={BASE} />
+        <VoucherRegisterTab searchParams={searchParams} />
+      </div>
+    );
+  }
 
   const [partyOptions, bankOptions, vehicleOptions] = await Promise.all([
     getPartyOptions(),
@@ -78,10 +115,16 @@ export default async function VouchersPage() {
     return { peekNumbers, recent };
   });
 
+  const vType = tab as VoucherType;
   return (
     <div className="space-y-4 p-4">
-      {/* the header lives in VoucherEntry — its subtitle follows the tab */}
+      <PageHeader title="Vouchers" subtitle={TYPE_META[vType].hint} />
+      <TabNav tabs={TABS} active={tab} basePath={BASE} />
+      {/* switching type already reset the form, so a link-driven tab loses
+          nothing that the old client-state selector did not */}
       <VoucherEntry
+        key={vType}
+        type={vType}
         peekNumbers={peekNumbers}
         partyOptions={partyOptions}
         bankOptions={bankOptions}

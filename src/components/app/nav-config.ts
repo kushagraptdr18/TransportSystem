@@ -105,19 +105,18 @@ export const NAV: NavGroup[] = [
     label: "Accounts",
     icon: Wallet,
     items: [
-      { label: "Vouchers (Receipt / Payment / Contra)", href: "/accounts/vouchers" },
-      { label: "Voucher Register", href: "/accounts/vouchers/register" },
+      // entry types and the register are tabs of one screen
+      { label: "Vouchers", href: "/accounts/vouchers" },
       { label: "Cash Book", href: "/accounts/cash-book" },
       { label: "Bank Book", href: "/accounts/bank-book" },
       { label: "Ledger Summary", href: "/accounts/ledger" },
-      { label: "Outstanding (Receivables)", href: "/accounts/outstanding" },
-      { label: "Outstanding Payables", href: "/accounts/payables" },
-      // payable and receivable are tabs of one screen
+      // receivable and payable are tabs of one screen
+      { label: "Outstanding Register", href: "/accounts/outstanding" },
       { label: "TDS Register", href: "/accounts/tds" },
       { label: "Advance Register", href: "/accounts/advances" },
       { label: "Shortage Ledger", href: "/accounts/shortage" },
-      { label: "Staff Payroll & Advances", href: "/accounts/staff" },
-      { label: "Office Income & Expense", href: "/accounts/office" },
+      // office transactions and staff payroll are tabs of one screen
+      { label: "Office Management", href: "/accounts/office" },
       { label: "Profit & Loss", href: "/accounts/pnl" },
     ],
   },
