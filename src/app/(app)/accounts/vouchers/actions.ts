@@ -11,6 +11,7 @@ import { syncSequenceTo } from "@/lib/sequences";
 import { postLedger, reverseLedger, LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
 import { adjustmentsTotal, applyAdjustments, ensureAdjustmentHead } from "@/lib/adjust-engine";
+import { payableSettlement } from "@/lib/settlement";
 
 const DOC_TYPE_BY_VOUCHER: Record<VoucherType, DocNumberType> = {
   RECEIPT: "VOUCHER_RECEIPT",
@@ -179,11 +180,34 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
             const invs = await tx.invoice.findMany({ where: { id: { in: refIds } } });
             invs.forEach((i) => gross.set(i.id, round2(Number(i.grandTotal) - Number(i.advance))));
           } else if (refType === "FREIGHT_CHALLAN") {
+            // net off what the chalan's own balance-payment screen already
+            // settled, else the voucher could pay the same balance twice
             const cs = await tx.chalan.findMany({ where: { id: { in: refIds } } });
-            cs.forEach((c) => gross.set(c.id, Number(c.balance)));
+            cs.forEach((c) =>
+              gross.set(
+                c.id,
+                round2(
+                  Number(c.balance) -
+                    Number(c.balPaidAmount) -
+                    Number(c.balShortage) -
+                    Number(c.balRoundOff) -
+                    Number(c.balAdvanceAdjusted)
+                )
+              )
+            );
           } else if (refType === "BROKER_ENTRY") {
             const ss = await tx.brokerSlip.findMany({ where: { id: { in: refIds } } });
-            ss.forEach((s) => gross.set(s.id, Number(s.vBalance)));
+            ss.forEach((s) =>
+              gross.set(
+                s.id,
+                round2(
+                  Number(s.vBalance) -
+                    Number(s.vPaidAmount) -
+                    Number(s.vShortage) -
+                    Number(s.vRoundOff)
+                )
+              )
+            );
           } else if (refType === "LORRY_HIRE") {
             const hs = await tx.hireSlip.findMany({ where: { id: { in: refIds } } });
             hs.forEach((h) => gross.set(h.id, Number(h.balance)));
@@ -193,7 +217,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
           }
           for (const r of rows) {
             const pending = round2((gross.get(r.refId) ?? Infinity) - (already.get(r.refId) ?? 0));
-            const settle = round2(r.amount + r.tdsAmt + r.deduction);
+            const settle = round2(r.amount + r.tdsAmt + r.deduction + r.otherAmt);
             if (settle > pending + 0.01) {
               throw new Error(
                 `Ref ${r.refNo}: adjustment ${settle} exceeds the pending amount ${pending}. Duplicate or over-settlement is not allowed.`
@@ -527,9 +551,24 @@ export async function getAllocationCandidates(input: {
         where: { ...scope, isFinal: true, ...(partyId ? { brokerId: partyId } : {}) },
         orderBy: { chalanDate: "asc" },
       });
-      const paid = await allocatedByRef(tx, moduleLink, chalans.map((c) => c.id), voucherId);
+      // a chalan settled on its own balance-payment screen must not reappear
+      // here as fully outstanding — both settlement paths are counted
+      const pos = await payableSettlement(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: moduleLink,
+        excludeVoucherId: voucherId,
+        docs: chalans.map((c) => ({
+          id: c.id,
+          balance: Number(c.balance),
+          ownPaid: Number(c.balPaidAmount),
+          ownShortage: Number(c.balShortage),
+          ownRoundOff: Number(c.balRoundOff),
+          ownAdvanceAdjusted: Number(c.balAdvanceAdjusted),
+        })),
+      });
       for (const c of chalans) {
-        const outstanding = round2(Number(c.balance) - (paid.get(c.id) ?? 0));
+        const outstanding = pos.get(c.id)?.outstanding ?? 0;
         if (outstanding > 0)
           out.push({
             refId: c.id,
@@ -549,9 +588,22 @@ export async function getAllocationCandidates(input: {
         },
         orderBy: { slipDate: "asc" },
       });
-      const paid = await allocatedByRef(tx, moduleLink, slips.map((s) => s.id), voucherId);
+      // same for the owner side of a broker slip
+      const pos = await payableSettlement(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: moduleLink,
+        excludeVoucherId: voucherId,
+        docs: slips.map((s) => ({
+          id: s.id,
+          balance: Number(s.vBalance),
+          ownPaid: Number(s.vPaidAmount),
+          ownShortage: Number(s.vShortage),
+          ownRoundOff: Number(s.vRoundOff),
+        })),
+      });
       for (const s of slips) {
-        const outstanding = round2(Number(s.vBalance) - (paid.get(s.id) ?? 0));
+        const outstanding = pos.get(s.id)?.outstanding ?? 0;
         if (outstanding > 0)
           out.push({
             refId: s.id,

@@ -17,7 +17,10 @@ import {
   restoreAdvanceUses,
   type OpenAdvance,
 } from "@/lib/party-advance";
-import { invoiceSettlement } from "@/lib/settlement";
+import { invoiceSettlement, payableSettlement } from "@/lib/settlement";
+
+/** Money figure for error messages. */
+const formatOpen = (n: number) => (Math.round(n * 100) / 100).toLocaleString("en-IN");
 import type { PendingLrRow } from "@/components/fleet/lr-picker";
 
 /** PartyAdvanceUse refTypes — one per chalan section, so a save in one section
@@ -136,6 +139,7 @@ const advanceSchema = z.object({
   supplierName: z.string().optional().nullable(),
   bankName: z.string().optional().nullable(),
   bankPartyId: z.string().optional().nullable(),
+  headId: z.string().optional().nullable(),
   dieselQty: z.number().optional().nullable(),
   dieselRate: z.number().optional().nullable(),
   amount: z.number().default(0),
@@ -457,7 +461,8 @@ export async function saveChalanAdvances(
                 : null,
             supplierName: r.supplierName ?? null,
             bankName: r.bankName ?? null,
-            bankPartyId: r.bankPartyId ?? null,
+            bankPartyId: r.type === "BANK" ? r.bankPartyId ?? null : null,
+            headId: r.type === "BANK" || r.type === "ADVANCE_ADJ" ? null : r.headId ?? null,
             dieselQty: r.dieselQty ?? null,
             dieselRate: r.dieselRate ?? null,
             amount: r.amount,
@@ -474,7 +479,15 @@ export async function saveChalanAdvances(
       // the credit side depends on the advance type:
       //   BANK  -> the selected bank party (bank book)
       //   CASH  -> the firm's cash party (cash book)
-      //   other -> a per-type account head (diesel / toll / tyre / ... payable)
+      //   head  -> the Income/Expense head the user chose
+      //
+      // The head case is an expense incurred ON THE OWNER'S BEHALF: the firm
+      // already booked "Diesel Expense Dr / Supplier Cr" when it bought the
+      // diesel, so adjusting it against the owner posts "Owner Dr / Diesel
+      // Expense Cr". The expense head nets to zero and only the supplier stays
+      // payable until the supplier is actually paid. Crediting an auto-created
+      // "<Type> Advance (Chalan)" head instead — as this used to — left the
+      // real expense sitting open forever.
       await reverseLedger(tx, "CHALAN_ADVANCE", chalanId);
       const cashParty = await tx.party.findFirst({
         where: { ledgerGroup: "CASH", isActive: true },
@@ -482,6 +495,7 @@ export async function saveChalanAdvances(
         select: { id: true },
       });
       const entries: Parameters<typeof postLedger>[2] = [];
+      const headLabel = new Map<(typeof rows)[number], string>();
       for (const r of rows) {
         if (r.amount <= 0) continue;
         // an adjustment posts nothing: the advance voucher already debited the
@@ -492,7 +506,15 @@ export async function saveChalanAdvances(
           creditLeg = r.bankPartyId ? { partyId: r.bankPartyId } : null;
         } else if (r.type === "CASH" && cashParty) {
           creditLeg = { partyId: cashParty.id };
+        } else if (r.headId) {
+          const head = await tx.accountHead.findFirst({ where: { id: r.headId } });
+          if (!head) {
+            return { ok: false as const, error: "Selected income / expense head not found" };
+          }
+          headLabel.set(r, head.name);
+          creditLeg = { accountHeadId: head.id };
         } else {
+          // legacy rows with no head chosen keep the old per-type fallback
           const label = r.type.charAt(0) + r.type.slice(1).toLowerCase().replace(/_/g, " ");
           const headId = await ensureAccountHead(
             tx,
@@ -504,12 +526,18 @@ export async function saveChalanAdvances(
         }
         if (!creditLeg) continue;
         const date = r.date ? new Date(r.date) : chalan.chalanDate;
+        const what =
+          r.type === "BANK"
+            ? "Bank"
+            : r.type === "CASH"
+              ? "Cash"
+              : headLabel.get(r) ?? r.type.replace(/_/g, " ");
         const common = {
           date,
           refType: "CHALAN_ADVANCE",
           refId: chalanId,
           refNo: chalan.chalanNo,
-          narration: `${r.type === "BANK" ? "Bank" : r.type === "CASH" ? "Cash" : r.type.replace(/_/g, " ")} advance against chalan ${chalan.chalanNo}${r.remarks ? " — " + r.remarks : ""}`,
+          narration: `${what} adjusted against chalan ${chalan.chalanNo}${r.remarks ? " — " + r.remarks : ""}`,
         };
         entries.push(
           { ...common, ...creditLeg, side: "CREDIT", amount: r.amount },
@@ -690,10 +718,35 @@ export async function saveBalancePayment(
           error: `POD is only ${podDone}/${operational.length} confirmed — all LRs must have a confirmed POD before balance payment.`,
         };
       }
+      // a Payment Voucher may already have settled part of this chalan — the
+      // two modules share one outstanding, so only the remainder is settleable
+      const pos = await payableSettlement(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: "FREIGHT_CHALLAN",
+        docs: [
+          {
+            id: chalan.id,
+            balance: toNum(chalan.balance),
+            // this action replaces the chalan-side settlement, so exclude it
+            ownPaid: 0,
+            ownShortage: 0,
+            ownRoundOff: 0,
+          },
+        ],
+      });
+      const viaVoucher = pos.get(chalan.id)?.voucherSettled ?? 0;
       const settleable =
-        Math.round((toNum(chalan.balance) - data.roundOff - data.shortage) * 100) / 100;
+        Math.round(
+          (toNum(chalan.balance) - viaVoucher - data.roundOff - data.shortage) * 100
+        ) / 100;
       if (settleable < 0) {
-        return { ok: false as const, error: "Round-off + shortage exceed the balance." };
+        return {
+          ok: false as const,
+          error: viaVoucher > 0
+            ? `Round-off + shortage exceed the balance still open (${formatOpen(toNum(chalan.balance) - viaVoucher)} after ${formatOpen(viaVoucher)} settled by voucher).`
+            : "Round-off + shortage exceed the balance.",
+        };
       }
       const paymentDate = new Date(`${data.paymentDate}T00:00:00`);
 
@@ -862,12 +915,21 @@ export interface ChalanStatusData {
   advanceTotal: number;
   grandTotal: number;
   balance: number;
+  /** settled through Payment Vouchers allocated to this chalan */
+  voucherSettled: number;
+  /** balance still open across BOTH settlement paths */
+  outstanding: number;
   paymentStatus: string;
   balPaidAmount: number;
   balPaymentDate: string | null;
   balPaymentMode: string;
   balRoundOff: number;
+  /** shortage across both settlement paths (chalan screen + payment voucher) */
   balShortage: number;
+  /** deductions a Payment Voucher applied to this chalan */
+  voucherTds: number;
+  voucherShortage: number;
+  voucherOther: number;
   balRemarks: string;
   payments: {
     date: string;
@@ -916,6 +978,23 @@ export async function getChalanStatus(
       id ? parties.find((p) => p.id === id)?.name ?? "" : "";
     const cityName = (id: string | null) =>
       id ? cities.find((c) => c.id === id)?.name ?? "" : "";
+
+    // combined position across the chalan screen and any Payment Voucher
+    const position = (await payableSettlement(tx, {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      refType: "FREIGHT_CHALLAN",
+      docs: [
+        {
+          id: chalan.id,
+          balance: toNum(chalan.balance),
+          ownPaid: toNum(chalan.balPaidAmount),
+          ownShortage: toNum(chalan.balShortage),
+          ownRoundOff: toNum(chalan.balRoundOff),
+          ownAdvanceAdjusted: toNum(chalan.balAdvanceAdjusted),
+        },
+      ],
+    })).get(chalan.id)!;
 
     // Invoice.balance is frozen at bill-creation time; the real position comes
     // from live voucher allocations, so a receipt entered later shows here.
@@ -1000,12 +1079,20 @@ export async function getChalanStatus(
         advanceTotal: toNum(chalan.advanceTotal),
         grandTotal: toNum(chalan.grandTotal),
         balance: toNum(chalan.balance),
-        paymentStatus: chalan.paymentStatus,
+        voucherSettled: position.voucherSettled,
+        outstanding: position.outstanding,
+        // the chalan is settled when nothing is open, whichever module paid it
+        paymentStatus: position.outstanding <= 0.009 ? "PAID" : chalan.paymentStatus,
         balPaidAmount: toNum(chalan.balPaidAmount),
         balPaymentDate: chalan.balPaymentDate ? chalan.balPaymentDate.toISOString() : null,
         balPaymentMode: chalan.balPaymentMode ?? "",
         balRoundOff: toNum(chalan.balRoundOff),
-        balShortage: toNum(chalan.balShortage),
+        // the voucher's shortage is the chalan's shortage — one figure, shown
+        // identically from either module
+        balShortage: toNum(chalan.balShortage) + position.voucherShortage,
+        voucherTds: position.voucherTds,
+        voucherShortage: position.voucherShortage,
+        voucherOther: position.voucherOther,
         balRemarks: chalan.balRemarks ?? "",
         payments: ledger.map((e) => ({
           date: e.date.toISOString(),

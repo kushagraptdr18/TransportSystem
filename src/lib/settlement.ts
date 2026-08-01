@@ -44,6 +44,101 @@ export async function settledByRef(
   return map;
 }
 
+/**
+ * Payable documents (chalan / broker-slip owner side) can be settled two ways:
+ * from the document's own balance-payment screen, or by allocating a Payment
+ * Voucher against it. Each path was blind to the other, so a document paid one
+ * way still showed fully outstanding in the other. Both are summed here, and
+ * every consumer must use this rather than the document's stored balance.
+ */
+export interface PayableDoc {
+  id: string;
+  /** payable before any settlement */
+  balance: number;
+  /** settled from the document's own balance-payment screen */
+  ownPaid: number;
+  ownShortage: number;
+  ownRoundOff: number;
+  /** advance vouchers adjusted against it there */
+  ownAdvanceAdjusted?: number;
+}
+
+export interface PayablePosition {
+  balance: number;
+  ownSettled: number;
+  voucherSettled: number;
+  /** voucher-side breakdown, so the document can show the same figures */
+  voucherPaid: number;
+  voucherTds: number;
+  voucherShortage: number;
+  voucherOther: number;
+  settled: number;
+  outstanding: number;
+  status: SettlementStatus;
+}
+
+export async function payableSettlement(
+  tx: Tx,
+  opts: {
+    firmId: string;
+    fyId: string;
+    refType: ModuleLink;
+    docs: PayableDoc[];
+    excludeVoucherId?: string | null;
+  }
+): Promise<Map<string, PayablePosition>> {
+  const ids = opts.docs.map((d) => d.id);
+  const allocations = ids.length
+    ? await tx.voucherAllocation.findMany({
+        where: {
+          refType: opts.refType,
+          refId: { in: ids },
+          voucher: {
+            deletedAt: null,
+            firmId: opts.firmId,
+            fyId: opts.fyId,
+            ...(opts.excludeVoucherId ? { id: { not: opts.excludeVoucherId } } : {}),
+          },
+        },
+        select: { refId: true, amount: true, tdsAmt: true, deduction: true, otherAmt: true },
+      })
+    : [];
+  const zero = () => ({ paid: 0, tds: 0, shortage: 0, other: 0 });
+  const byRef = new Map<string, ReturnType<typeof zero>>();
+  for (const a of allocations) {
+    const acc = byRef.get(a.refId) ?? zero();
+    // money paid plus every approved deduction settles the payable
+    acc.paid = round2(acc.paid + Number(a.amount));
+    acc.tds = round2(acc.tds + Number(a.tdsAmt));
+    acc.shortage = round2(acc.shortage + Number(a.deduction));
+    acc.other = round2(acc.other + Number(a.otherAmt));
+    byRef.set(a.refId, acc);
+  }
+  const out = new Map<string, PayablePosition>();
+  for (const d of opts.docs) {
+    const ownSettled = round2(
+      d.ownPaid + d.ownShortage + d.ownRoundOff + (d.ownAdvanceAdjusted ?? 0)
+    );
+    const v = byRef.get(d.id) ?? zero();
+    const voucherSettled = round2(v.paid + v.tds + v.shortage + v.other);
+    const settled = round2(ownSettled + voucherSettled);
+    const outstanding = round2(d.balance - settled);
+    out.set(d.id, {
+      balance: d.balance,
+      ownSettled,
+      voucherSettled,
+      voucherPaid: v.paid,
+      voucherTds: v.tds,
+      voucherShortage: v.shortage,
+      voucherOther: v.other,
+      settled,
+      outstanding,
+      status: settlementStatus(d.balance, outstanding),
+    });
+  }
+  return out;
+}
+
 export function settlementStatus(total: number, outstanding: number): SettlementStatus {
   if (outstanding <= 0.009) return "PAID";
   return outstanding < total - 0.009 ? "PARTLY PAID" : "UNPAID";

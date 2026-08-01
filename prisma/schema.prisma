@@ -741,6 +741,7 @@ model ChalanAdvance {
   supplierName String?
   bankName     String?
   bankPartyId  String? // BANK-group party; posts to the bank book when set
+  headId       String? // Income/Expense head this advance was settled against
   dieselQty    Decimal?    @db.Decimal(12, 3)
   dieselRate   Decimal?    @db.Decimal(12, 2)
   amount       Decimal     @default(0) @db.Decimal(14, 2)

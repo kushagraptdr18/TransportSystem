@@ -517,18 +517,25 @@ export function ChalanRegisterClient({
                         : "—"
                     }
                   />
-                  {status.paymentStatus === "PAID" && (status.balRoundOff > 0 || status.balShortage > 0) && (
+                  {(status.balRoundOff > 0 || status.balShortage > 0) && (
                     <Line
                       label="Round Off / Shortage"
                       value={`${formatMoney(status.balRoundOff)} / ${formatMoney(status.balShortage)}`}
                     />
                   )}
-                  <Line
-                    label="Balance Pending"
-                    value={
-                      status.paymentStatus === "PAID" ? formatMoney(0) : formatMoney(status.balance)
-                    }
-                  />
+                  {/* a Payment Voucher settles the same outstanding, so its
+                      figures belong here too */}
+                  {status.voucherSettled > 0 && (
+                    <Line
+                      label="Settled by Payment Voucher"
+                      value={`${formatMoney(status.voucherSettled)}${
+                        status.voucherTds || status.voucherShortage || status.voucherOther
+                          ? ` (TDS ${formatMoney(status.voucherTds)} · shortage ${formatMoney(status.voucherShortage)} · other ${formatMoney(status.voucherOther)})`
+                          : ""
+                      }`}
+                    />
+                  )}
+                  <Line label="Balance Pending" value={formatMoney(status.outstanding)} />
                   <Line
                     label="Final Settlement"
                     value={status.paymentStatus === "PAID" ? "Settled (PAID)" : "Pending"}

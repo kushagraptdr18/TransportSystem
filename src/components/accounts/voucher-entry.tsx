@@ -286,8 +286,10 @@ export function VoucherEntry({
                 billAmt: r.billAmt,
                 tdsPct: r.tdsPct,
                 tdsAmt: r.tds,
-                deduction: round2(r.shortage + r.other),
-                otherAmt: 0,
+                // kept apart so the source document can show shortage and
+                // other deduction as the distinct figures they are
+                deduction: r.shortage,
+                otherAmt: r.other,
                 amount: r.receive,
                 remarks: r.remarks || null,
               }))

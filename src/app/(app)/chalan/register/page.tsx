@@ -1,7 +1,7 @@
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
-import { invoiceSettlement } from "@/lib/settlement";
+import { invoiceSettlement, payableSettlement } from "@/lib/settlement";
 import { ChalanRegisterClient, type ChalanRegisterRow } from "./register-client";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export default async function ChalanRegisterPage({
   const { date_from, date_to, q, broker, vehicle, status, payment, ownership, shortage } =
     searchParams;
 
-  const [rows, brokers, vehicles, billStatusByChalan] = await withTenant(
+  const [rows, brokers, vehicles, billStatusByChalan, payable] = await withTenant(
     session.tenantId,
     async (tx) => {
     // ownership resolves to a vehicle-id list (it also covers vehicle type)
@@ -42,11 +42,8 @@ export default async function ChalanRegisterPage({
         ...(vehicle ? { vehicleId: vehicle } : {}),
         ...(vehicleIdFilter ? { vehicleId: { in: vehicleIdFilter } } : {}),
         ...(status === "final" ? { isFinal: true } : status === "draft" ? { isFinal: false } : {}),
-        ...(payment === "paid"
-          ? { paymentStatus: "PAID" }
-          : payment === "pending"
-            ? { paymentStatus: { not: "PAID" } }
-            : {}),
+        // the payment filter is applied after settlement is computed, since a
+        // voucher can settle a chalan whose stored status still says PENDING
         // shortage weight lives on the LRs' PODs, so filter through the relation
         ...(shortage === "yes"
           ? { lrs: { some: { lr: { pods: { some: { shortageWt: { gt: 0 } } } } } } }
@@ -99,14 +96,29 @@ export default async function ChalanRegisterPage({
             : "PARTLY PAID"
       );
     }
-    return [chalans, brokers, vehicles, billStatusByChalan] as const;
+    // a chalan can also be settled from a Payment Voucher, so the register's
+    // balance and payment status come from the combined position
+    const payable = await payableSettlement(tx, {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      refType: "FREIGHT_CHALLAN",
+      docs: chalans.map((c) => ({
+        id: c.id,
+        balance: toNum(c.balance),
+        ownPaid: toNum(c.balPaidAmount),
+        ownShortage: toNum(c.balShortage),
+        ownRoundOff: toNum(c.balRoundOff),
+        ownAdvanceAdjusted: toNum(c.balAdvanceAdjusted),
+      })),
+    });
+    return [chalans, brokers, vehicles, billStatusByChalan, payable] as const;
     }
   );
 
   const brokerName = (id: string) => brokers.find((b) => b.id === id)?.name ?? "";
   const vehicleNo = (id: string) => vehicles.find((v) => v.id === id)?.number ?? "";
 
-  const data: ChalanRegisterRow[] = rows.map((c) => ({
+  const mapped: ChalanRegisterRow[] = rows.map((c) => ({
     id: c.id,
     chalanNo: c.chalanNo,
     chalanDate: c.chalanDate.toISOString(),
@@ -117,7 +129,7 @@ export default async function ChalanRegisterPage({
     tdsAmt: toNum(c.tdsAmt),
     commissionAmt: toNum(c.commissionAmt),
     advanceTotal: toNum(c.advanceTotal),
-    balance: toNum(c.balance),
+    balance: payable.get(c.id)?.outstanding ?? toNum(c.balance),
     mamool: toNum(c.mamool),
     courierCharge: toNum(c.courierCharge),
     isFinal: c.isFinal,
@@ -127,10 +139,19 @@ export default async function ChalanRegisterPage({
     // shortage amount + round-off applied at balance payment (visible after)
     shortage: Number(c.balShortage),
     roundOff: Number(c.balRoundOff),
-    paymentStatus: c.paymentStatus,
-    balPaidAmount: Number(c.balPaidAmount),
+    // payment status and paid amount span both settlement paths
+    paymentStatus:
+      (payable.get(c.id)?.outstanding ?? 0) <= 0.009 ? "PAID" : c.paymentStatus,
+    balPaidAmount: payable.get(c.id)?.settled ?? Number(c.balPaidAmount),
     billStatus: billStatusByChalan.get(c.id) ?? "NOT BILLED",
   }));
+
+  const data =
+    payment === "paid"
+      ? mapped.filter((r) => r.paymentStatus === "PAID")
+      : payment === "pending"
+        ? mapped.filter((r) => r.paymentStatus !== "PAID")
+        : mapped;
 
   return (
     <ChalanRegisterClient

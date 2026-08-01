@@ -10,6 +10,7 @@ import { audit } from "@/lib/audit";
 import { syncSequenceTo } from "@/lib/sequences";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { toNum } from "@/lib/utils";
+import { payableSettlement } from "@/lib/settlement";
 import {
   ADVANCE_TYPES,
   advanceAmount,
@@ -481,10 +482,28 @@ export async function saveBrokerBalancePayment(
       });
       if (!slip) return { ok: false as const, error: "Broker slip not found." };
 
-      const balance = toNum(String(data.side === "P" ? slip.pBalance : slip.vBalance));
+      const gross = toNum(String(data.side === "P" ? slip.pBalance : slip.vBalance));
+      // the owner side shares one outstanding with the Payment Voucher, so a
+      // slip already part-paid there must not be settled twice here
+      let balance = gross;
+      if (data.side === "V") {
+        const pos = await payableSettlement(tx, {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          refType: "BROKER_ENTRY",
+          docs: [{ id: slip.id, balance: gross, ownPaid: 0, ownShortage: 0, ownRoundOff: 0 }],
+        });
+        balance = Math.round((gross - (pos.get(slip.id)?.voucherSettled ?? 0)) * 100) / 100;
+      }
       const paidAmount = Math.round((balance - data.roundOff - data.shortage) * 100) / 100;
       if (paidAmount < 0) {
-        return { ok: false as const, error: "Round-off + shortage exceed the balance." };
+        return {
+          ok: false as const,
+          error:
+            balance < gross
+              ? `Round-off + shortage exceed the ${balance} still open (the rest was settled by a payment voucher).`
+              : "Round-off + shortage exceed the balance.",
+        };
       }
       const paymentDate = new Date(`${data.paymentDate}T00:00:00`);
       const refType = data.side === "P" ? "BROKER_SLIP_RECEIVED" : "BROKER_SLIP_PAID";

@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { nextChalanNumber } from "@/lib/sequences";
 import { toNum } from "@/lib/utils";
+import { payableSettlement } from "@/lib/settlement";
 import { ChalanForm, type ChalanRecord, type BrokerOption } from "./chalan-form";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +49,26 @@ export default async function ChalanPage({
             where: { refId: record.id, refType: "CHALAN_BALANCE_ADJ" },
           })
         : [];
+      // a Payment Voucher can settle this chalan too — the balance section must
+      // offer only what is still open across both modules
+      const voucherSettled = record
+        ? (
+            await payableSettlement(tx, {
+              firmId: session.firmId,
+              fyId: session.fyId,
+              refType: "FREIGHT_CHALLAN",
+              docs: [
+                {
+                  id: record.id,
+                  balance: toNum(record.balance),
+                  ownPaid: 0,
+                  ownShortage: 0,
+                  ownRoundOff: 0,
+                },
+              ],
+            })
+          ).get(record.id)?.voucherSettled ?? 0
+        : 0;
       const cities = record ? await tx.city.findMany() : [];
       const parties = record ? await tx.party.findMany() : [];
       const cityName = (id: string) => cities.find((c) => c.id === id)?.name ?? "";
@@ -76,6 +97,7 @@ export default async function ChalanPage({
             balPaymentHeadId: record.balPaymentHeadId,
             balPaymentMode: record.balPaymentMode ?? "BANK",
             balRemarks: record.balRemarks ?? "",
+            voucherSettled,
             balAdvanceLines: balAdvanceUses.map((u) => ({
               advanceId: u.advanceId,
               amount: toNum(u.amount),
@@ -135,15 +157,17 @@ export default async function ChalanPage({
               supplierName: a.supplierName ?? "",
               bankName: a.bankName ?? "",
               bankPartyId: a.bankPartyId,
-              headId: a.bankPartyId,
+              headId: a.headId,
               advanceId: a.advanceId,
               advanceVoucherNo: a.advanceVoucherNo,
+              // the stored head/bank reference decides how the row reloads, so
+              // a CASH row no longer comes back mislabelled as a head advance
               advanceType:
                 a.type === "ADVANCE_ADJ"
                   ? ("ADV_ADJ" as const)
-                  : a.type === "BANK"
-                    ? ("BANK_CASH" as const)
-                    : ("HEAD" as const),
+                  : a.headId
+                    ? ("HEAD" as const)
+                    : ("BANK_CASH" as const),
               dieselQty: a.dieselQty == null ? 0 : toNum(a.dieselQty),
               dieselRate: a.dieselRate == null ? 0 : toNum(a.dieselRate),
               amount: toNum(a.amount),

@@ -100,6 +100,8 @@ export interface ChalanRecord {
   balRemarks: string;
   /** per-voucher advance adjustment applied in the balance-payment step */
   balAdvanceLines: { advanceId: string; amount: number }[];
+  /** already settled against this chalan from a Payment Voucher */
+  voucherSettled: number;
   podTotal: number;
   podDone: number;
   /** total shortage weight recorded across the LRs' PODs */
@@ -340,8 +342,11 @@ export function ChalanForm({
     advances: advances.map(advAmount),
   });
 
-  // balance section: advances adjusted here reduce the cash/bank leg only
-  const balSettleable = Math.round((totals.balance - balRoundOff - balShortage) * 100) / 100;
+  // balance section: only what a Payment Voucher has not already settled is
+  // available here — the two modules share one outstanding
+  const voucherSettled = record?.voucherSettled ?? 0;
+  const balOpen = Math.round((totals.balance - voucherSettled) * 100) / 100;
+  const balSettleable = Math.round((balOpen - balRoundOff - balShortage) * 100) / 100;
   const balAdjTotal =
     Math.round(Object.values(balAdjValues).reduce((s, n) => s + (n || 0), 0) * 100) / 100;
   const balPaidPreview = Math.round((balSettleable - balAdjTotal) * 100) / 100;
@@ -934,11 +939,16 @@ export function ChalanForm({
                   options={(a.advanceType ?? "BANK_CASH") === "HEAD" ? accountHeads : banks}
                   value={a.headId ?? a.bankPartyId ?? null}
                   onChange={(v) => {
-                    const opts = (a.advanceType ?? "BANK_CASH") === "HEAD" ? accountHeads : banks;
+                    const isHead = (a.advanceType ?? "BANK_CASH") === "HEAD";
+                    const opts = isHead ? accountHeads : banks;
                     const label = opts.find((o) => o.value === v)?.label ?? "";
-                    // bankPartyId holds the reference id for both types; only
-                    // BANK_CASH advances (type BANK) post to the bank book.
-                    setAdvance(i, { headId: v, bankPartyId: v, bankName: label });
+                    // a head advance credits the chosen expense head; a bank /
+                    // cash one credits the party — never both
+                    setAdvance(i, {
+                      headId: isHead ? v : null,
+                      bankPartyId: isHead ? null : v,
+                      bankName: label,
+                    });
                   }}
                   placeholder="Select..."
                 />
@@ -1074,7 +1084,15 @@ export function ChalanForm({
           </CardHeader>
           <CardContent className="grid gap-3 p-4 pt-2 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Balance Amount">
-              <NumInput value={totals.balance} readOnly />
+              <div className="space-y-1">
+                <NumInput value={balOpen} readOnly />
+                {voucherSettled > 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    {formatMoney(voucherSettled)} of {formatMoney(totals.balance)} already settled
+                    by a payment voucher
+                  </div>
+                )}
+              </div>
             </Field>
             <Field label="Round Off (−)">
               <NumInput value={balRoundOff} onChange={setBalRoundOff} />
