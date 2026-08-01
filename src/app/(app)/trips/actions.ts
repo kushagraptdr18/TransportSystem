@@ -1,4 +1,4 @@
-"use server";
+﻿"use server";
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -409,7 +409,7 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
       return savedId;
     });
 
-    revalidatePath("/trips/register");
+    revalidatePath("/trips");
     return { ok: true, id };
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
@@ -443,7 +443,7 @@ export async function deleteTrip(id: string): Promise<{ ok: true } | { ok: false
       await tx.tripDoc.deleteMany({ where: { tripId: id } });
       await audit(tx, session, { entity: "Trip", entityId: id, action: "DELETE", before });
     });
-    revalidatePath("/trips/register");
+    revalidatePath("/trips");
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Failed to delete trip" };

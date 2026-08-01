@@ -122,7 +122,7 @@ export const NAV: NavGroup[] = [
     label: "Vehicle",
     icon: Wrench,
     items: [
-      // sheets and expenses are tabs of one screen
+      // register, sheets and expenses are tabs of one screen
       { label: "Trip Management", href: "/trips" },
       // expenses, summary, tracking and P&L are tabs of one screen
       { label: "Vehicle Management", href: "/vehicle/management" },

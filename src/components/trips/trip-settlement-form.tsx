@@ -386,7 +386,7 @@ export function TripSettlementForm({
           description: `Driver balance ${signed(driverBalance)} posted to the +/- register.`,
         });
         // register-first workflow: always return to the register after save
-        router.push("/trips/register");
+        router.push("/trips?tab=register");
         router.refresh();
       } else toast({ variant: "destructive", title: res.error });
     } finally {
@@ -755,7 +755,7 @@ export function TripSettlementForm({
       )}
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => router.push("/trips/register")} disabled={busy}>
+        <Button variant="outline" onClick={() => router.push("/trips?tab=register")} disabled={busy}>
           Cancel
         </Button>
         <Button onClick={submit} disabled={busy || !vehicleId}>

@@ -1,5 +1,4 @@
-﻿import { redirect } from "next/navigation";
-import { requireSession } from "@/lib/session";
+﻿import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { peekDocNumber } from "@/lib/sequences";
 import { toNum } from "@/lib/utils";
@@ -13,9 +12,10 @@ export async function TripSheetsTab({
 }: {
   searchParams: { id?: string; new?: string };
 }) {
-  // register-first workflow: the module always opens on the register; the
-  // entry page is reached via "New Trip Sheet" or a row's View/Edit
-  if (!searchParams.id && !searchParams.new) redirect("/trips/register");
+  // The register is a peer tab now, so this no longer redirects — doing so
+  // navigated away from the whole tabbed screen, which is why Trip Expenses
+  // was only reachable once a trip had been picked. Landing here with no trip
+  // simply opens a blank sheet.
   const session = requireSession();
 
   const { vehicles, drivers, driverByVehicle, banks, nextNo, trip, docs, linkedAdvanceIds } = await withTenant(
