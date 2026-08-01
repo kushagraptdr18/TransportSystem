@@ -112,8 +112,8 @@ export const NAV: NavGroup[] = [
       { label: "Ledger Summary", href: "/accounts/ledger" },
       { label: "Outstanding (Receivables)", href: "/accounts/outstanding" },
       { label: "Outstanding Payables", href: "/accounts/payables" },
-      { label: "TDS Payable Register", href: "/accounts/tds-report" },
-      { label: "TDS Receivable Register", href: "/accounts/tds-receivable" },
+      // payable and receivable are tabs of one screen
+      { label: "TDS Register", href: "/accounts/tds" },
       { label: "Advance Register", href: "/accounts/advances" },
       { label: "Shortage Ledger", href: "/accounts/shortage" },
       { label: "Staff Payroll & Advances", href: "/accounts/staff" },
