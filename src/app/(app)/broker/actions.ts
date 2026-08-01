@@ -17,6 +17,7 @@ import {
   restoreAdvanceUses,
   type OpenAdvance,
 } from "@/lib/party-advance";
+import { raiseShortage, recoverShortage, releaseShortage } from "@/lib/shortage";
 import {
   ADVANCE_TYPES,
   advanceAmount,
@@ -430,7 +431,17 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
         await line(pid, "ODC", data.p.odcAmt, "ODC Income", "INCOME", "DEBIT");
         await line(pid, "Fine slip", data.p.fineAmt, "Fine Slip Income", "INCOME", "DEBIT");
         await line(pid, "LD charge", data.p.ldCharge, "LD Charge Allowed", "EXPENSE", "CREDIT");
-        await line(pid, "Shortage", data.p.shortageAmt, "Shortage Allowed", "EXPENSE", "CREDIT");
+        // shortage posts only the party leg; the register posts the matching
+        // entry on the one common Shortage ledger
+        if (data.p.shortageAmt > 0) {
+          entries.push({
+            ...accrualCommon,
+            partyId: pid,
+            side: "CREDIT",
+            amount: data.p.shortageAmt,
+            narration: `Shortage — ${tag}`,
+          });
+        }
         await line(pid, "TDS", pTotals.tdsAmt, "TDS Receivable", "EXPENSE", "CREDIT");
         await line(pid, "Commission", pTotals.commAmt, "Commission Allowed", "EXPENSE", "CREDIT");
         await line(pid, "Mamool", data.p.mamool, "Mamool Allowed", "EXPENSE", "CREDIT");
@@ -444,7 +455,15 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
         await line(oid, "ODC", data.v.odcAmt, "ODC Charges", "EXPENSE", "CREDIT");
         await line(oid, "Fine slip", data.v.fineAmt, "Fine Slip Charges", "EXPENSE", "CREDIT");
         await line(oid, "LD charge", data.v.ldCharge, "LD Charge Recovered", "INCOME", "DEBIT");
-        await line(oid, "Shortage", data.v.shortageAmt, "Shortage Recovered", "INCOME", "DEBIT");
+        if (data.v.shortageAmt > 0) {
+          entries.push({
+            ...accrualCommon,
+            partyId: oid,
+            side: "DEBIT",
+            amount: data.v.shortageAmt,
+            narration: `Shortage deducted — ${tag}`,
+          });
+        }
         await line(oid, "TDS", vTotals.tdsAmt, "TDS Payable", "INCOME", "DEBIT");
         await line(oid, "Commission", vTotals.commAmt, "Commission Income", "INCOME", "DEBIT");
         await line(oid, "Mamool", data.v.mamool, "Mamool Recovered", "INCOME", "DEBIT");
@@ -523,6 +542,36 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
       }
       await postLedger(tx, session, [...entries, ...transferEntries]);
 
+      // Shortage register. The broker side reduces what the broker owes us, so
+      // the company bears that loss — it is a shortage CHARGED. The owner side
+      // reduces what we owe him, so it is RECOVERED from the owner.
+      await releaseShortage(tx, "BROKER_SLIP", savedId);
+      if (slipData.partyId && data.p.shortageAmt > 0) {
+        await raiseShortage(tx, session, {
+          date: slipDate,
+          module: "BROKER_SLIP",
+          refId: savedId,
+          refNo: data.slipNo,
+          partyKind: "BROKER",
+          partyId: slipData.partyId,
+          amount: data.p.shortageAmt,
+          remarks: `Broker side of slip ${data.slipNo}`,
+        });
+      }
+      if (slipData.ownerId && data.v.shortageAmt > 0) {
+        await recoverShortage(tx, session, {
+          date: slipDate,
+          module: "BROKER_SLIP",
+          refId: savedId,
+          refNo: data.slipNo,
+          source: "OWNER",
+          partyId: slipData.ownerId,
+          partyKind: "OWNER",
+          amount: data.v.shortageAmt,
+          remarks: `Deducted on owner side of slip ${data.slipNo}`,
+        });
+      }
+
       return savedId;
     });
 
@@ -556,6 +605,9 @@ export async function deleteBrokerSlip(
       // release every advance voucher this slip had consumed, both sides
       await restoreAdvanceUses(tx, ADV_USE_P, id);
       await restoreAdvanceUses(tx, ADV_USE_V, id);
+      await releaseShortage(tx, "BROKER_SLIP", id);
+      await releaseShortage(tx, "BROKER_SLIP", `${id}:P`);
+      await releaseShortage(tx, "BROKER_SLIP", `${id}:V`);
       await audit(tx, session, { entity: "BrokerSlip", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/broker/register");
@@ -691,13 +743,13 @@ export async function saveBrokerBalancePayment(
       const after = await tx.brokerSlip.update({ where: { id: slip.id }, data: fields });
 
       await reverseLedger(tx, refType, slip.id);
+      const common = {
+        date: paymentDate,
+        refType,
+        refId: slip.id,
+        refNo: slip.slipNo,
+      };
       if (paidAmount > 0) {
-        const common = {
-          date: paymentDate,
-          refType,
-          refId: slip.id,
-          refNo: slip.slipNo,
-        };
         await postLedger(tx, session, [
           {
             ...common,
@@ -725,6 +777,71 @@ export async function saveBrokerBalancePayment(
             : []),
         ]);
       }
+
+      // Shortage and round-off deducted at settlement previously posted
+      // NOTHING, so the counterparty stayed on the books for money that never
+      // moved and the slip could never close. Both post now — shortage through
+      // the register, round-off to its own head.
+      const settleRef = `${slip.id}:${data.side}`;
+      await releaseShortage(tx, "BROKER_SLIP", settleRef);
+      const extras: Parameters<typeof postLedger>[2] = [];
+      if (counterPartyId && Math.abs(data.roundOff) > 0.009) {
+        const roundHeadId = await ensureAccountHead(tx, session, "Round Off", "INCOME");
+        const partySide = data.side === "P" ? "CREDIT" : "DEBIT";
+        extras.push(
+          {
+            ...common,
+            partyId: counterPartyId,
+            side: partySide,
+            amount: Math.abs(data.roundOff),
+            narration: `Round off — broker slip ${slip.slipNo}`,
+          },
+          {
+            ...common,
+            accountHeadId: roundHeadId,
+            side: partySide === "CREDIT" ? "DEBIT" : "CREDIT",
+            amount: Math.abs(data.roundOff),
+            narration: `Round off — broker slip ${slip.slipNo}`,
+          }
+        );
+      }
+      if (counterPartyId && data.shortage > 0.009) {
+        extras.push({
+          ...common,
+          partyId: counterPartyId,
+          side: data.side === "P" ? "CREDIT" : "DEBIT",
+          amount: data.shortage,
+          narration: `Shortage — broker slip ${slip.slipNo}`,
+        });
+      }
+      if (extras.length) await postLedger(tx, session, extras);
+      if (counterPartyId && data.shortage > 0.009) {
+        // party side: the broker paid us less, so the company bears it.
+        // owner side: we paid him less, so it is recovered from him.
+        const common2 = {
+          date: paymentDate,
+          module: "BROKER_SLIP" as const,
+          refId: settleRef,
+          refNo: slip.slipNo,
+          amount: data.shortage,
+          remarks: `Deducted at balance settlement of slip ${slip.slipNo}`,
+        };
+        if (data.side === "P") {
+          await raiseShortage(tx, session, {
+            ...common2,
+            partyKind: "BROKER",
+            partyId: counterPartyId,
+          });
+        } else {
+          await recoverShortage(tx, session, {
+            ...common2,
+            source: "OWNER",
+            partyKind: "OWNER",
+            partyId: counterPartyId,
+          });
+        }
+      }
+
       await audit(tx, session, {
         entity: "BrokerSlip",
         entityId: slip.id,

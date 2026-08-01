@@ -84,8 +84,20 @@ export async function saveDriverAdvance(
         await audit(tx, session, { entity: "DriverAdvance", entityId: id, action: "CREATE", after: created });
       }
 
-      // ledger: driver owes the advance; money leaves cash/bank when account given
-      if (driver.partyId && values.bankPartyId) {
+      // Ledger: the driver owes the advance, and money leaves cash/bank. This
+      // used to post only when a bank account was named, so every cash advance
+      // was invisible to the ledger; a CASH-mode advance now falls back to the
+      // firm's cash party so it is always accounted for.
+      let creditPartyId = values.bankPartyId;
+      if (!creditPartyId) {
+        const cash = await tx.party.findFirst({
+          where: { ledgerGroup: "CASH", isActive: true },
+          orderBy: { name: "asc" },
+          select: { id: true },
+        });
+        creditPartyId = cash?.id ?? null;
+      }
+      if (driver.partyId && creditPartyId) {
         const common = {
           date: values.date,
           refType: "DRIVER_ADVANCE",
@@ -95,7 +107,7 @@ export async function saveDriverAdvance(
         };
         const entries: LedgerPostEntry[] = [
           { ...common, partyId: driver.partyId, side: "DEBIT", amount: d.amount },
-          { ...common, partyId: values.bankPartyId, side: "CREDIT", amount: d.amount },
+          { ...common, partyId: creditPartyId, side: "CREDIT", amount: d.amount },
         ];
         // relative vehicle: the advance is paid ON BEHALF OF the relative
         // owner — shift the recoverable from the driver to the owner's ledger

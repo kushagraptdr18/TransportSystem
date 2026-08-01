@@ -2122,6 +2122,66 @@ model DriverShortage {
   @@index([tenantId, firmId, driverId, status])
 }
 
+// ============ SHORTAGE REGISTER ============
+// One register for every shortage in the system, whatever module raised it.
+// A shortage is a document with its own outstanding: it is RAISED against
+// whoever is answerable for it, and every recovery links back and reduces it,
+// so "created vs recovered vs pending" is answerable in one place.
+
+model ShortageEntry {
+  id       String   @id @default(cuid())
+  tenantId String
+  firmId   String
+  fyId     String
+  date     DateTime
+  /** CHALAN | BROKER_SLIP | DRIVER | VOUCHER | MANUAL */
+  module   String
+  /** document that raised it, when it came from one */
+  refId    String?
+  refNo    String
+  /** who is answerable — exactly one of these is set */
+  partyId  String?
+  driverId String?
+  /** DRIVER | OWNER | BROKER | PARTY */
+  partyKind String
+  amount          Decimal @default(0) @db.Decimal(14, 2)
+  recoveredAmount Decimal @default(0) @db.Decimal(14, 2)
+  remarks  String?
+
+  recoveries ShortageRecovery[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([tenantId, firmId, fyId])
+  @@index([tenantId, partyId])
+  @@index([tenantId, driverId])
+  @@index([tenantId, module, refId])
+}
+
+model ShortageRecovery {
+  id         String        @id @default(cuid())
+  tenantId   String
+  shortageId String
+  shortage   ShortageEntry @relation(fields: [shortageId], references: [id], onDelete: Cascade)
+  date       DateTime      @default(now())
+  /** module that recovered it */
+  module     String
+  refId      String
+  refNo      String
+  /** DRIVER | OWNER | BROKER | PARTY | BANK */
+  source     String
+  amount     Decimal       @default(0) @db.Decimal(14, 2)
+  remarks    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, module, refId])
+  @@index([shortageId])
+}
+
 model DriverSettlement {
   id        String   @id @default(cuid())
   tenantId  String

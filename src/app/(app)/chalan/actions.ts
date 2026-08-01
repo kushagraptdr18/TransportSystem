@@ -18,6 +18,7 @@ import {
   type OpenAdvance,
 } from "@/lib/party-advance";
 import { invoiceSettlement, payableSettlement } from "@/lib/settlement";
+import { recoverShortage, releaseShortage, releaseShortageRecoveries } from "@/lib/shortage";
 
 /** Money figure for error messages. */
 const formatOpen = (n: number) => (Math.round(n * 100) / 100).toLocaleString("en-IN");
@@ -391,13 +392,39 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
       await earning("Other charges", fields.otherAmt, "Other Chalan Charges");
 
       await deduction("LD charge", fields.ldCharge, "LD Charge Recovered");
-      await deduction("Shortage", fields.shortageAmt, "Shortage Recovered");
+      // shortage is only the party leg here — the shortage register posts the
+      // matching credit to the one common Shortage ledger and records the
+      // recovery, so the settlement report can trace it
+      if (fields.shortageAmt > 0) {
+        entries.push({
+          ...common,
+          partyId: fields.brokerId,
+          side: "DEBIT",
+          amount: fields.shortageAmt,
+          narration: `Shortage deducted — ${tag}`,
+        });
+      }
       await deduction("Commission", fields.commissionAmt, "Commission Income");
       await deduction("TDS", fields.tdsAmt, "TDS Payable");
       await deduction("Mamool", fields.mamool, "Mamool Recovered");
       await deduction("Courier", fields.courierCharge, "Courier Recovered");
 
       await postLedger(tx, session, entries);
+      // recovered from the owner: his payable dropped by the shortage
+      await releaseShortageRecoveries(tx, "CHALAN", id);
+      if (fields.shortageAmt > 0) {
+        await recoverShortage(tx, session, {
+          date: fields.chalanDate,
+          module: "CHALAN",
+          refId: id,
+          refNo: fields.chalanNo,
+          source: "OWNER",
+          partyId: fields.brokerId,
+          partyKind: "OWNER",
+          amount: fields.shortageAmt,
+          remarks: `Deducted from chalan ${fields.chalanNo}`,
+        });
+      }
       await audit(tx, session, {
         entity: "Chalan",
         entityId: id,
@@ -637,6 +664,9 @@ export async function deleteChalan(
       await reverseLedger(tx, ADV_ADJ_REF, chalanId);
       await restoreAdvanceUses(tx, ADV_USE_ADVANCE, chalanId);
       await restoreAdvanceUses(tx, ADV_USE_BALANCE, chalanId);
+      // undo everything this chalan raised or recovered in the shortage register
+      await releaseShortage(tx, "CHALAN", chalanId);
+      await releaseShortage(tx, "CHALAN", `${chalanId}:BAL`);
       await tx.chalan.update({ where: { id: chalanId }, data: { deletedAt: new Date() } });
 
       // every associated LR returns to PENDING so it can be re-loaded onto a
@@ -825,8 +855,18 @@ export async function saveBalancePayment(
           }
         );
       }
+      // shortage at balance payment goes through the register too; only the
+      // round-off keeps its own head
+      if (Math.abs(data.shortage) > 0.009) {
+        balEntries.push({
+          ...balCommon,
+          partyId: chalan.brokerId,
+          side: "DEBIT",
+          amount: Math.abs(data.shortage),
+          narration: `Shortage deducted at balance payment — chalan ${chalan.chalanNo}`,
+        });
+      }
       for (const [label, signed, headName] of [
-        ["Shortage", data.shortage, "Shortage Recovered"],
         ["Round off", data.roundOff, "Round Off"],
       ] as const) {
         if (Math.abs(signed) <= 0.009) continue;
@@ -852,6 +892,20 @@ export async function saveBalancePayment(
         );
       }
       await postLedger(tx, session, balEntries);
+      await releaseShortageRecoveries(tx, "CHALAN", `${chalan.id}:BAL`);
+      if (data.shortage > 0.009) {
+        await recoverShortage(tx, session, {
+          date: paymentDate,
+          module: "CHALAN",
+          refId: `${chalan.id}:BAL`,
+          refNo: chalan.chalanNo,
+          source: "OWNER",
+          partyId: chalan.brokerId,
+          partyKind: "OWNER",
+          amount: data.shortage,
+          remarks: `Deducted at balance payment of chalan ${chalan.chalanNo}`,
+        });
+      }
       await audit(tx, session, {
         entity: "Chalan",
         entityId: chalan.id,

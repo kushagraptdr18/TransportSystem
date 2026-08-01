@@ -7,6 +7,7 @@ import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { ensureAccountHead, postLedger, type LedgerPostEntry } from "@/lib/ledger";
+import { SHORTAGE_HEAD, recoverShortage } from "@/lib/shortage";
 import { resolveRelativeOwner } from "@/lib/relative-owner";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
@@ -271,7 +272,7 @@ export async function finalizeDriverFnf(
       const entries: LedgerPostEntry[] = [];
       const recoveries = round2(d.negativeAdjust + d.otherRecoveries);
       if (d.shortageAdjust > 0) {
-        const head = await ensureAccountHead(tx, session, "Shortage Recovery (Driver)", "INCOME");
+        const head = await ensureAccountHead(tx, session, SHORTAGE_HEAD, "EXPENSE");
         entries.push(
           { ...common, partyId: driver.partyId, side: "DEBIT", amount: d.shortageAdjust, narration: `Shortage adjusted in final settlement ${settlementNo}` },
           { ...common, accountHeadId: head, side: "CREDIT", amount: d.shortageAdjust, narration: `Shortage recovery — F&F ${driver.name}` }
@@ -323,6 +324,20 @@ export async function finalizeDriverFnf(
         }
       }
       await postLedger(tx, session, entries);
+      if (d.shortageAdjust > 0) {
+        await recoverShortage(tx, session, {
+          date,
+          module: "DRIVER",
+          refId: fnf.id,
+          refNo: settlementNo,
+          source: "DRIVER",
+          partyId: driver.partyId,
+          driverId: d.driverId,
+          partyKind: "DRIVER",
+          amount: d.shortageAdjust,
+          remarks: `Recovered in full & final ${settlementNo}`,
+        });
+      }
 
       // driver leaves the company
       const lwd = d.lastWorkingDate ? new Date(`${d.lastWorkingDate}T00:00:00`) : date;
