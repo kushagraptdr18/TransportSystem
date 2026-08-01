@@ -37,7 +37,13 @@ import {
   type AdvanceHeadKind,
   type BrokerAdvance,
 } from "@/components/broker/broker-calc";
-import { saveBrokerSlip } from "@/app/(app)/broker/actions";
+import {
+  AdvanceAdjustGrid,
+  advanceAdjustError,
+  advanceAdjustLines,
+} from "@/components/chalan/advance-adjust-grid";
+import type { OpenAdvance } from "@/lib/party-advance";
+import { getBrokerSlipAdvances, saveBrokerSlip } from "@/app/(app)/broker/actions";
 
 export interface SideValues {
   rate: number;
@@ -163,14 +169,22 @@ function Num({
   );
 }
 
+export interface BrokerNameOption extends MasterOption {
+  transportName?: string | null;
+  ownerName?: string | null;
+}
+
 interface BrokerSlipFormProps {
   initial: BrokerSlipFormData | null;
   nextSlipNo: string;
   cityOptions: MasterOption[];
   partyOptions: MasterOption[];
-  brokerOptions: MasterOption[];
+  /** brokers carry transportName/ownerName for the two-way name link */
+  brokerOptions: BrokerNameOption[];
   vehicleOptions: MasterOption[];
   ownVehicleIds: string[];
+  /** vehicles whose ownershipType is RELATIVE */
+  relativeVehicleIds: string[];
   productOptions: MasterOption[];
   /** Income/Expense heads (value=id, meta=INCOME|EXPENSE) for advance entry */
   accountHeadOptions: MasterOption[];
@@ -186,6 +200,7 @@ export function BrokerSlipForm({
   brokerOptions: brokerOptions0,
   vehicleOptions: vehicleOptions0,
   ownVehicleIds: ownVehicleIds0,
+  relativeVehicleIds,
   productOptions: productOptions0,
   accountHeadOptions,
   bankCashOptions,
@@ -323,6 +338,21 @@ export function BrokerSlipForm({
       setSide("v", { tdsPct: 0, tdsAmt: 0, commPct: 0, commAmt: 0, mamool: 0 });
     }
   };
+  const isRelativeVehicle = !!form.vehicleId && relativeVehicleIds.includes(form.vehicleId);
+
+  // Broker ↔ Transport Name two-way link, mapped in the Owner Master — same as
+  // Chalan Entry. Both pickers select the same party, so picking either name
+  // fills the other; the transport list carries the party id as its value, so a
+  // trade name shared by two parties still resolves unambiguously.
+  const selectBroker = (v: string | null) => {
+    set("transporterId", v);
+    const b = brokerOptions.find((x) => x.value === v);
+    if (b && !form.ownerName) set("ownerName", b.ownerName ?? b.label);
+  };
+  const transportOptions = brokerOptions
+    .filter((b) => b.transportName)
+    .map((b) => ({ value: b.value, label: b.transportName as string, meta: b.label }));
+  const selectedTransport = brokerOptions.find((b) => b.value === form.transporterId);
 
   // ---------- advances ----------
   const addAdvance = () =>
@@ -330,6 +360,67 @@ export function BrokerSlipForm({
       ...form.advances,
       { side: "V", type: "BANK", headKind: "BANK", headId: null, amount: 0, date: null, remarks: "" },
     ]);
+
+  // ---------- advance adjustment ----------
+  // Broker side may only consume advances RECEIVED from him, owner side only
+  // advances PAID to him — same engine as Voucher Entry, so a balance used
+  // anywhere disappears everywhere.
+  const [advOpts, setAdvOpts] = React.useState<{ P: OpenAdvance[]; V: OpenAdvance[] }>({
+    P: [],
+    V: [],
+  });
+  const [advLoading, setAdvLoading] = React.useState(false);
+
+  const refreshAdvances = React.useCallback(() => {
+    const p = form.transporterId ?? null;
+    const v = form.ownerId ?? null;
+    if (!p && !v) return setAdvOpts({ P: [], V: [] });
+    setAdvLoading(true);
+    Promise.all([
+      p ? getBrokerSlipAdvances(p, "P", form.id) : Promise.resolve([]),
+      v ? getBrokerSlipAdvances(v, "V", form.id) : Promise.resolve([]),
+    ])
+      .then(([P, V]) => setAdvOpts({ P, V }))
+      .finally(() => setAdvLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.transporterId, form.ownerId, form.id]);
+
+  React.useEffect(() => {
+    refreshAdvances();
+  }, [refreshAdvances]);
+
+  const adjValues = (side: "P" | "V"): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const a of form.advances) {
+      if (a.type === "ADVANCE_ADJ" && a.side === side && a.advanceId) out[a.advanceId] = a.amount;
+    }
+    return out;
+  };
+  const setAdjValues = (side: "P" | "V", next: Record<string, number>) => {
+    const kept = form.advances.filter((a) => !(a.type === "ADVANCE_ADJ" && a.side === side));
+    const rows: BrokerAdvance[] = advanceAdjustLines(advOpts[side], next).map((l) => ({
+      side,
+      type: "ADVANCE_ADJ" as const,
+      headKind: null,
+      headId: null,
+      advanceId: l.advanceId,
+      advanceVoucherNo: l.voucherNo,
+      amount: l.amount,
+      date: null,
+      remarks: null,
+    }));
+    set("advances", [...kept, ...rows]);
+  };
+  // an adjustment may not exceed what is still due on that side
+  const adjPayable = (side: "P" | "V") => {
+    const t = side === "P" ? pTotals : vTotals;
+    const other = form.advances
+      .filter((a) => a.side === side && a.type !== "ADVANCE_ADJ")
+      .reduce((s, a) => s + advanceAmount(a), 0);
+    return Math.round((t.netAmt - other) * 100) / 100;
+  };
+  const adjError = (side: "P" | "V") =>
+    advanceAdjustError(advOpts[side], adjValues(side), adjPayable(side));
 
   // legacy rows (pre head-kind) fall back to a sensible kind
   const advanceKind = (a: BrokerAdvance): AdvanceHeadKind =>
@@ -357,6 +448,11 @@ export function BrokerSlipForm({
     }
     if (!slipDateIso) {
       toast({ variant: "destructive", title: "Valid slip date is required" });
+      return;
+    }
+    const badAdj = adjError("P") ?? adjError("V");
+    if (badAdj) {
+      toast({ variant: "destructive", title: "Advance adjustment invalid", description: badAdj });
       return;
     }
     setSaving(true);
@@ -627,12 +723,21 @@ export function BrokerSlipForm({
             <Label className="text-xs">Transporter / Broker</Label>
             {partyCombo(
               form.transporterId,
-              (v) => set("transporterId", v),
+              selectBroker,
               brokerOptions,
               setBrokerOptions,
               "OWNER_BROKER",
               "Select transporter..."
             )}
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Transport Name</Label>
+            <MasterCombobox
+              options={transportOptions}
+              value={selectedTransport?.transportName ? form.transporterId : null}
+              onChange={selectBroker}
+              placeholder="Select transport name..."
+            />
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Load Station</Label>
@@ -752,10 +857,23 @@ export function BrokerSlipForm({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {form.advances.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            An expense head on the <strong>broker side</strong> is the purchase itself — the broker
+            supplied it instead of paying, so his receivable drops by that amount.
+            {isRelativeVehicle && (
+              <>
+                {" "}
+                This vehicle belongs to a <strong>relative</strong>, so that expense is transferred
+                on to the owner{form.ownerId ? "" : " (select the owner to enable it)"}.
+              </>
+            )}
+          </p>
+          {form.advances.filter((a) => a.type !== "ADVANCE_ADJ").length === 0 && (
             <p className="text-sm text-muted-foreground">No advances entered.</p>
           )}
           {form.advances.map((a, idx) => {
+            // adjustment rows are owned by the Advance Adjustment grids below
+            if (a.type === "ADVANCE_ADJ") return null;
             const kind = advanceKind(a);
             return (
               <div key={idx} className="grid grid-cols-2 items-end gap-2 md:grid-cols-6">
@@ -854,6 +972,51 @@ export function BrokerSlipForm({
               <span>Owner advances: {formatMoney(vAdvance)}</span>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {/* advance adjustment — one grid per side, direction-locked */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Advance Adjustment</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1">
+            <div className="text-xs font-medium">
+              Broker Side — Advance Received
+              {!form.transporterId && (
+                <span className="ml-2 font-normal text-muted-foreground">
+                  select the transporter / broker first
+                </span>
+              )}
+            </div>
+            <AdvanceAdjustGrid
+              advances={advOpts.P}
+              values={adjValues("P")}
+              onChange={(n) => setAdjValues("P", n)}
+              payable={adjPayable("P")}
+              loading={advLoading}
+            />
+            {adjError("P") && <div className="text-xs text-destructive">{adjError("P")}</div>}
+          </div>
+          <div className="space-y-1">
+            <div className="text-xs font-medium">
+              Owner Side — Advance Paid
+              {!form.ownerId && (
+                <span className="ml-2 font-normal text-muted-foreground">
+                  select the owner first
+                </span>
+              )}
+            </div>
+            <AdvanceAdjustGrid
+              advances={advOpts.V}
+              values={adjValues("V")}
+              onChange={(n) => setAdjValues("V", n)}
+              payable={adjPayable("V")}
+              loading={advLoading}
+            />
+            {adjError("V") && <div className="text-xs text-destructive">{adjError("V")}</div>}
+          </div>
         </CardContent>
       </Card>
 

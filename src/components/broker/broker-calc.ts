@@ -72,6 +72,8 @@ export const ADVANCE_TYPES = [
   "SPARE_PARTS",
   "REPAIR",
   "OTHER",
+  /** consumes an existing advance voucher — reference link, posts nothing */
+  "ADVANCE_ADJ",
 ] as const;
 export type BrokerAdvanceType = (typeof ADVANCE_TYPES)[number];
 
@@ -99,6 +101,9 @@ export interface BrokerAdvance {
   amount: number;
   date?: string | null; // ISO yyyy-mm-dd
   remarks?: string | null;
+  /** ADVANCE_ADJ only — the PartyAdvance this row consumes */
+  advanceId?: string | null;
+  advanceVoucherNo?: string | null;
 }
 
 export function dieselAmount(qty: number, rate: number): number {

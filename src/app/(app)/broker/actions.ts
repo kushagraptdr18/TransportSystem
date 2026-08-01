@@ -12,6 +12,12 @@ import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { toNum } from "@/lib/utils";
 import { payableSettlement } from "@/lib/settlement";
 import {
+  applyManualAdvanceUses,
+  listOpenAdvances,
+  restoreAdvanceUses,
+  type OpenAdvance,
+} from "@/lib/party-advance";
+import {
   ADVANCE_TYPES,
   advanceAmount,
   computeBrokerSide,
@@ -34,7 +40,42 @@ const advanceSchema = z.object({
   amount: z.number().min(0).default(0),
   date: z.string().nullish(), // ISO yyyy-mm-dd
   remarks: z.string().nullish(),
+  advanceId: z.string().nullish(),
+  advanceVoucherNo: z.string().nullish(),
 });
+
+/** Ledger refType for the relative-owner expense transfer. */
+const EXP_TRANSFER_REF = "BROKER_SLIP_EXP_TRANSFER";
+/**
+ * PartyAdvanceUse refTypes — one per side, so adjusting on the broker side
+ * never clobbers what the owner side consumed. The broker side may only use
+ * advances RECEIVED from him; the owner side only advances PAID to him.
+ */
+const ADV_USE_P = "BROKER_SLIP_ADV_ADJ_P";
+const ADV_USE_V = "BROKER_SLIP_ADV_ADJ_V";
+
+/**
+ * Open advance vouchers for one side of a broker slip. Same engine the
+ * Voucher Entry and chalan screens use, so a balance consumed anywhere is
+ * immediately gone everywhere.
+ */
+export async function getBrokerSlipAdvances(
+  partyId: string,
+  side: "P" | "V",
+  slipId?: string | null
+): Promise<OpenAdvance[]> {
+  const session = requireSession();
+  if (!partyId) return [];
+  return withTenant(session.tenantId, (tx) =>
+    listOpenAdvances(tx, {
+      firmId: session.firmId,
+      partyId,
+      kinds: side === "P" ? ["RECEIVED"] : ["PAID"],
+      includeRefType: side === "P" ? ADV_USE_P : ADV_USE_V,
+      includeRefId: slipId ?? undefined,
+    })
+  );
+}
 
 const sideSchema = {
   rate: z.number().min(0).default(0),
@@ -287,6 +328,58 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
         savedNumber: data.slipNo,
       });
 
+      // manual advance-voucher adjustments, per side. Restored before being
+      // re-applied so an edit never double-counts against a voucher's balance,
+      // and direction-checked so the broker side can only consume advances
+      // received and the owner side only advances paid.
+      let stampedVoucherNos = false;
+      for (const [side, refType, partyId] of [
+        ["P", ADV_USE_P, slipData.partyId],
+        ["V", ADV_USE_V, slipData.ownerId],
+      ] as const) {
+        const lines = advances
+          .filter((a) => a.type === "ADVANCE_ADJ" && a.side === side && a.amount > 0)
+          .map((a) => ({ advanceId: a.advanceId ?? "", amount: a.amount }));
+        if (lines.some((l) => !l.advanceId)) {
+          throw new Error("Select an advance voucher for every adjustment row.");
+        }
+        if (!lines.length) {
+          await restoreAdvanceUses(tx, refType, savedId);
+          continue;
+        }
+        if (!partyId) {
+          throw new Error(
+            `Select the ${side === "P" ? "broker" : "owner"} before adjusting an advance on that side.`
+          );
+        }
+        const applied = await applyManualAdvanceUses(tx, {
+          tenantId: session.tenantId,
+          firmId: session.firmId,
+          partyId,
+          kinds: side === "P" ? ["RECEIVED"] : ["PAID"],
+          refType,
+          refId: savedId,
+          refNo: data.slipNo,
+          date: slipDate,
+          lines,
+        });
+        // stamp the voucher number back for display / print
+        const noOf = new Map(applied.map((x) => [x.advanceId, x.voucherNo]));
+        for (const a of advances) {
+          if (a.type === "ADVANCE_ADJ" && a.side === side && a.advanceId) {
+            a.advanceVoucherNo = noOf.get(a.advanceId) ?? a.advanceVoucherNo ?? null;
+            stampedVoucherNos = true;
+          }
+        }
+      }
+      // the row was written before the voucher numbers were resolved
+      if (stampedVoucherNos) {
+        await tx.brokerSlip.update({
+          where: { id: savedId },
+          data: { advances: advances as unknown as Prisma.InputJsonValue },
+        });
+      }
+
       // ledger: accrue both sides of the slip and post its advances —
       // re-posted on every save so edits stay in sync
       await reverseLedger(tx, "BROKER_SLIP", savedId);
@@ -298,45 +391,83 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
         refId: savedId,
         refNo: data.slipNo,
       };
-      if (slipData.partyId && pTotals.netAmt > 0) {
-        const incomeHeadId = await ensureAccountHead(tx, session, "Freight Income", "INCOME");
+      const tag = `broker slip ${data.slipNo}`;
+
+      // Post every component on its own line, exactly like the chalan module,
+      // so the ledger shows how the receivable / payable was arrived at rather
+      // than one opaque net figure. Each side nets to its own `netAmt`, which
+      // is what computeBrokerSide returns.
+      //
+      // Broker side is a RECEIVABLE: earnings debit the broker against an
+      // income head, deductions credit him back against an expense head.
+      // Owner side is the mirror — a PAYABLE.
+      const line = async (
+        partyId: string,
+        label: string,
+        amount: number,
+        headName: string,
+        headKind: "INCOME" | "EXPENSE",
+        partySide: "DEBIT" | "CREDIT"
+      ) => {
+        if (amount <= 0) return;
+        const headId = await ensureAccountHead(tx, session, headName, headKind);
         entries.push(
+          { ...accrualCommon, partyId, side: partySide, amount, narration: `${label} — ${tag}` },
           {
             ...accrualCommon,
-            partyId: slipData.partyId,
-            side: "DEBIT",
-            amount: pTotals.netAmt,
-            narration: `Freight receivable — broker slip ${data.slipNo}`,
-          },
-          {
-            ...accrualCommon,
-            accountHeadId: incomeHeadId,
-            side: "CREDIT",
-            amount: pTotals.netAmt,
-            narration: `Freight income — broker slip ${data.slipNo}`,
+            accountHeadId: headId,
+            side: partySide === "DEBIT" ? "CREDIT" : "DEBIT",
+            amount,
+            narration: `${label} — ${tag}`,
           }
         );
+      };
+
+      if (slipData.partyId) {
+        const pid = slipData.partyId;
+        await line(pid, "Freight", pTotals.freight, "Freight Income", "INCOME", "DEBIT");
+        await line(pid, "Detention", data.p.detention, "Detention Income", "INCOME", "DEBIT");
+        await line(pid, "ODC", data.p.odcAmt, "ODC Income", "INCOME", "DEBIT");
+        await line(pid, "Fine slip", data.p.fineAmt, "Fine Slip Income", "INCOME", "DEBIT");
+        await line(pid, "LD charge", data.p.ldCharge, "LD Charge Allowed", "EXPENSE", "CREDIT");
+        await line(pid, "Shortage", data.p.shortageAmt, "Shortage Allowed", "EXPENSE", "CREDIT");
+        await line(pid, "TDS", pTotals.tdsAmt, "TDS Receivable", "EXPENSE", "CREDIT");
+        await line(pid, "Commission", pTotals.commAmt, "Commission Allowed", "EXPENSE", "CREDIT");
+        await line(pid, "Mamool", data.p.mamool, "Mamool Allowed", "EXPENSE", "CREDIT");
+        await line(pid, "Payment charge", data.p.paymentCharge, "Payment Charges", "EXPENSE", "CREDIT");
       }
-      if (slipData.ownerId && vTotals.netAmt > 0) {
-        const hireHeadId = await ensureAccountHead(tx, session, "Lorry Hire Expense", "EXPENSE");
-        entries.push(
-          {
-            ...accrualCommon,
-            accountHeadId: hireHeadId,
-            side: "DEBIT",
-            amount: vTotals.netAmt,
-            narration: `Lorry hire — broker slip ${data.slipNo}`,
-          },
-          {
-            ...accrualCommon,
-            partyId: slipData.ownerId,
-            side: "CREDIT",
-            amount: vTotals.netAmt,
-            narration: `Hire payable — broker slip ${data.slipNo}`,
-          }
-        );
+
+      if (slipData.ownerId) {
+        const oid = slipData.ownerId;
+        await line(oid, "Lorry hire", vTotals.freight, "Lorry Hire Expense", "EXPENSE", "CREDIT");
+        await line(oid, "Detention", data.v.detention, "Detention Charges", "EXPENSE", "CREDIT");
+        await line(oid, "ODC", data.v.odcAmt, "ODC Charges", "EXPENSE", "CREDIT");
+        await line(oid, "Fine slip", data.v.fineAmt, "Fine Slip Charges", "EXPENSE", "CREDIT");
+        await line(oid, "LD charge", data.v.ldCharge, "LD Charge Recovered", "INCOME", "DEBIT");
+        await line(oid, "Shortage", data.v.shortageAmt, "Shortage Recovered", "INCOME", "DEBIT");
+        await line(oid, "TDS", vTotals.tdsAmt, "TDS Payable", "INCOME", "DEBIT");
+        await line(oid, "Commission", vTotals.commAmt, "Commission Income", "INCOME", "DEBIT");
+        await line(oid, "Mamool", data.v.mamool, "Mamool Recovered", "INCOME", "DEBIT");
+        await line(oid, "Payment charge", data.v.paymentCharge, "Payment Charges Recovered", "INCOME", "DEBIT");
       }
+      // Expense-head settlement on the BROKER side is the purchase itself:
+      // "Diesel Expense Dr / Broker Cr". The broker supplied diesel worth the
+      // amount instead of paying it, so his receivable drops by exactly that.
+      // If the vehicle belongs to a RELATIVE the expense was consumed by that
+      // relative's vehicle, so it is transferred on to him afterwards
+      // ("Relative Owner Dr / Diesel Expense Cr"), leaving the expense head at
+      // zero and the owner's payable reduced. A company vehicle keeps the
+      // expense — nothing further to do.
+      const isRelativeVehicle = slipData.vehicleId
+        ? (await tx.vehicle.findUnique({ where: { id: slipData.vehicleId } }))?.ownershipType ===
+          "RELATIVE"
+        : false;
+      const transferEntries: Parameters<typeof postLedger>[2] = [];
+
       for (const a of advances) {
+        // an adjustment consumes an existing advance voucher — a reference
+        // link, not a transaction, so it posts nothing (see applyAdvanceUses)
+        if (a.type === "ADVANCE_ADJ") continue;
         if (a.amount <= 0 || !a.headId) continue;
         const counterPartyId = a.side === "P" ? slipData.partyId : slipData.ownerId;
         if (!counterPartyId) continue;
@@ -367,8 +498,30 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
             amount: a.amount,
           }
         );
+
+        // relative vehicle: pass a broker-side expense head on to the owner.
+        // Owner-side heads already debit the owner directly, so transferring
+        // those too would charge him twice.
+        if (
+          a.side === "P" &&
+          a.headKind === "EXPENSE" &&
+          isRelativeVehicle &&
+          slipData.ownerId
+        ) {
+          const tCommon = {
+            date: a.date ? toDate(a.date) : slipDate,
+            refType: EXP_TRANSFER_REF,
+            refId: savedId,
+            refNo: data.slipNo,
+            narration: `${a.bankName || a.type.replace(/_/g, " ")} transferred to relative owner — ${tag}`,
+          };
+          transferEntries.push(
+            { ...tCommon, partyId: slipData.ownerId, side: "DEBIT", amount: a.amount },
+            { ...tCommon, accountHeadId: a.headId, side: "CREDIT", amount: a.amount }
+          );
+        }
       }
-      await postLedger(tx, session, entries);
+      await postLedger(tx, session, [...entries, ...transferEntries]);
 
       return savedId;
     });
@@ -399,6 +552,10 @@ export async function deleteBrokerSlip(
       await reverseLedger(tx, "BROKER_SLIP_ADVANCE", id);
       await reverseLedger(tx, "BROKER_SLIP_RECEIVED", id);
       await reverseLedger(tx, "BROKER_SLIP_PAID", id);
+      await reverseLedger(tx, EXP_TRANSFER_REF, id);
+      // release every advance voucher this slip had consumed, both sides
+      await restoreAdvanceUses(tx, ADV_USE_P, id);
+      await restoreAdvanceUses(tx, ADV_USE_V, id);
       await audit(tx, session, { entity: "BrokerSlip", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/broker/register");

@@ -63,35 +63,74 @@ export default async function BrokerSlipPrintPage({
     balance: toNum(slip.vBalance),
   });
 
-  const SlipDetails = () => (
-    <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
-      <div>
-        <b>Slip No:</b> {slip.slipNo}
+  const brokerParty = parties.find((p) => p.id === (slip.transporterId ?? slip.partyId));
+  const unit = slip.unit ?? "";
+  /** the basis the rate is quoted against decides which quantity multiplies it */
+  const basisLabel: Record<string, string> = {
+    QTY: "Qty",
+    ACTUAL_WT: "Actual Wt",
+    CHARGE_WT: "Charge Wt",
+    FIXED: "Fixed",
+  };
+
+  // Each copy shows only its own side's rate — the broker must never see the
+  // owner's rate, and vice versa.
+  const SlipDetails = ({ side }: { side: "P" | "V" }) => {
+    const isP = side === "P";
+    const basis = (isP ? slip.pRateBasis : slip.vRateBasis) ?? slip.rateBasis;
+    const rate = toNum(isP ? slip.pRate : slip.vRate);
+    const freight = toNum(isP ? slip.pFreight : slip.vFreight);
+    const baseQty =
+      basis === "QTY"
+        ? toNum(slip.qty)
+        : basis === "ACTUAL_WT"
+          ? toNum(slip.actualWt)
+          : basis === "CHARGE_WT"
+            ? toNum(slip.chargeWt)
+            : 0;
+    return (
+      <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
+        <div>
+          <b>Slip No:</b> {slip.slipNo}
+        </div>
+        <div>
+          <b>Slip Date:</b> {formatDate(slip.slipDate)}
+        </div>
+        <div>
+          <b>Vehicle:</b> {vehicleNo(slip.vehicleId)}
+        </div>
+        <div>
+          <b>Route:</b> {cityName(slip.loadStationId)} → {cityName(slip.destCityId)}
+        </div>
+        <div>
+          <b>LR No:</b> {slip.lrNo ?? ""}
+          {slip.lrDate ? ` (${formatDate(slip.lrDate)})` : ""}
+        </div>
+        <div>
+          <b>Product:</b> {slip.productName ?? ""}
+        </div>
+        <div>
+          <b>Qty:</b> {toNum(slip.qty)} {unit}
+        </div>
+        <div>
+          <b>Actual / Charge Wt:</b> {toNum(slip.actualWt)} / {toNum(slip.chargeWt)}
+        </div>
+        <div>
+          <b>{isP ? "Broker Rate" : "Owner Rate"}:</b>{" "}
+          {rate > 0 ? `${formatMoney(rate)} / ${unit || basisLabel[basis] || ""}` : "—"}
+          {basis === "FIXED" ? " (fixed)" : ""}
+        </div>
+        <div>
+          <b>{isP ? "Broker Freight" : "Owner Freight"}:</b> {formatMoney(freight)}
+          {rate > 0 && baseQty > 0 && (
+            <span className="ml-1 text-[10px]">
+              ({baseQty} {unit} × {formatMoney(rate)})
+            </span>
+          )}
+        </div>
       </div>
-      <div>
-        <b>Slip Date:</b> {formatDate(slip.slipDate)}
-      </div>
-      <div>
-        <b>Vehicle:</b> {vehicleNo(slip.vehicleId)}
-      </div>
-      <div>
-        <b>Route:</b> {cityName(slip.loadStationId)} → {cityName(slip.destCityId)}
-      </div>
-      <div>
-        <b>LR No:</b> {slip.lrNo ?? ""}
-        {slip.lrDate ? ` (${formatDate(slip.lrDate)})` : ""}
-      </div>
-      <div>
-        <b>Product:</b> {slip.productName ?? ""}
-      </div>
-      <div>
-        <b>Qty:</b> {toNum(slip.qty)} {slip.unit ?? ""}
-      </div>
-      <div>
-        <b>Actual / Charge Wt:</b> {toNum(slip.actualWt)} / {toNum(slip.chargeWt)}
-      </div>
-    </div>
-  );
+    );
+  };
 
   const SidePage = ({ side, copyNo }: { side: "P" | "V"; copyNo: number }) => {
     const isP = side === "P";
@@ -153,10 +192,22 @@ export default async function BrokerSlipPrintPage({
           </div>
         </div>
 
-        <SlipDetails />
+        <SlipDetails side={side} />
 
-        <div className="mt-2 text-xs">
-          <b>{isP ? "Broker Name" : "Owner Name"}:</b> {isP ? brokerName : ownerName}
+        <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
+          <div>
+            <b>{isP ? "Broker Name" : "Owner Name"}:</b> {isP ? brokerName : ownerName}
+          </div>
+          {isP && (
+            <>
+              <div>
+                <b>Transporter:</b> {brokerParty?.transportName ?? ""}
+              </div>
+              <div>
+                <b>PAN:</b> {brokerParty?.pan ?? ""}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="mt-3 flex gap-4">

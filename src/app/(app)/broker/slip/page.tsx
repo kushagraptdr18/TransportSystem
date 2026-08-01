@@ -70,12 +70,16 @@ export default async function BrokerSlipPage({
           value: p.id,
           label: p.name,
           meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+          // backs the Broker <-> Transport Name two-way link, as in Chalan Entry
+          transportName: p.transportName,
+          ownerName: p.ownerName,
         })),
         vehicles: vehicleRows.map((v) => ({
           value: v.id,
           label: v.number,
           meta: v.isOwn ? `Owned${v.ownerNames ? " — " + v.ownerNames : ""}` : `Broker — ${v.owner?.name ?? "?"}`,
           isOwn: v.isOwn,
+          ownershipType: v.ownershipType,
         })),
         products: productRows.map((p) => ({ value: p.id, label: p.name, meta: p.group.name })),
         accountHeads: headRows.map((h) => ({ value: h.id, label: h.name, meta: h.kind })),
@@ -86,6 +90,10 @@ export default async function BrokerSlipPage({
 
   const cityOptions: MasterOption[] = cities;
   const ownVehicleIds = vehicles.filter((v) => v.isOwn).map((v) => v.value);
+  // a relative's vehicle passes broker-side expense heads on to its owner
+  const relativeVehicleIds = vehicles
+    .filter((v) => v.ownershipType === "RELATIVE")
+    .map((v) => v.value);
   const vehicleOptions: MasterOption[] = vehicles.map(({ value, label, meta }) => ({
     value,
     label,
@@ -178,6 +186,7 @@ export default async function BrokerSlipPage({
         brokerOptions={brokers}
         vehicleOptions={vehicleOptions}
         ownVehicleIds={ownVehicleIds}
+        relativeVehicleIds={relativeVehicleIds}
         productOptions={products}
         accountHeadOptions={accountHeads}
         bankCashOptions={bankCash}
