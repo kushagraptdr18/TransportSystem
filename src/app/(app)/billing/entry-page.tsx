@@ -117,6 +117,17 @@ export async function InvoiceEntryPage({
           meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
         }))}
         bankOptions={banks.map((b) => ({ value: b.id, label: b.name }))}
+        bankDetails={Object.fromEntries(
+          banks.map((b) => [
+            b.id,
+            {
+              name: b.bankName ?? b.name,
+              branch: b.bankBranch ?? "",
+              account: b.bankAccount ?? "",
+              ifsc: b.bankIfsc ?? "",
+            },
+          ])
+        )}
         defaults={defaults}
       />
     </div>

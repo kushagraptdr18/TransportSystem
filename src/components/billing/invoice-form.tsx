@@ -151,6 +151,11 @@ interface InvoiceFormProps {
   };
   partyOptions: MasterOption[];
   bankOptions: MasterOption[];
+  /** bank fields keyed by party id — the preview prints them line by line */
+  bankDetails?: Record<
+    string,
+    { name: string; branch: string; account: string; ifsc: string }
+  >;
   defaults: BillingDefaults;
 }
 
@@ -163,6 +168,7 @@ export function InvoiceForm({
   firm,
   partyOptions: partyOptions0,
   bankOptions,
+  bankDetails,
   defaults,
 }: InvoiceFormProps) {
   const router = useRouter();
@@ -607,7 +613,17 @@ export function InvoiceForm({
     rcm: rcmInfo,
     gstApplied: gstApplicable && !rcmActive,
     remarks,
-    bank: bankOptions.find((b) => b.value === bankPartyId)?.label ?? "",
+    bank:
+      (bankPartyId && bankDetails?.[bankPartyId]) ||
+      // no details supplied: still name the bank rather than dropping the block
+      (bankPartyId
+        ? {
+            name: bankOptions.find((b) => b.value === bankPartyId)?.label ?? "",
+            branch: "",
+            account: "",
+            ifsc: "",
+          }
+        : null),
   };
 
   return (

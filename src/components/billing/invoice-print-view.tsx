@@ -3,9 +3,13 @@ import { formatMoney } from "@/lib/utils";
 import { amountInWords } from "@/lib/num-to-words";
 
 /**
- * Shared professional TAX INVOICE layout (A4 portrait) — rendered identically
+ * Shared professional TAX INVOICE layout (A4 landscape) — rendered identically
  * by the Bill Preview dialog (client, from form state) and the print page
  * (server, from the saved invoice). All values arrive display-ready.
+ *
+ * The orientation itself is set by the print route, not here: `@page` cannot be
+ * scoped to a component, and a global landscape rule would rotate the chalan,
+ * LR, trip sheet and broker slip prints too.
  */
 export interface InvoiceViewParty {
   name: string;
@@ -77,11 +81,73 @@ export interface InvoiceViewData {
   rcm: { taxableValue: number; pct: number; cgst: number; sgst: number; igst: number } | null;
   gstApplied: boolean;
   remarks: string;
-  bank: string;
+  /**
+   * Kept as separate fields rather than one joined line: this is what the
+   * customer has to copy correctly to pay the bill, so each part gets its own
+   * labelled row and the account number and IFSC never wrap mid-code.
+   */
+  bank: {
+    name: string;
+    branch: string;
+    account: string;
+    ifsc: string;
+  } | null;
 }
 
 const cell = "border border-black px-1 py-0.5";
 const labelCell = "border border-black bg-neutral-100 px-1 py-0.5 font-semibold print:bg-neutral-100";
+
+/**
+ * LR table columns.
+ *
+ * `optional` columns are dropped when every LR on the bill leaves them blank —
+ * OBD, PO and gate-entry numbers only apply to some customers, and a column of
+ * empty cells costs width that the remaining columns need. The rest print
+ * always, blank or not: a freight bill without an LR number, route, weight or
+ * rate is not a valid document, and their absence would be read as an error
+ * rather than as "not applicable".
+ */
+interface LrColumn {
+  header: string;
+  optional?: boolean;
+  numeric?: boolean;
+  value: (lr: InvoiceViewLr, index: number) => React.ReactNode;
+  /** blank-detection for optional columns; defaults to the rendered value */
+  raw?: (lr: InvoiceViewLr) => string;
+}
+
+const LR_COLUMNS: LrColumn[] = [
+  { header: "Sr.", value: (_lr, i) => i + 1 },
+  { header: "LR / C.Note No", value: (lr) => lr.lrNo },
+  { header: "Dispatch Date", value: (lr) => lr.lrDate },
+  { header: "From Station", value: (lr) => lr.source },
+  { header: "To Station", value: (lr) => lr.dest },
+  { header: "OBD No", optional: true, value: (lr) => lr.obdNo, raw: (lr) => lr.obdNo },
+  { header: "PO No", optional: true, value: (lr) => lr.poNumber, raw: (lr) => lr.poNumber },
+  {
+    header: "Gate Entry No",
+    optional: true,
+    value: (lr) => lr.gateEntryNo,
+    raw: (lr) => lr.gateEntryNo,
+  },
+  { header: "Invoice No", optional: true, value: (lr) => lr.invoiceNo, raw: (lr) => lr.invoiceNo },
+  { header: "Vehicle No", value: (lr) => lr.vehicle },
+  { header: "Material", optional: true, value: (lr) => lr.material, raw: (lr) => lr.material },
+  { header: "Consignee", optional: true, value: (lr) => lr.consignee, raw: (lr) => lr.consignee },
+  {
+    header: "Delivery Date",
+    optional: true,
+    value: (lr) => lr.unloadDate,
+    raw: (lr) => lr.unloadDate,
+  },
+  { header: "Net Wt", numeric: true, value: (lr) => lr.actualWt },
+  { header: "Charged Wt", numeric: true, value: (lr) => lr.chargeWt },
+  { header: "Rate", numeric: true, value: (lr) => lr.rate },
+  { header: "Freight Amt", numeric: true, value: (lr) => formatMoney(lr.amount) },
+];
+
+/** Headers of the three columns the totals row fills in itself. */
+const TOTAL_COLUMNS = ["Net Wt", "Charged Wt", "Rate", "Freight Amt"];
 
 export function InvoicePrintView({
   data,
@@ -99,8 +165,32 @@ export function InvoicePrintView({
   const totalChargeWt = Math.round(data.lrs.reduce((s, l) => s + l.chargeWt, 0) * 1000) / 1000;
   const totalActualWt = Math.round(data.lrs.reduce((s, l) => s + l.actualWt, 0) * 1000) / 1000;
 
+  // decided per bill: an optional column survives if any one LR fills it in
+  const columns = LR_COLUMNS.filter(
+    (c) => !c.optional || data.lrs.some((lr) => (c.raw?.(lr) ?? "").trim() !== "")
+  );
+  // the totals row labels itself across everything up to Net Wt — computed
+  // rather than hard-coded, or the totals slide under the wrong headings the
+  // moment a column is dropped
+  const totalLabelSpan = columns.filter((c) => !TOTAL_COLUMNS.includes(c.header)).length;
+
+  // a missing branch or IFSC drops its line rather than printing a label with
+  // nothing after it; no bank on the bill drops the block entirely
+  const bankLines: [string, string, boolean][] = data.bank
+    ? (
+        [
+          ["Bank Name", data.bank.name, false],
+          ["Branch", data.bank.branch, false],
+          ["A/c Number", data.bank.account, true],
+          ["IFSC", data.bank.ifsc, true],
+        ] as [string, string, boolean][]
+      ).filter(([, v]) => v.trim() !== "")
+    : [];
+
   return (
-    <div className="mx-auto max-w-[190mm] border-2 border-black bg-white text-black">
+    // 277mm is the printable width of A4 landscape at an 8mm margin; seventeen
+    // columns never fitted the 190mm portrait sheet
+    <div className="mx-auto max-w-[277mm] border-2 border-black bg-white text-black">
       {/* title band */}
       <div className="border-b-2 border-black py-1 text-center text-base font-bold tracking-widest">
         TAX INVOICE
@@ -127,6 +217,11 @@ export function InvoicePrintView({
             <td className={cell}>{party.vendorCode || firm.vendorCode}</td>
             <td className={labelCell}>IBA Code</td>
             <td className={cell}>{firm.ibaCode}</td>
+            {/* "(Info)" is deliberate: TDS is the customer's to deduct, not a
+                charge on this bill, and a bare rate in a tax-invoice header
+                reads as an amount being applied */}
+            <td className={labelCell}>TDS Applicable (Info)</td>
+            <td className={cell}>{data.tdsPct || 1}%</td>
           </tr>
           <tr>
             <td className={labelCell}>Service</td>
@@ -136,7 +231,9 @@ export function InvoicePrintView({
             <td className={labelCell}>SAC Code</td>
             <td className={cell}>{data.sacCode}</td>
             <td className={labelCell}>Reverse Charge</td>
-            <td className={cell}>{firm.rcmCovered ? "Yes" : "No"}</td>
+            <td className={cell} colSpan={3}>
+              {firm.rcmCovered ? "Yes" : "No"}
+            </td>
           </tr>
         </tbody>
       </table>
@@ -152,7 +249,7 @@ export function InvoicePrintView({
             <td className={labelCell}>Place of Supply</td>
             <td className={cell}>{data.placeOfSupply}</td>
             <td className={labelCell}>State / Code</td>
-            <td className={cell}>
+            <td className={cell} colSpan={3}>
               {firm.stateName}
               {firm.stateCode ? ` / ${firm.stateCode}` : ""}
             </td>
@@ -182,57 +279,27 @@ export function InvoicePrintView({
         <table className="w-full border-collapse text-[9px]">
           <thead>
             <tr>
-              {[
-                "Sr.",
-                "LR / C.Note No",
-                "Dispatch Date",
-                "From Station",
-                "To Station",
-                "OBD No",
-                "PO No",
-                "Gate Entry No",
-                "Invoice No",
-                "Vehicle No",
-                "Material",
-                "Consignee",
-                "Delivery Date",
-                "Net Wt",
-                "Charged Wt",
-                "Rate",
-                "Freight Amt",
-                ...(lrActions ? [""] : []),
-              ].map((h, i) => (
-                <th key={i} className={`${labelCell} text-left`}>
-                  {h}
+              {columns.map((c) => (
+                <th key={c.header} className={`${labelCell} text-left`}>
+                  {c.header}
                 </th>
               ))}
+              {lrActions && <th className={`${labelCell} text-left`} />}
             </tr>
           </thead>
           <tbody>
             {data.lrs.map((lr, i) => (
               <tr key={lr.id}>
-                <td className={cell}>{i + 1}</td>
-                <td className={cell}>{lr.lrNo}</td>
-                <td className={cell}>{lr.lrDate}</td>
-                <td className={cell}>{lr.source}</td>
-                <td className={cell}>{lr.dest}</td>
-                <td className={cell}>{lr.obdNo}</td>
-                <td className={cell}>{lr.poNumber}</td>
-                <td className={cell}>{lr.gateEntryNo}</td>
-                <td className={cell}>{lr.invoiceNo}</td>
-                <td className={cell}>{lr.vehicle}</td>
-                <td className={cell}>{lr.material}</td>
-                <td className={cell}>{lr.consignee}</td>
-                <td className={cell}>{lr.unloadDate}</td>
-                <td className={`${cell} text-right`}>{lr.actualWt}</td>
-                <td className={`${cell} text-right`}>{lr.chargeWt}</td>
-                <td className={`${cell} text-right`}>{lr.rate}</td>
-                <td className={`${cell} text-right`}>{formatMoney(lr.amount)}</td>
+                {columns.map((c) => (
+                  <td key={c.header} className={`${cell}${c.numeric ? " text-right" : ""}`}>
+                    {c.value(lr, i)}
+                  </td>
+                ))}
                 {lrActions && <td className={cell}>{lrActions(lr)}</td>}
               </tr>
             ))}
             <tr className="font-semibold">
-              <td colSpan={13} className={cell}>
+              <td colSpan={totalLabelSpan} className={cell}>
                 Total — Enclosures: {data.lrs.length} LR{data.lrs.length === 1 ? "" : "s"}
               </td>
               <td className={`${cell} text-right`}>{totalActualWt}</td>
@@ -309,14 +376,8 @@ export function InvoicePrintView({
               charged on this invoice.
             </div>
           )}
-          <div className="mt-1 text-[10px]">
-            TDS Applicable @ {data.tdsPct || 1}% (For Information Only)
-          </div>
-          {data.bank && (
-            <div className="mt-1 text-[10px]">
-              <b>Bank Details:</b> {data.bank}
-            </div>
-          )}
+          {/* TDS now sits in the header table, bank details in the right-hand
+              column beside the total — both were unreadable buried here */}
           {data.remarks && (
             <div className="mt-1">
               <b>Remarks:</b> {data.remarks}
@@ -354,14 +415,35 @@ export function InvoicePrintView({
                 <td className={labelCell}>GRAND TOTAL</td>
                 <td className={`${labelCell} text-right`}>{formatMoney(grandRounded)}</td>
               </tr>
+              {/* directly under the figure it spells out, rather than as a
+                  full-width band below both columns where it read as a footnote */}
+              <tr>
+                <td className={`${cell} font-semibold`} colSpan={2}>
+                  Amount in Words: {amountInWords(grandRounded)}
+                </td>
+              </tr>
             </tbody>
           </table>
-        </div>
-      </div>
 
-      {/* amount in words */}
-      <div className="border-t border-black px-2 py-1 text-xs font-semibold">
-        Amount in Words: {amountInWords(grandRounded)}
+          {bankLines.length > 0 && (
+            // the one thing on the bill a customer must copy exactly, so it gets
+            // its own labelled line each and a larger face than the surrounding
+            // declaration text
+            <div className="border-b border-black p-2 text-[13px] leading-relaxed">
+              <div className="font-semibold underline">Bank Details</div>
+              <table className="mt-0.5 w-full">
+                <tbody>
+                  {bankLines.map(([label, value, mono]) => (
+                    <tr key={label}>
+                      <td className="pr-3 align-top font-semibold whitespace-nowrap">{label}</td>
+                      <td className={mono ? "font-mono tracking-wide" : undefined}>{value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* footer notes + signatory */}

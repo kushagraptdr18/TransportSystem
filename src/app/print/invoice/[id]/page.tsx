@@ -151,16 +151,30 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
       : null,
     gstApplied: gstTotal > 0,
     remarks: invoice.remarks ?? "",
+    // passed through as fields, not a joined line — the view prints one
+    // labelled row each so the account number and IFSC cannot be misread
     bank: bank
-      ? [bank.bankName ?? bank.name, bank.bankAccount && `A/c: ${bank.bankAccount}`, bank.bankIfsc && `IFSC: ${bank.bankIfsc}`]
-          .filter(Boolean)
-          .join(" | ")
-      : "",
+      ? {
+          name: bank.bankName ?? bank.name,
+          branch: bank.bankBranch ?? "",
+          account: bank.bankAccount ?? "",
+          ifsc: bank.bankIfsc ?? "",
+        }
+      : null,
   };
 
   return (
     <div className="bg-white p-4 text-black">
-      <PrintToolbar />
+      {/*
+        Landscape, scoped to this route. @page cannot be scoped by selector, so
+        putting this in globals.css would rotate the chalan, LR, trip sheet and
+        broker slip prints too. Only the LR-based bill needs it — the Manual /
+        GST layout below has six columns and stays portrait.
+      */}
+      {invoice.lrs.length > 0 && (
+        <style>{"@page { size: A4 landscape; margin: 8mm; }"}</style>
+      )}
+      <PrintToolbar wide={invoice.lrs.length > 0} />
       {invoice.lrs.length > 0 ? (
         <InvoicePrintView data={viewData} />
       ) : (
