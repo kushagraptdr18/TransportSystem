@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
+import { tripGrandTotals } from "@/lib/trip-docs";
 import {
   TripRegisterClient,
   type TripRegisterRow,
@@ -22,7 +23,7 @@ export async function TripRegisterTab({
   const session = requireSession();
   await authorize(session, "trips", "view");
 
-  const { trips, vehicles, drivers, cities, settlements } = await withTenant(
+  const { trips, vehicles, drivers, cities, settlements, docTotals } = await withTenant(
     session.tenantId,
     async (tx) => {
       const where: Prisma.TripWhereInput = {
@@ -50,7 +51,8 @@ export async function TripRegisterTab({
           where: { firmId: session.firmId, deletedAt: null, tripId: { not: null } },
         }),
       ]);
-      return { trips, vehicles, drivers, cities, settlements };
+      const docTotals = await tripGrandTotals(tx, trips.map((t) => t.id));
+      return { trips, vehicles, drivers, cities, settlements, docTotals };
     }
   );
 
@@ -69,7 +71,11 @@ export async function TripRegisterTab({
       driver: t.driverId ? driverName.get(t.driverId) ?? "" : "",
       from: (t.goingSourceCityId && cityName.get(t.goingSourceCityId)) || "",
       to: (t.goingDestCityId && cityName.get(t.goingDestCityId)) || "",
-      freight: toNum(String(t.gTotalFreight)) + toNum(String(t.rTotalFreight)),
+      // Grand Total of the linked documents, read live so a chalan edit shows
+      // here without the sheet being re-saved; stored snapshot for legacy trips
+      freight:
+        docTotals.get(t.id) ??
+        toNum(String(t.gTotalFreight)) + toNum(String(t.rTotalFreight)),
       approved: toNum(String(t.approvedTotal)),
       driverBalance: toNum(String(t.driverBalance)),
       vehicleCost: toNum(String(t.grandTotal)),

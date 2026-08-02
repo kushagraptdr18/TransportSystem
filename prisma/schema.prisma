@@ -1611,7 +1611,7 @@ model Trip {
   ureaExpenseType String  @default("DRIVER") // DRIVER | COMPANY
 
   // ---- trip settlement (redesigned trip sheet) ----
-  calcMethod      String  @default("DIESEL_AVG") // DIESEL_AVG | FIXED
+  calcMethod      String  @default("DIESEL_AVG") // DIESEL_AVG | FIXED | ACTUAL
   fromDate        DateTime? // settlement fetch range
   toDate          DateTime?
   tollExpenseType String  @default("DRIVER") // DRIVER | COMPANY
@@ -1630,6 +1630,12 @@ model Trip {
   foodingRate     Decimal @default(0) @db.Decimal(10, 2)
   rtoExp          Decimal @default(0) @db.Decimal(14, 2)
   fixedTripExp    Decimal @default(0) @db.Decimal(14, 2) // FIXED method
+  // ACTUAL method — vehicle operating expenses entered on the left side.
+  // roadBillExp / foodingDays / foodingRate / rtoExp above are reused; these
+  // two cover the remaining heads the method asks for.
+  roadExp         Decimal @default(0) @db.Decimal(14, 2) // road expenses
+  otherOpExp      Decimal @default(0) @db.Decimal(14, 2) // any other operating expense
+  autoFetchedExp  Decimal @default(0) @db.Decimal(14, 2) // snapshot of auto-fetched operating expenses
   actualTotal     Decimal @default(0) @db.Decimal(14, 2) // left side total
   approvedTotal   Decimal @default(0) @db.Decimal(14, 2) // right side total
   grandTotal      Decimal @default(0) @db.Decimal(14, 2) // company vehicle cost

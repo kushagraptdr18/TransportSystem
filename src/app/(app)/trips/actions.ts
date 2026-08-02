@@ -10,6 +10,7 @@ import { audit } from "@/lib/audit";
 import { nextDocNumber, syncSequenceTo } from "@/lib/sequences";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { tripLegTotal, tripLegBalance } from "@/lib/calc/trip";
+import { chalanTotals, slipTotals } from "@/lib/trip-docs";
 
 const TRIP_EXPENSE_CATEGORIES = [
   "DIESEL",
@@ -51,7 +52,7 @@ const tripSchema = z.object({
   ureaExpenseType: z.enum(["DRIVER", "COMPANY"]).default("DRIVER"),
 
   // ---- trip settlement (redesigned sheet) ----
-  calcMethod: z.enum(["DIESEL_AVG", "FIXED"]).default("DIESEL_AVG"),
+  calcMethod: z.enum(["DIESEL_AVG", "FIXED", "ACTUAL"]).default("DIESEL_AVG"),
   fromDate: z.string().nullish(),
   toDate: z.string().nullish(),
   /** chalans / broker slips settled by this trip */
@@ -74,6 +75,10 @@ const tripSchema = z.object({
   foodingRate: z.number().min(0).default(0),
   rtoExp: z.number().min(0).default(0),
   fixedTripExp: z.number().min(0).default(0),
+  // ACTUAL method operating expenses
+  roadExp: z.number().min(0).default(0),
+  otherOpExp: z.number().min(0).default(0),
+  autoFetchedExp: z.number().min(0).default(0),
   actualTotal: z.number().min(0).default(0),
   approvedTotal: z.number().min(0).default(0),
   grandTotal: z.number().min(0).default(0),
@@ -126,7 +131,16 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
   // (company vehicle cost) never enters this calculation.
   //   approved > actual  → +ve → company owes the driver (driver saved)
   //   approved < actual  → −ve → driver owes the company (driver overspent)
-  if (data.approvedTotal > 0 || data.actualTotal > 0) {
+  //
+  // ACTUAL is a vehicle-profitability method, not a driver-settlement one: it
+  // measures actual income against actual running cost and has no approved side
+  // to compare against. Forcing the balance to zero here (rather than only in
+  // the UI) is what guarantees no +/- row is ever posted for it — including on a
+  // sheet switched to ACTUAL after being saved under another method, where the
+  // zero balance makes the existing PENDING row be withdrawn below.
+  if (data.calcMethod === "ACTUAL") {
+    data.driverBalance = 0;
+  } else if (data.approvedTotal > 0 || data.actualTotal > 0) {
     data.driverBalance = Math.round((data.approvedTotal - data.actualTotal) * 100) / 100;
   }
 
@@ -200,6 +214,9 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
         foodingRate: data.foodingRate,
         rtoExp: data.rtoExp,
         fixedTripExp: data.fixedTripExp,
+        roadExp: data.roadExp,
+        otherOpExp: data.otherOpExp,
+        autoFetchedExp: data.autoFetchedExp,
         actualTotal: data.actualTotal,
         approvedTotal: data.approvedTotal,
         grandTotal: data.grandTotal,
@@ -552,6 +569,12 @@ export interface PendingTripDoc {
   chargeWt: number;
   rate: number;
   freight: number;
+  /** detention + ODC + fine slip + other */
+  additions: number;
+  /** LD + commission + mamul + courier + TDS + shortage */
+  deductions: number;
+  /** final receivable/payable of the document — freight + additions − deductions */
+  grandTotal: number;
 }
 
 /**
@@ -623,6 +646,7 @@ export async function getPendingTripDocs(input: {
     for (const c of chalans) {
       if (linkedSet.has(`CHALAN:${c.id}`)) continue;
       const firstLr = c.lrs[0]?.lr;
+      const totals = chalanTotals(c);
       out.push({
         refType: "CHALAN",
         refId: c.id,
@@ -634,11 +658,15 @@ export async function getPendingTripDocs(input: {
         actualWt: toNumSafe(c.actualWt),
         chargeWt: toNumSafe(c.chargeWt),
         rate: toNumSafe(c.rate),
-        freight: toNumSafe(c.freight),
+        freight: totals.freight,
+        additions: totals.additions,
+        deductions: totals.deductions,
+        grandTotal: totals.grandTotal,
       });
     }
     for (const s of slips) {
       if (linkedSet.has(`BROKER_SLIP:${s.id}`)) continue;
+      const totals = slipTotals(s);
       out.push({
         refType: "BROKER_SLIP",
         refId: s.id,
@@ -650,7 +678,10 @@ export async function getPendingTripDocs(input: {
         actualWt: toNumSafe(s.actualWt),
         chargeWt: toNumSafe(s.chargeWt),
         rate: toNumSafe(s.vRate),
-        freight: toNumSafe(s.vFreight),
+        freight: totals.freight,
+        additions: totals.additions,
+        deductions: totals.deductions,
+        grandTotal: totals.grandTotal,
       });
     }
     return out.sort((a, b) => a.date.localeCompare(b.date));

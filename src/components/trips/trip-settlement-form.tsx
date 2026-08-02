@@ -41,6 +41,7 @@ import {
 } from "@/app/(app)/vehicle/driver-advances/actions";
 import { fetchAdblueForTrip } from "@/app/(app)/vehicle/adblue/actions";
 import {
+  fetchOperatingExpensesForTrip,
   fetchVehicleExpensesForTrip,
   type TripFetchedExpenseRow,
 } from "@/app/(app)/vehicle/expenses/actions";
@@ -49,6 +50,25 @@ import { settleDriverRunningBalance } from "@/app/(app)/vehicle/driver-settlemen
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const signed = (n: number) =>
   n === 0 ? "0" : `${n > 0 ? "+" : "−"}${formatMoney(Math.abs(n))}`;
+
+/**
+ * The three methods are independent: each decides what the left and right sides
+ * mean, and switching between them changes nothing about how the other two
+ * behave.
+ *
+ *  DIESEL_AVG / FIXED — driver settlement methods. Left is what the driver
+ *    actually spent, right is what the company approved, and the difference is
+ *    posted to the driver +/- register.
+ *  ACTUAL — a vehicle profitability method. Left is what the vehicle actually
+ *    cost to run, income is the Grand Total of the linked documents, and there
+ *    is no approved side and no driver settlement at all.
+ */
+const CALC_METHODS = {
+  DIESEL_AVG: "Diesel Average",
+  FIXED: "Fixed",
+  ACTUAL: "Actual Income − Actual Expenses",
+} as const;
+type CalcMethod = keyof typeof CALC_METHODS;
 
 export interface TripSettlementInitial {
   id: string;
@@ -79,6 +99,9 @@ export interface TripSettlementInitial {
   foodingRate: number;
   rtoExp: number;
   fixedTripExp: number;
+  roadExp: number;
+  otherOpExp: number;
+  autoFetchedExp: number;
 }
 
 export function TripSettlementForm({
@@ -110,9 +133,12 @@ export function TripSettlementForm({
   const [toText, setToText] = React.useState(
     initial?.toDate ? textFromIso(initial.toDate) : todayText()
   );
-  const [calcMethod, setCalcMethod] = React.useState<"DIESEL_AVG" | "FIXED">(
-    initial?.calcMethod === "FIXED" ? "FIXED" : "DIESEL_AVG"
+  const [calcMethod, setCalcMethod] = React.useState<CalcMethod>(
+    initial?.calcMethod === "FIXED" || initial?.calcMethod === "ACTUAL"
+      ? initial.calcMethod
+      : "DIESEL_AVG"
   );
+  const isActual = calcMethod === "ACTUAL";
 
   const fromIso = isoFromText(fromText);
   const toIso = isoFromText(toText) || fromIso;
@@ -153,6 +179,10 @@ export function TripSettlementForm({
 
   const selected = pendingDocs.filter((d) => selectedDocs.has(`${d.refType}:${d.refId}`));
   const docFreight = r2(selected.reduce((s, d) => s + d.freight, 0));
+  // Trip income is the Grand Total, never the bare freight — detention, ODC and
+  // fine slip are earned on the trip, and commission, mamul and courier are
+  // suffered on it, so a freight-only figure overstates what the vehicle made.
+  const docGrandTotal = r2(selected.reduce((s, d) => s + d.grandTotal, 0));
 
   // ---- left side: SNAPSHOT by default on saved trips ----
   // A finalized trip sheet is frozen — view & edit show the values saved at
@@ -176,7 +206,12 @@ export function TripSettlementForm({
     totalQty: number;
     rows: { id: string; date: string; destination: string; qty: number; remarks: string }[];
   }>({ totalQty: initial?.ureaQty ?? 0, rows: [] });
-  const [popup, setPopup] = React.useState<"DIESEL" | "ADVANCE" | "UREA" | null>(null);
+  // ACTUAL only: every other vehicle expense head booked in the range
+  const [opExp, setOpExp] = React.useState<{ total: number; rows: TripFetchedExpenseRow[] }>({
+    total: initial?.autoFetchedExp ?? 0,
+    rows: [],
+  });
+  const [popup, setPopup] = React.useState<"DIESEL" | "ADVANCE" | "UREA" | "OPEX" | null>(null);
 
   React.useEffect(() => {
     if (!liveMode || !vehicleId || !fromIso || !toIso) return;
@@ -187,6 +222,11 @@ export function TripSettlementForm({
     fetchAdblueForTrip({ vehicleId, dateFrom: fromIso, dateTo: toIso })
       .then((r) => !cancelled && setUrea(r))
       .catch(() => setUrea({ totalQty: 0, rows: [] }));
+    // fetched for every method so switching to ACTUAL does not need a re-fetch;
+    // the other two methods simply never read it
+    fetchOperatingExpensesForTrip({ vehicleId, dateFrom: fromIso, dateTo: toIso })
+      .then((r) => !cancelled && setOpExp(r))
+      .catch(() => setOpExp({ total: 0, rows: [] }));
     return () => {
       cancelled = true;
     };
@@ -225,7 +265,7 @@ export function TripSettlementForm({
 
   const tollDriver = tollType === "DRIVER" ? exp.tollTotal : 0;
   const ureaDriver = ureaType === "DRIVER" ? ureaAmount : 0;
-  const actualTotal = r2(exp.dieselTotal + advances.total + tollDriver + ureaDriver);
+  const driverActualTotal = r2(exp.dieselTotal + advances.total + tollDriver + ureaDriver);
 
   // ---- right side (company approved) ----
   const [loadingKm, setLoadingKm] = React.useState(initial?.loadingKm ?? 0);
@@ -243,6 +283,9 @@ export function TripSettlementForm({
   const [foodingRate, setFoodingRate] = React.useState(initial?.foodingRate ?? 0);
   const [rtoExp, setRtoExp] = React.useState(initial?.rtoExp ?? 0);
   const [fixedExp, setFixedExp] = React.useState(initial?.fixedTripExp ?? 0);
+  // ACTUAL method — the operating heads that are not auto-fetched
+  const [roadExp, setRoadExp] = React.useState(initial?.roadExp ?? 0);
+  const [otherOpExp, setOtherOpExp] = React.useState(initial?.otherOpExp ?? 0);
 
   // auto-fetch the previous trip's New Loading KM into Loading KM
   React.useEffect(() => {
@@ -281,16 +324,44 @@ export function TripSettlementForm({
   const totalDieselCost = Math.round(fuel1 + fuel2);
   const fooding = r2(foodingDays * foodingRate);
 
-  // approved total (compared with actuals for the DRIVER settlement)
-  const approvedTotal =
-    calcMethod === "DIESEL_AVG"
+  // ---- ACTUAL method: real running cost of the vehicle ----
+  // Toll and urea are counted whichever way their Driver/Company toggle is set:
+  // the toggle decides who bears the cost for the driver settlement, but the
+  // vehicle burned the fuel and paid the toll either way.
+  const actualOperatingTotal = r2(
+    exp.dieselTotal +
+      advances.total +
+      exp.tollTotal +
+      ureaAmount +
+      opExp.total +
+      roadBill +
+      fooding +
+      rtoExp +
+      roadExp +
+      otherOpExp
+  );
+  const actualProfit = r2(docGrandTotal - actualOperatingTotal);
+
+  // approved total (compared with actuals for the DRIVER settlement).
+  // ACTUAL has no approved side — it never reaches the settlement at all.
+  const approvedTotal = isActual
+    ? 0
+    : calcMethod === "DIESEL_AVG"
       ? r2(totalDieselCost + apprAdvance + roadBill + fooding + rtoExp)
       : r2(fixedExp + apprAdvance);
+  // left-side total as stored on the trip: driver actuals for the settlement
+  // methods, vehicle operating cost for ACTUAL
+  const actualTotal = isActual ? actualOperatingTotal : driverActualTotal;
   // company toll / urea join the COMPANY VEHICLE COST only — never the settlement
-  const grandTotal = r2(
-    approvedTotal + (tollType === "COMPANY" ? exp.tollTotal : 0) + (ureaType === "COMPANY" ? ureaAmount : 0)
-  );
-  const driverBalance = r2(approvedTotal - actualTotal);
+  const grandTotal = isActual
+    ? actualOperatingTotal
+    : r2(
+        approvedTotal +
+          (tollType === "COMPANY" ? exp.tollTotal : 0) +
+          (ureaType === "COMPANY" ? ureaAmount : 0)
+      );
+  // never posted for ACTUAL; the server enforces this too
+  const driverBalance = isActual ? 0 : r2(approvedTotal - driverActualTotal);
 
   // ---- running balance ----
   const [settleInfo, setSettleInfo] = React.useState<TripSettlementInfo>({
@@ -326,7 +397,25 @@ export function TripSettlementForm({
       const push = (category: string, amount: number, remarks: string) => {
         if (amount > 0) expenses.push({ category, amount, remarks, date: fromIso });
       };
-      if (calcMethod === "DIESEL_AVG") {
+      if (isActual) {
+        // ACTUAL books what was really spent, so the vehicle report shows the
+        // same cost the sheet does. Diesel and toll are recorded here rather
+        // than left to the vehicle expense register because the P&L already
+        // excludes those two heads from its own expense sweep — counting them
+        // in both places would double the running cost.
+        push("DIESEL", exp.dieselTotal, "Actual diesel (auto)");
+        push("TOLL", exp.tollTotal, "Actual toll (auto)");
+        push("MISC", advances.total, "Actual driver advance (auto)");
+        // company urea is regenerated server-side; only the driver-borne case
+        // needs booking here, or the two would stack
+        if (ureaType === "DRIVER") push("UREA", ureaAmount, "Actual urea (auto)");
+        push("MISC", opExp.total, "Other operating expenses (auto)");
+        push("MISC", roadBill, "Road bills");
+        push("DRIVER_BATA", fooding, "Fooding");
+        push("POLICE_RTO", rtoExp, "RTO expenses");
+        push("MISC", roadExp, "Road expenses");
+        push("MISC", otherOpExp, "Other operating expense");
+      } else if (calcMethod === "DIESEL_AVG") {
         push("DIESEL", totalDieselCost, "Approved fuel cost (auto)");
         push("DRIVER_BATA", fooding, "Fooding (auto)");
         push("POLICE_RTO", rtoExp, "RTO / road (auto)");
@@ -334,8 +423,10 @@ export function TripSettlementForm({
       } else {
         push("MISC", fixedExp, "Fixed trip expense (auto)");
       }
-      push("MISC", apprAdvance, "Approved driver advance (auto)");
-      if (tollType === "COMPANY") push("TOLL", exp.tollTotal, "Toll — company (auto)");
+      if (!isActual) {
+        push("MISC", apprAdvance, "Approved driver advance (auto)");
+        if (tollType === "COMPANY") push("TOLL", exp.tollTotal, "Toll — company (auto)");
+      }
 
       const res = await saveTrip({
         id: initial?.id ?? null,
@@ -373,11 +464,16 @@ export function TripSettlementForm({
         foodingRate,
         rtoExp,
         fixedTripExp: fixedExp,
+        roadExp,
+        otherOpExp,
+        autoFetchedExp: opExp.total,
         actualTotal,
         approvedTotal,
         grandTotal,
-        // freight snapshot so the vehicle P&L sees trip income
-        gFreight: docFreight,
+        // Income snapshot. The vehicle report reads the linked documents live so
+        // a later edit to a chalan reflects without re-saving; this is kept for
+        // legacy sheets and for the trip register's own column.
+        gFreight: docGrandTotal,
         expenses,
       });
       if (res.ok) {
@@ -455,11 +551,14 @@ export function TripSettlementForm({
             <DateInput value={toText} onChange={setToText} />
           </Field>
           <Field label="Calculation Method">
-            <Select value={calcMethod} onValueChange={(v) => setCalcMethod(v as "DIESEL_AVG" | "FIXED")}>
+            <Select value={calcMethod} onValueChange={(v) => setCalcMethod(v as CalcMethod)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="DIESEL_AVG">Diesel Average</SelectItem>
-                <SelectItem value="FIXED">Fixed</SelectItem>
+                {Object.entries(CALC_METHODS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </Field>
@@ -471,21 +570,35 @@ export function TripSettlementForm({
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">
-              Step 2 — Pending Chalans / Broker Slips ({pendingDocs.length}) — selected freight{" "}
-              {formatMoney(docFreight)}
+              Step 2 — Pending Chalans / Broker Slips ({pendingDocs.length}) — selected grand total{" "}
+              {formatMoney(docGrandTotal)}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                (freight {formatMoney(docFreight)})
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="overflow-x-auto">
             <table className="w-full border-collapse text-xs">
               <thead>
                 <tr>
-                  {["", "Type", "Doc No", "Date", "Company / Broker", "From", "To", "Actual Wt", "Charge Wt", "Rate", "Freight"].map(
-                    (h) => (
-                      <th key={h} className={`${cell} bg-muted text-left font-semibold`}>
-                        {h}
-                      </th>
-                    )
-                  )}
+                  {[
+                    "",
+                    "Type",
+                    "Doc No",
+                    "Date",
+                    "Company / Broker",
+                    "From",
+                    "To",
+                    "Actual Wt",
+                    "Charge Wt",
+                    "Freight Rate",
+                    "Freight Amount",
+                    "Grand Total",
+                  ].map((h) => (
+                    <th key={h} className={`${cell} bg-muted text-left font-semibold`}>
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -520,12 +633,20 @@ export function TripSettlementForm({
                       <td className={`${cell} text-right`}>{d.chargeWt}</td>
                       <td className={`${cell} text-right`}>{d.rate}</td>
                       <td className={`${cell} text-right`}>{formatMoney(d.freight)}</td>
+                      <td
+                        className={`${cell} text-right font-semibold`}
+                        title={`Freight ${formatMoney(d.freight)} + additions ${formatMoney(
+                          d.additions
+                        )} − deductions ${formatMoney(d.deductions)}`}
+                      >
+                        {formatMoney(d.grandTotal)}
+                      </td>
                     </tr>
                   );
                 })}
                 {!pendingDocs.length && (
                   <tr>
-                    <td colSpan={11} className={`${cell} py-2 text-center text-muted-foreground`}>
+                    <td colSpan={12} className={`${cell} py-2 text-center text-muted-foreground`}>
                       No pending chalans / broker slips for this vehicle in the date range.
                       Documents settled in earlier trip sheets never appear again.
                     </td>
@@ -541,8 +662,134 @@ export function TripSettlementForm({
         </Card>
       )}
 
+      {/* -------- step 3 (ACTUAL): actual vehicle operating expenses -------- */}
+      {vehicleId && isActual && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">LEFT — Actual Vehicle Operating Expenses</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  className="text-primary underline-offset-2 hover:underline"
+                  onClick={() => setPopup("DIESEL")}
+                >
+                  Diesel (click for details)
+                </button>
+                <b className="tabular-nums">{formatMoney(exp.dieselTotal)}</b>
+              </div>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  className="text-primary underline-offset-2 hover:underline"
+                  onClick={() => setPopup("ADVANCE")}
+                >
+                  Driver Advance (click for details)
+                </button>
+                <b className="tabular-nums">{formatMoney(advances.total)}</b>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Toll</span>
+                <b className="tabular-nums">{formatMoney(exp.tollTotal)}</b>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  className="text-primary underline-offset-2 hover:underline"
+                  onClick={() => setPopup("UREA")}
+                >
+                  Urea ({urea.totalQty.toLocaleString("en-IN")} L ×
+                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <NumInput value={ureaRate} onChange={setUreaRate} className="h-7 w-20 text-xs" />
+                  <b className="tabular-nums">{formatMoney(ureaAmount)}</b>
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  className="text-primary underline-offset-2 hover:underline"
+                  onClick={() => setPopup("OPEX")}
+                >
+                  Auto Fetched Expenses ({opExp.rows.length}) — click for details
+                </button>
+                <b className="tabular-nums">{formatMoney(opExp.total)}</b>
+              </div>
+              <p className="border-t pt-2 text-[11px] text-muted-foreground">
+                Above: fetched from the vehicle expense, driver advance and AdBlue
+                registers. Below: operating expenses entered on this sheet. Toll and urea
+                count in full here whatever their Driver / Company setting — that toggle
+                decides who bears the cost in a driver settlement, which this method does
+                not run.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Road Bills">
+                  <NumInput value={roadBill} onChange={setRoadBill} className="h-8" />
+                </Field>
+                <Field label="RTO Expenses">
+                  <NumInput value={rtoExp} onChange={setRtoExp} className="h-8" />
+                </Field>
+                <Field label="Fooding Days">
+                  <NumInput value={foodingDays} onChange={setFoodingDays} className="h-8" />
+                </Field>
+                <Field label="Fooding Rate / Day">
+                  <NumInput value={foodingRate} onChange={setFoodingRate} className="h-8" />
+                </Field>
+                <Field label="Fooding Total">
+                  <Input value={formatMoney(fooding)} readOnly className="h-8 bg-muted text-right" />
+                </Field>
+                <Field label="Road Expenses">
+                  <NumInput value={roadExp} onChange={setRoadExp} className="h-8" />
+                </Field>
+                <Field label="Any Other Operating Expense">
+                  <NumInput value={otherOpExp} onChange={setOtherOpExp} className="h-8" />
+                </Field>
+              </div>
+              <div className="flex justify-between border-t pt-2 text-base font-semibold">
+                <span>Total Actual Operating Expenses</span>
+                <span className="tabular-nums">{formatMoney(actualOperatingTotal)}</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">RIGHT — Actual Income vs Actual Expenses</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex justify-between">
+                <span>Actual Income (Grand Total of selected documents)</span>
+                <b className="tabular-nums">{formatMoney(docGrandTotal)}</b>
+              </div>
+              <div className="flex justify-between">
+                <span>Actual Operating Expenses</span>
+                <b className="tabular-nums">− {formatMoney(actualOperatingTotal)}</b>
+              </div>
+              <div className="flex items-center justify-between border-t pt-2 text-base font-semibold">
+                <span>Trip Profit / Loss</span>
+                <span
+                  className={`tabular-nums ${
+                    actualProfit >= 0 ? "text-emerald-600" : "text-destructive"
+                  }`}
+                >
+                  {signed(actualProfit)}
+                </span>
+              </div>
+              <p className="rounded-md border border-dashed p-2 text-[11px] text-muted-foreground">
+                No driver settlement is calculated or posted under this method. Driver
+                settlement, driver +/−, adjustment, recovery and salary settlement all stay
+                out of it — the figures above are the vehicle&apos;s actual operating result
+                only. Switch to Diesel Average or Fixed to settle the driver.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
       {/* -------- step 3: left / right -------- */}
-      {vehicleId && (
+      {vehicleId && !isActual && (
         <div className="grid gap-4 lg:grid-cols-2">
           {/* LEFT: actual driver expenses */}
           <Card>
@@ -597,7 +844,7 @@ export function TripSettlementForm({
               </div>
               <div className="flex justify-between border-t pt-2 text-base font-semibold">
                 <span>Total Actual Driver Expenses</span>
-                <span className="tabular-nums">{formatMoney(actualTotal)}</span>
+                <span className="tabular-nums">{formatMoney(driverActualTotal)}</span>
               </div>
             </CardContent>
           </Card>
@@ -606,7 +853,7 @@ export function TripSettlementForm({
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">
-                RIGHT — Company Approved Expenses ({calcMethod === "DIESEL_AVG" ? "Diesel Average" : "Fixed"})
+                RIGHT — Company Approved Expenses ({CALC_METHODS[calcMethod]})
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
@@ -672,8 +919,8 @@ export function TripSettlementForm({
         </div>
       )}
 
-      {/* -------- driver settlement -------- */}
-      {vehicleId && (
+      {/* -------- driver settlement — never shown for the ACTUAL method -------- */}
+      {vehicleId && !isActual && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">
@@ -685,7 +932,7 @@ export function TripSettlementForm({
               <div className="rounded-md border p-2">
                 <div className="text-[11px] text-muted-foreground">Approved − Actual</div>
                 <div className="font-semibold tabular-nums">
-                  {formatMoney(approvedTotal)} − {formatMoney(actualTotal)}
+                  {formatMoney(approvedTotal)} − {formatMoney(driverActualTotal)}
                 </div>
               </div>
               <div className="rounded-md border p-2">
@@ -772,7 +1019,9 @@ export function TripSettlementForm({
                 ? `Diesel — ${formatMoney(exp.dieselTotal)}`
                 : popup === "ADVANCE"
                   ? `Driver Advance — ${formatMoney(advances.total)}`
-                  : `Urea — ${urea.totalQty.toLocaleString("en-IN")} L × ${ureaRate} = ${formatMoney(ureaAmount)}`}
+                  : popup === "OPEX"
+                    ? `Auto Fetched Operating Expenses — ${formatMoney(opExp.total)}`
+                    : `Urea — ${urea.totalQty.toLocaleString("en-IN")} L × ${ureaRate} = ${formatMoney(ureaAmount)}`}
             </DialogTitle>
             <DialogDescription>Fetched live from the source module.</DialogDescription>
           </DialogHeader>
@@ -783,7 +1032,9 @@ export function TripSettlementForm({
                   ? ["Date", "Supplier", "Voucher No", "Amount", "Remarks"]
                   : popup === "ADVANCE"
                     ? ["Date", "Mode", "Voucher Ref", "Amount", "Remarks"]
-                    : ["Date", "Destination", "Litres", "Remarks"]
+                    : popup === "OPEX"
+                      ? ["Date", "Head", "Supplier", "Voucher No", "Amount"]
+                      : ["Date", "Destination", "Litres", "Remarks"]
                 ).map((h) => (
                   <th key={h} className={`${cell} bg-muted text-left font-semibold`}>
                     {h}
@@ -814,6 +1065,23 @@ export function TripSettlementForm({
                     <td className={cell}>{r.remarks}</td>
                   </tr>
                 ))}
+              {popup === "OPEX" &&
+                opExp.rows.map((r, i) => (
+                  <tr key={`${r.voucherNo}-${i}`}>
+                    <td className={cell}>{formatDate(r.date)}</td>
+                    <td className={cell}>{r.head}</td>
+                    <td className={cell}>{r.supplier}</td>
+                    <td className={cell}>{r.voucherNo}</td>
+                    <td className={`${cell} text-right`}>{formatMoney(r.amount)}</td>
+                  </tr>
+                ))}
+              {popup === "OPEX" && !opExp.rows.length && (
+                <tr>
+                  <td colSpan={5} className={`${cell} py-2 text-center text-muted-foreground`}>
+                    No other vehicle expenses booked in this date range.
+                  </td>
+                </tr>
+              )}
               {popup === "UREA" &&
                 urea.rows.map((r) => (
                   <tr key={r.id}>

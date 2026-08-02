@@ -276,6 +276,75 @@ export interface TripFetchedExpenseRow {
 }
 
 /**
+ * Every OTHER vehicle expense booked in the range — everything the diesel/toll
+ * fetch above deliberately skips (tyres, repairs, parking, RTO, spares...).
+ *
+ * Deliberately a separate action rather than a flag on the fetch above: that
+ * one feeds the Diesel and Toll detail popups, and widening it would put
+ * unrelated heads into them. The "Actual Income − Actual Expenses" method is
+ * the only caller — the other two methods must keep seeing exactly what they
+ * see today.
+ */
+export async function fetchOperatingExpensesForTrip(input: {
+  vehicleId: string;
+  dateFrom: string;
+  dateTo: string;
+}): Promise<{ total: number; rows: TripFetchedExpenseRow[] }> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const items = await tx.vehicleExpenseItem.findMany({
+      where: {
+        vehicleId: input.vehicleId,
+        voucher: {
+          firmId: session.firmId,
+          txnType: "EXPENSE",
+          deletedAt: null,
+          date: {
+            gte: new Date(`${input.dateFrom}T00:00:00`),
+            lte: new Date(`${input.dateTo}T23:59:59`),
+          },
+        },
+      },
+      include: { voucher: true },
+    });
+    if (!items.length) return { total: 0, rows: [] };
+    const partyIds = Array.from(
+      new Set(items.map((i) => i.voucher.partyId).filter(Boolean))
+    ) as string[];
+    const [heads, suppliers] = await Promise.all([
+      tx.accountHead.findMany({
+        where: { id: { in: Array.from(new Set(items.map((i) => i.voucher.headId))) } },
+      }),
+      partyIds.length
+        ? tx.party.findMany({ where: { id: { in: partyIds } }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+    ]);
+    const headName = new Map(heads.map((h) => [h.id, h.name]));
+    const supplierName = new Map(suppliers.map((p) => [p.id, p.name]));
+    let total = 0;
+    const rows: TripFetchedExpenseRow[] = [];
+    for (const it of items) {
+      const name = headName.get(it.voucher.headId) ?? "";
+      const lower = name.toLowerCase();
+      // diesel and toll are shown on their own lines already — counting them
+      // here too would double the actual cost
+      if (lower.includes("diesel") || lower.includes("toll")) continue;
+      const amt = toNum(String(it.amount));
+      total += amt;
+      rows.push({
+        date: it.voucher.date.toISOString(),
+        head: name,
+        supplier: it.voucher.partyId ? supplierName.get(it.voucher.partyId) ?? "" : "",
+        amount: amt,
+        voucherNo: it.voucher.voucherNo,
+        remarks: it.voucher.remarks ?? "",
+      });
+    }
+    return { total: round2(total), rows: rows.sort((a, b) => a.date.localeCompare(b.date)) };
+  });
+}
+
+/**
  * Diesel / Toll booked for a vehicle in a date range — for the trip sheet's
  * settlement view only. Nothing else is fetched; nothing is ever created.
  */

@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
+import { round2 } from "@/lib/calc/tds";
+import { chalanTotals, slipTotals } from "@/lib/trip-docs";
 import { PrintToolbar } from "./print-toolbar";
 
 export const dynamic = "force-dynamic";
@@ -45,14 +47,34 @@ export default async function TripPrintPage({ params }: { params: { id: string }
   const { trip, firm, vehicle, driver, chalans, slips, settlement } = data;
   const n = (v: unknown) => toNum(String(v ?? 0));
 
+  // the printed sheet shows the same Grand Total the screen and the vehicle
+  // report do — a freight-only figure here would not reconcile with either
   const linkedDocs = [
-    ...chalans.map((c) => ({ type: "Chalan", no: c.chalanNo, date: c.chalanDate, freight: n(c.freight) })),
-    ...slips.map((s) => ({ type: "Broker Slip", no: s.slipNo, date: s.slipDate, freight: n(s.vFreight) })),
+    ...chalans.map((c) => ({
+      type: "Chalan",
+      no: c.chalanNo,
+      date: c.chalanDate,
+      freight: chalanTotals(c).grandTotal,
+    })),
+    ...slips.map((s) => ({
+      type: "Broker Slip",
+      no: s.slipNo,
+      date: s.slipDate,
+      freight: slipTotals(s).grandTotal,
+    })),
   ];
-  const freight = n(trip.gTotalFreight) + n(trip.rTotalFreight);
+  const freight = linkedDocs.length
+    ? round2(linkedDocs.reduce((s, d) => s + d.freight, 0))
+    : n(trip.gTotalFreight) + n(trip.rTotalFreight);
   const dist1 = Math.max(0, n(trip.unloadingKm) - n(trip.loadingKm));
   const dist2 = n(trip.newLoadingKm) > 0 ? Math.max(0, n(trip.newLoadingKm) - n(trip.unloadingKm)) : 0;
   const isDieselAvg = trip.calcMethod === "DIESEL_AVG";
+  const isActual = trip.calcMethod === "ACTUAL";
+  const methodLabel = isActual
+    ? "Actual Income - Actual Expenses"
+    : isDieselAvg
+      ? "Diesel Average"
+      : "Fixed";
   const tollDriver = trip.tollExpenseType === "DRIVER" ? n(trip.tollAmount) : 0;
   const ureaDriver = trip.ureaExpenseType === "DRIVER" ? n(trip.ureaAmount) : 0;
 
@@ -74,7 +96,7 @@ export default async function TripPrintPage({ params }: { params: { id: string }
               <td className={label}>Date</td>
               <td className={cell}>{formatDate(trip.tripDate)}</td>
               <td className={label}>Method</td>
-              <td className={cell}>{isDieselAvg ? "Diesel Average" : "Fixed"}</td>
+              <td className={cell}>{methodLabel}</td>
             </tr>
             <tr>
               <td className={label}>Vehicle No</td>
@@ -93,7 +115,7 @@ export default async function TripPrintPage({ params }: { params: { id: string }
         {linkedDocs.length > 0 && (
           <>
             <div className="border-b border-t border-black bg-neutral-100 px-2 py-0.5 font-semibold">
-              Chalans / Broker Slips Settled
+              Chalans / Broker Slips Settled (Grand Total)
             </div>
             <table className="w-full border-collapse">
               <tbody>
@@ -107,7 +129,7 @@ export default async function TripPrintPage({ params }: { params: { id: string }
                 ))}
                 <tr className="font-semibold">
                   <td colSpan={3} className={cell}>
-                    Total Freight
+                    Total Grand Total
                   </td>
                   <td className={`${cell} text-right`}>{formatMoney(freight)}</td>
                 </tr>

@@ -100,6 +100,9 @@ export async function TripSheetsTab({
         foodingRate: toNum(String(trip.foodingRate)),
         rtoExp: toNum(String(trip.rtoExp)),
         fixedTripExp: toNum(String(trip.fixedTripExp)),
+        roadExp: toNum(String(trip.roadExp)),
+        otherOpExp: toNum(String(trip.otherOpExp)),
+        autoFetchedExp: toNum(String(trip.autoFetchedExp)),
       }
     : null;
 

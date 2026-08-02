@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
+import { tripGrandTotals } from "@/lib/trip-docs";
 import {
   VehiclePnlClient,
   type VehiclePnlRow,
@@ -16,6 +17,12 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  *   P&L = Trip Freight − Trip Expenses (company approved grand total)
  *         − Vehicle Expenses (excluding Diesel & Toll — already in trips)
  *         − Booked Driver Salary (payment status is irrelevant).
+ *
+ * Trip Freight is the GRAND TOTAL of the chalans / broker slips linked to the
+ * trip, not their bare freight: detention, ODC and fine slip are earned on the
+ * trip and commission, mamul and courier are suffered on it, so freight alone
+ * overstates what the vehicle made. It is read live through the TripDoc links
+ * so editing a chalan updates this report with nothing to re-save.
  */
 export async function VehiclePnlTab({
   searchParams,
@@ -82,11 +89,36 @@ export async function VehiclePnlTab({
           where: { firmId: session.firmId, deletedAt: null, tripId: { not: null } },
         }),
       ]);
-    return { vehicles, trips, drivers, cities, heads, expItems, salaries, assignments, settlements, advances };
+    // live trip income from the linked chalans / broker slips
+    const docTotals = await tripGrandTotals(tx, trips.map((t) => t.id));
+    return {
+      vehicles,
+      trips,
+      drivers,
+      cities,
+      heads,
+      expItems,
+      salaries,
+      assignments,
+      settlements,
+      advances,
+      docTotals,
+    };
   });
 
-  const { vehicles, trips, drivers, cities, heads, expItems, salaries, assignments, settlements, advances } =
-    data;
+  const {
+    vehicles,
+    trips,
+    drivers,
+    cities,
+    heads,
+    expItems,
+    salaries,
+    assignments,
+    settlements,
+    advances,
+    docTotals,
+  } = data;
 
   const cityName = new Map(cities.map((c) => [c.id, c.name]));
   const driverById = new Map(drivers.map((d) => [d.id, d]));
@@ -150,7 +182,13 @@ export async function VehiclePnlTab({
     .map((v) => {
       const vTrips = trips.filter((t) => t.vehicleId === v.id);
       const pnlTrips: PnlTrip[] = vTrips.map((t) => {
-        const freight = r2(toNum(String(t.gTotalFreight)) + toNum(String(t.rTotalFreight)));
+        // linked documents win; the stored snapshot is the fallback for legacy
+        // sheets saved before the links existed
+        const linked = docTotals.get(t.id);
+        const freight =
+          linked !== undefined
+            ? linked
+            : r2(toNum(String(t.gTotalFreight)) + toNum(String(t.rTotalFreight)));
         const approved = r2(t.expenses.reduce((s, e) => s + toNum(String(e.amount)), 0));
         const settlement = settlementByTrip.get(t.id) ?? null;
         const driver = t.driverId ? driverById.get(t.driverId) : null;
