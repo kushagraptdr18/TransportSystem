@@ -56,7 +56,13 @@ function isGroupActive(group: NavGroup, pathname: string): boolean {
 /** Desktop menu bar: one dropdown per module group. */
 function DesktopMenu({ pathname }: { pathname: string }) {
   return (
-    <nav className="no-print hidden items-center gap-0.5 overflow-x-auto px-2 lg:flex">
+    // The row is constrained to the same max-width and padding as <main>, so
+    // Dashboard lines up with the page title beneath it instead of hugging the
+    // window edge. justify-between spreads the groups across that width, which
+    // means adding or removing a menu item redistributes the row on its own -
+    // no gap opening up on the right. Once the groups no longer fit,
+    // justify-between stops applying and the row scrolls instead.
+    <nav className="no-print mx-auto hidden w-full max-w-[1400px] items-center justify-between gap-0.5 overflow-x-auto px-4 md:px-6 lg:flex">
       {NAV.map((group) => {
         const active = isGroupActive(group, pathname);
         if (group.href) {
