@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Download } from "lucide-react";
+import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -88,9 +88,21 @@ export function ExportButton<TRow>({
   };
 
   return (
-    <Button variant="outline" size="sm" onClick={handleExport} disabled={busy || rows.length === 0}>
-      <Download className="h-4 w-4" />
-      {busy ? "Exporting..." : label}
+    // icon-only below sm - the label is the first thing worth dropping when
+    // three or four actions are competing for a phone's width. title and
+    // aria-label keep it named for pointer and screen-reader users, and the
+    // icon becomes a spinner so progress is still visible with the text gone.
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={handleExport}
+      disabled={busy || rows.length === 0}
+      title={busy ? "Exporting..." : label}
+      aria-label={label}
+      className="max-sm:px-2.5"
+    >
+      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+      <span className="hidden sm:inline">{busy ? "Exporting..." : label}</span>
     </Button>
   );
 }

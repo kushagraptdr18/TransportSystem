@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Download, Plus, Trash2, Upload } from "lucide-react";
+import { Download, Loader2, Plus, Trash2, Upload } from "lucide-react";
 import { formatDate, formatMoney, parseDdMmYyyy } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -602,9 +602,25 @@ function ImportControls() {
           if (f) void doImport(f);
         }}
       />
-      <Button type="button" variant="outline" size="sm" disabled={busy !== null} onClick={downloadTemplate}>
-        <Download className="h-4 w-4" />
-        {busy === "template" ? "Preparing..." : "Excel Template"}
+      {/* labels drop below sm, matching the shared Export / Import buttons */}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={busy !== null}
+        onClick={downloadTemplate}
+        title="Download an Excel template with the expected columns"
+        aria-label="Excel template"
+        className="max-sm:px-2.5"
+      >
+        {busy === "template" ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="h-4 w-4" />
+        )}
+        <span className="hidden sm:inline">
+          {busy === "template" ? "Preparing..." : "Excel Template"}
+        </span>
       </Button>
       <Button
         type="button"
@@ -612,9 +628,18 @@ function ImportControls() {
         size="sm"
         disabled={busy !== null}
         onClick={() => fileRef.current?.click()}
+        title="Import expenses from an Excel (.xlsx) or CSV file"
+        aria-label="Import Excel"
+        className="max-sm:px-2.5"
       >
-        <Upload className="h-4 w-4" />
-        {busy === "import" ? "Importing..." : "Import Excel"}
+        {busy === "import" ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Upload className="h-4 w-4" />
+        )}
+        <span className="hidden sm:inline">
+          {busy === "import" ? "Importing..." : "Import Excel"}
+        </span>
       </Button>
     </span>
   );

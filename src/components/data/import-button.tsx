@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Download, Upload } from "lucide-react";
+import { Download, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import type { ImportSummary } from "@/lib/import-core";
@@ -73,15 +73,19 @@ export function ImportButton({ config }: { config: ImportConfig }) {
           if (f) void runImport(f);
         }}
       />
+      {/* labels drop below sm; the title text was already carrying the real
+          explanation, so nothing is lost that a tooltip did not already say */}
       <Button
         type="button"
         variant="outline"
         size="sm"
         title="Download a sample template with the expected columns"
+        aria-label="Download template"
         onClick={downloadTemplate}
+        className="max-sm:px-2.5"
       >
         <Download className="h-4 w-4" />
-        Template
+        <span className="hidden sm:inline">Template</span>
       </Button>
       <Button
         type="button"
@@ -90,9 +94,11 @@ export function ImportButton({ config }: { config: ImportConfig }) {
         disabled={busy}
         onClick={() => fileRef.current?.click()}
         title="Import records from an Excel (.xlsx) or CSV file"
+        aria-label="Import"
+        className="max-sm:px-2.5"
       >
-        <Upload className="h-4 w-4" />
-        {busy ? "Importing..." : "Import"}
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+        <span className="hidden sm:inline">{busy ? "Importing..." : "Import"}</span>
       </Button>
     </span>
   );
