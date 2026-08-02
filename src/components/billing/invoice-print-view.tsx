@@ -194,102 +194,115 @@ export function InvoicePrintView({
     // 277mm is the printable width of A4 landscape at an 8mm margin; seventeen
     // columns never fitted the 190mm portrait sheet
     <div className="mx-auto max-w-[277mm] border-2 border-black bg-white text-black">
+      {/* masthead — logo | firm | bill no & date */}
+      <table className="w-full border-collapse text-xs">
+        <tbody>
+          <tr>
+            {firm.logoPath && (
+              <td className="w-[24mm] border-b border-r border-black p-1 align-middle">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/uploads/${firm.logoPath}`}
+                  alt=""
+                  className="mx-auto h-14 w-auto max-w-full object-contain"
+                />
+              </td>
+            )}
+            <td className="border-b border-black px-2 py-1 text-center align-middle">
+              <div className="text-xl font-bold uppercase leading-tight">{firm.name}</div>
+              {firm.address && <div className="text-[11px] font-semibold">{firm.address}</div>}
+              <div className="text-[11px]">
+                {[firm.mobile && `Mob: ${firm.mobile}`, firm.email && `Email: ${firm.email}`]
+                  .filter(Boolean)
+                  .join("  |  ")}
+              </div>
+            </td>
+            {/* the number a customer quotes back gets its own box, larger than
+                anything else in the header */}
+            <td className="w-[50mm] border-b border-l border-black p-0 align-top">
+              <div className="border-b border-black px-2 py-1 text-[15px] font-bold">
+                BILL NO. : {data.billNo}
+              </div>
+              <div className="px-2 py-1 text-[15px] font-bold">DATE : {data.billDate}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
       {/* title band */}
-      <div className="border-b-2 border-black py-1 text-center text-base font-bold tracking-widest">
+      <div className="border-b border-black py-0.5 text-center text-sm font-bold tracking-widest">
         TAX INVOICE
       </div>
 
-      {/* company information (from Company Master) */}
-      <div className="flex items-center gap-3 border-b border-black px-2 py-1">
-        {/* the logo is absolutely positioned out of the flow so the name stays
-            optically centred on the sheet rather than being pushed right */}
-        {firm.logoPath && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`/api/uploads/${firm.logoPath}`}
-            alt=""
-            className="h-12 w-12 shrink-0 object-contain"
-          />
-        )}
-        <div className="min-w-0 flex-1 text-center">
-          <div className="text-xl font-bold uppercase">{firm.name}</div>
-          {firm.address && <div className="text-xs">{firm.address}</div>}
-          <div className="text-xs">
-            {[firm.mobile && `Mob: ${firm.mobile}`, firm.email && `Email: ${firm.email}`]
-              .filter(Boolean)
-              .join("  |  ")}
-          </div>
-        </div>
-        {/* mirrors the logo's width so the centred block stays centred */}
-        {firm.logoPath && <div className="h-12 w-12 shrink-0" aria-hidden />}
-      </div>
+      {/* Bill To on the left, every remaining field as label/value cells right */}
       <table className="w-full border-collapse text-xs">
         <tbody>
           <tr>
-            <td className={labelCell}>PAN</td>
-            <td className={cell}>{firm.pan}</td>
-            <td className={labelCell}>GSTIN</td>
-            <td className={cell}>{firm.gstin}</td>
-            <td className={labelCell}>Vendor Code</td>
-            <td className={cell}>{party.vendorCode || firm.vendorCode}</td>
-            <td className={labelCell}>IBA Code</td>
-            <td className={cell}>{firm.ibaCode}</td>
-            {/* "(Info)" is deliberate: TDS is the customer's to deduct, not a
-                charge on this bill, and a bare rate in a tax-invoice header
-                reads as an amount being applied */}
-            <td className={labelCell}>TDS Applicable (Info)</td>
-            <td className={cell}>{data.tdsPct || 1}%</td>
-          </tr>
-          <tr>
-            <td className={labelCell}>Service</td>
-            <td className={cell} colSpan={3}>
-              {data.serviceDescription}
+            <td className="w-[40%] border-b border-r border-black px-2 py-1 align-top">
+              <div className="font-semibold underline">Bill To</div>
+              <div className="text-sm font-bold">{party.name}</div>
+              {party.address && <div>{party.address}</div>}
+              {party.gstin && (
+                <div>
+                  <b>GSTIN :</b> {party.gstin}
+                </div>
+              )}
+              {party.pan && (
+                <div>
+                  <b>PAN :</b> {party.pan}
+                </div>
+              )}
+              {party.stateName && (
+                <div>
+                  <b>State :</b> {party.stateName}
+                  {party.stateCode ? ` (Code ${party.stateCode})` : ""}
+                </div>
+              )}
             </td>
-            <td className={labelCell}>SAC Code</td>
-            <td className={cell}>{data.sacCode}</td>
-            <td className={labelCell}>Reverse Charge</td>
-            <td className={cell} colSpan={3}>
-              {firm.rcmCovered ? "Yes" : "No"}
+            <td className="border-b border-black p-0 align-top">
+              <table className="w-full border-collapse">
+                <tbody>
+                  {/* one list, two pairs per row — reordering is a code edit
+                      here rather than a re-layout */}
+                  {(
+                    [
+                      ["PAN", firm.pan, "GSTIN", firm.gstin],
+                      [
+                        "Vendor Code",
+                        party.vendorCode || firm.vendorCode,
+                        "IBA Code",
+                        firm.ibaCode,
+                      ],
+                      // "(Info)" is deliberate: TDS is the customer's to deduct,
+                      // not a charge on this bill
+                      ["TDS Applicable (Info)", `${data.tdsPct || 1}%`, "SAC Code", data.sacCode],
+                      [
+                        "Service",
+                        data.serviceDescription,
+                        "Reverse Charge",
+                        firm.rcmCovered ? "Yes" : "No",
+                      ],
+                      [
+                        "Place of Supply",
+                        data.placeOfSupply,
+                        "State / Code",
+                        `${firm.stateName}${firm.stateCode ? ` / ${firm.stateCode}` : ""}`,
+                      ],
+                    ] as [string, string, string, string][]
+                  ).map(([l1, v1, l2, v2]) => (
+                    <tr key={l1}>
+                      <td className={`${labelCell} border-t-0`}>{l1}</td>
+                      <td className={`${cell} border-t-0`}>{v1}</td>
+                      <td className={`${labelCell} border-t-0`}>{l2}</td>
+                      <td className={`${cell} border-r-0 border-t-0`}>{v2}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </td>
           </tr>
         </tbody>
       </table>
-
-      {/* invoice details */}
-      <table className="w-full border-collapse text-xs">
-        <tbody>
-          <tr>
-            <td className={labelCell}>Bill Number</td>
-            <td className={cell}>{data.billNo}</td>
-            <td className={labelCell}>Bill Date</td>
-            <td className={cell}>{data.billDate}</td>
-            <td className={labelCell}>Place of Supply</td>
-            <td className={cell}>{data.placeOfSupply}</td>
-            <td className={labelCell}>State / Code</td>
-            <td className={cell} colSpan={3}>
-              {firm.stateName}
-              {firm.stateCode ? ` / ${firm.stateCode}` : ""}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      {/* customer details (from Party Master) */}
-      <div className="border-b border-t border-black px-2 py-1 text-xs">
-        <div className="font-semibold underline">Bill To</div>
-        <div className="text-sm font-bold">{party.name}</div>
-        {party.address && <div>{party.address}</div>}
-        <div>
-          {[
-            party.gstin && `GSTIN: ${party.gstin}`,
-            party.pan && `PAN: ${party.pan}`,
-            party.stateName &&
-              `State: ${party.stateName}${party.stateCode ? ` (Code: ${party.stateCode})` : ""}`,
-          ]
-            .filter(Boolean)
-            .join("  |  ")}
-        </div>
-      </div>
 
       {/* LR details table — expands with the number of LRs */}
       <div className="overflow-x-auto">
@@ -329,11 +342,56 @@ export function InvoicePrintView({
         </table>
       </div>
 
-      <div className="flex">
-        {/* left: RCM info + declarations + remarks + bank */}
-        <div className="w-1/2 border-r border-black p-2 text-xs">
+      {/*
+        The lower half is two columns that both run to the foot of the sheet:
+        everything in words on the left, everything in figures on the right,
+        ending in the signature. items-stretch is what makes the sheet finish on
+        one clean line however long the declaration runs.
+      */}
+      <div className="flex items-stretch">
+        {/* left: charges, remarks, declaration (with RCM inside it), notes */}
+        <div className="flex w-1/2 flex-col border-r border-black p-2 text-xs">
+          {data.charges.length > 0 && (
+            <table className="mb-2 w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className={`${labelCell} text-left`}>Additional Charge</th>
+                  <th className={`${labelCell} text-left`}>Related LR(s)</th>
+                  <th className={`${labelCell} text-left`}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.charges.map((c, i) => (
+                  <tr key={i}>
+                    <td className={cell}>{c.label}</td>
+                    <td className={cell}>{c.relatedLrs || "All LRs"}</td>
+                    <td className={`${cell} text-right`}>{formatMoney(c.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+
+          {data.remarks && (
+            <div className="mb-2">
+              <b>Remarks:</b> {data.remarks}
+            </div>
+          )}
+
+          <div className="font-semibold underline">Declaration</div>
+          <div className="text-[10px]">
+            We hereby declare that this invoice shows the actual price of the services described
+            and that all particulars are true and correct. Goods Transport Agency service.
+          </div>
+
+          {/*
+            The RCM figures and the Notification 13/2017 wording are one block.
+            The table is only meaningful as evidence for the sentence beneath it —
+            standing alone it reads as a tax charge sitting beside a Grand Total
+            that deliberately excludes it.
+          */}
           {data.rcm && (
-            <div className="mb-2 border border-black p-1">
+            <div className="mt-1 border border-black p-1">
               <div className="font-semibold">
                 Reverse Charge Mechanism (RCM) — For Information Only
               </div>
@@ -357,53 +415,28 @@ export function InvoicePrintView({
                   ))}
                 </tbody>
               </table>
+              <div className="mt-1 text-[10px] font-semibold">
+                GST on this invoice is payable by the recipient of service under Reverse Charge
+                Mechanism as per Notification No. 13/2017 — Central Tax (Rate). GST has NOT been
+                charged on this invoice.
+              </div>
             </div>
           )}
 
-          {data.charges.length > 0 && (
-            <table className="mb-2 w-full border-collapse">
-              <thead>
-                <tr>
-                  <th className={`${labelCell} text-left`}>Additional Charge</th>
-                  <th className={`${labelCell} text-left`}>Related LR(s)</th>
-                  <th className={`${labelCell} text-left`}>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.charges.map((c, i) => (
-                  <tr key={i}>
-                    <td className={cell}>{c.label}</td>
-                    <td className={cell}>{c.relatedLrs || "All LRs"}</td>
-                    <td className={`${cell} text-right`}>{formatMoney(c.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-
-          <div className="font-semibold underline">Declaration</div>
-          <div className="text-[10px]">
-            We hereby declare that this invoice shows the actual price of the services described
-            and that all particulars are true and correct. Goods Transport Agency service.
+          {/* mt-auto pins the standing notes to the foot of the column, where a
+              full-width strip used to carry them */}
+          <div className="mt-auto pt-2 text-[10px]">
+            <div>E. &amp; O.E.</div>
+            <div>
+              Interest @ 12% per annum will be charged from the date of the bill if payment is
+              delayed.
+            </div>
+            <div>All disputes are subject to Raigarh jurisdiction only.</div>
           </div>
-          {data.rcm && (
-            <div className="mt-1 text-[10px] font-semibold">
-              GST on this invoice is payable by the recipient of service under Reverse Charge
-              Mechanism as per Notification No. 13/2017 — Central Tax (Rate). GST has NOT been
-              charged on this invoice.
-            </div>
-          )}
-          {/* TDS now sits in the header table, bank details in the right-hand
-              column beside the total — both were unreadable buried here */}
-          {data.remarks && (
-            <div className="mt-1">
-              <b>Remarks:</b> {data.remarks}
-            </div>
-          )}
         </div>
 
-        {/* right: calculation section */}
-        <div className="w-1/2 text-xs">
+        {/* right: totals, amount in words, bank, then the signature */}
+        <div className="flex w-1/2 flex-col text-xs">
           <table className="w-full border-collapse">
             <tbody>
               {(
@@ -464,34 +497,25 @@ export function InvoicePrintView({
               </table>
             </div>
           )}
-        </div>
-      </div>
 
-      {/* footer notes + signatory */}
-      <div className="border-t border-black px-2 py-1 text-[10px]">
-        <div>E. &amp; O.E.</div>
-        <div>
-          Interest @ 12% per annum will be charged from the date of the bill if payment is delayed.
-        </div>
-        <div>All disputes are subject to Raigarh jurisdiction only.</div>
-      </div>
-      {/* h-24 was pushing this block onto a second sheet; h-16 leaves room to
-          sign and keeps the bill on one page */}
-      <div className="flex break-inside-avoid border-t border-black text-xs">
-        <div className="flex h-16 w-1/2 items-end gap-2 border-r border-black p-2">
-          {firm.sealPath && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={`/api/uploads/${firm.sealPath}`}
-              alt=""
-              className="h-14 w-14 object-contain"
-            />
-          )}
-          <span>Company Seal</span>
-        </div>
-        <div className="flex h-16 w-1/2 flex-col items-end justify-between p-2">
-          <div className="font-semibold">For {firm.name}</div>
-          <div>Authorized Signatory</div>
+          {/*
+            Last thing on the sheet, read top to bottom: firm, seal, signatory.
+            The seal sits between the two lines rather than behind either, since
+            a stamped bill is normally signed across it. flex-1 lets the panel
+            take whatever height the left column leaves.
+          */}
+          <div className="flex flex-1 break-inside-avoid flex-col items-end justify-between p-2">
+            <div className="font-semibold">For {firm.name}</div>
+            {firm.sealPath && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`/api/uploads/${firm.sealPath}`}
+                alt=""
+                className="my-0.5 mr-3 h-14 w-14 object-contain"
+              />
+            )}
+            <div className="mt-4">Authorized Signatory</div>
+          </div>
         </div>
       </div>
     </div>
