@@ -46,8 +46,8 @@ export interface FirmFormValues {
 
 interface FirmFormProps {
   defaults: FirmFormValues;
-  logoPath: string | null;
-  sealPath: string | null;
+  logoUrl: string | null;
+  sealUrl: string | null;
   bankOptions: MasterOption[];
   stateOptions: MasterOption[];
   cityOptions: MasterOption[];
@@ -56,14 +56,15 @@ interface FirmFormProps {
 function UploadBlock({
   kind,
   label,
-  currentPath,
+  currentUrl,
 }: {
   kind: "logo" | "seal";
   label: string;
-  currentPath: string | null;
+  /** from firmImageUrl(); the route serves the bytes held in the firm row */
+  currentUrl: string | null;
 }) {
   const { toast } = useToast();
-  const [path, setPath] = React.useState(currentPath);
+  const [url, setUrl] = React.useState(currentUrl);
   const [busy, setBusy] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
 
@@ -76,7 +77,9 @@ function UploadBlock({
       const res = await fetch("/api/uploads/firm", { method: "POST", body: fd });
       const json = await res.json();
       if (!json.ok) throw new Error(json.error ?? "Upload failed");
-      setPath(json.path);
+      // the URL carries a version, so swapping it is what makes the preview
+      // show the new image instead of the cached one
+      setUrl(json.url);
       toast({ title: `${label} updated` });
     } catch (err) {
       toast({
@@ -93,10 +96,10 @@ function UploadBlock({
     <div className="space-y-2">
       <Label>{label}</Label>
       <div className="flex items-center gap-3">
-        {path ? (
+        {url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={`/api/uploads/${path}`}
+            src={url}
             alt={label}
             className="h-16 w-16 rounded border object-contain"
           />
@@ -148,8 +151,8 @@ function Field({
 
 export function FirmForm({
   defaults,
-  logoPath,
-  sealPath,
+  logoUrl,
+  sealUrl,
   bankOptions,
   stateOptions,
   cityOptions,
@@ -326,8 +329,8 @@ export function FirmForm({
           <CardTitle className="text-sm">Logo &amp; Seal</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 p-4 pt-2 sm:grid-cols-2">
-          <UploadBlock kind="logo" label="Logo" currentPath={logoPath} />
-          <UploadBlock kind="seal" label="Seal" currentPath={sealPath} />
+          <UploadBlock kind="logo" label="Logo" currentUrl={logoUrl} />
+          <UploadBlock kind="seal" label="Seal" currentUrl={sealUrl} />
         </CardContent>
       </Card>
 

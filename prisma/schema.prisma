@@ -204,8 +204,18 @@ model Firm {
   bankAccount        String?
   bankBranch         String?
   bankIfsc           String?
+  // Logo & seal live IN the database, not on disk. The host has no persistent
+  // volume, so a file written at runtime disappears on the next redeploy while
+  // the row still points at it. logoPath / sealPath are kept only so rows
+  // written before this still resolve if their file happens to survive.
   logoPath           String?
   sealPath           String?
+  logoData           Bytes?
+  logoMime           String?
+  sealData           Bytes?
+  sealMime           String?
+  /** bumped on every logo/seal write so browsers refetch instead of caching */
+  brandingVersion    Int      @default(0)
   smtpHost           String?
   smtpUser           String?
   smtpPass           String?

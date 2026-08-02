@@ -2,6 +2,7 @@ import type { InvoiceKind } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { stateCodeFromGstin } from "@/lib/calc/gst";
+import { firmImageUrl } from "@/lib/branding";
 import { toNum } from "@/lib/utils";
 import { InvoiceForm } from "@/components/billing/invoice-form";
 import { getInvoiceForEdit, type BillingDefaults } from "./actions";
@@ -109,8 +110,8 @@ export async function InvoiceEntryPage({
           ibaCode: firm?.ibaCode ?? "",
           vendorCode: firm?.vendorCode ?? "",
           rcmCovered: firm?.rcmCovered ?? true,
-          logoPath: firm?.logoPath ?? null,
-          sealPath: firm?.sealPath ?? null,
+          logoUrl: firmImageUrl(firm, "logo"),
+          sealUrl: firmImageUrl(firm, "seal"),
         }}
         initial={initial && initial.kind === kind ? initial : null}
         partyOptions={parties.map((p) => ({

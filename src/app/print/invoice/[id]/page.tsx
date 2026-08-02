@@ -4,6 +4,7 @@ import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { round2 } from "@/lib/calc/tds";
 import { gstSplit, stateCodeFromGstin } from "@/lib/calc/gst";
+import { firmImageUrl } from "@/lib/branding";
 import {
   InvoicePrintView,
   type InvoiceViewData,
@@ -91,8 +92,8 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
       ibaCode: firm?.ibaCode ?? "",
       vendorCode: firm?.vendorCode ?? "",
       rcmCovered: firm?.rcmCovered ?? true,
-      logoPath: firm?.logoPath ?? null,
-      sealPath: firm?.sealPath ?? null,
+      logoUrl: firmImageUrl(firm, "logo"),
+      sealUrl: firmImageUrl(firm, "seal"),
     },
     tdsPct: toNum(invoice.tdsPct) || 1,
     serviceDescription: "Goods Transport Service",

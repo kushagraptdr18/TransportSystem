@@ -148,8 +148,8 @@ interface InvoiceFormProps {
     ibaCode: string;
     vendorCode: string;
     rcmCovered: boolean;
-    logoPath?: string | null;
-    sealPath?: string | null;
+    logoUrl?: string | null;
+    sealUrl?: string | null;
   };
   partyOptions: MasterOption[];
   bankOptions: MasterOption[];

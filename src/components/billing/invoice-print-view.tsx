@@ -59,9 +59,9 @@ export interface InvoiceViewData {
     ibaCode: string;
     vendorCode: string;
     rcmCovered: boolean;
-    /** upload paths from the Firm master; served via /api/uploads/<path> */
-    logoPath?: string | null;
-    sealPath?: string | null;
+    /** ready-to-use URLs from firmImageUrl(); null when nothing is uploaded */
+    logoUrl?: string | null;
+    sealUrl?: string | null;
   };
   tdsPct: number;
   serviceDescription: string;
@@ -205,14 +205,14 @@ export function InvoicePrintView({
             masthead height between them.
           */}
           <tr>
-            {firm.logoPath && (
+            {firm.logoUrl && (
               <td
                 rowSpan={2}
                 className="w-[24mm] border-b border-r border-black p-1 align-middle"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={`/api/uploads/${firm.logoPath}`}
+                  src={firm.logoUrl}
                   alt=""
                   className="mx-auto h-14 w-auto max-w-full object-contain"
                 />
@@ -518,10 +518,10 @@ export function InvoicePrintView({
           */}
           <div className="flex flex-1 break-inside-avoid flex-col items-end justify-between p-2">
             <div className="font-semibold">For {firm.name}</div>
-            {firm.sealPath && (
+            {firm.sealUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={`/api/uploads/${firm.sealPath}`}
+                src={firm.sealUrl}
                 alt=""
                 className="my-0.5 mr-3 h-14 w-14 object-contain"
               />

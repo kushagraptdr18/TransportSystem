@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney } from "@/lib/utils";
+import { firmImageUrl } from "@/lib/branding";
 import { PrintToolbar } from "@/components/lr/print-toolbar";
 
 export const dynamic = "force-dynamic";
@@ -77,6 +78,7 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
 
   if (!data) notFound();
   const { lr, firm, sourceCity, destCity, consignor, consignee, billTo, vehicle, products } = data;
+  const logoUrl = firmImageUrl(firm, "logo");
   const productTypeById = new Map(products.map((p) => [p.id, p.productType]));
   const showAmounts = lr.printFreight;
 
@@ -127,9 +129,9 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
             {/* ---- Firm header ---- */}
             <div className="flex items-stretch justify-between gap-3 p-2.5 pb-2">
               <div className="flex items-center gap-3">
-                {firm.logoPath ? (
+                {logoUrl ? (
                   <img
-                    src={`/api/uploads/${firm.logoPath}`}
+                    src={logoUrl}
                     alt=""
                     className="h-14 w-14 object-contain"
                   />

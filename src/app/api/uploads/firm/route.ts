@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { randomUUID } from "crypto";
-import { mkdir, writeFile } from "fs/promises";
+import { readFile } from "fs/promises";
 import path from "path";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
@@ -15,6 +14,14 @@ const ALLOWED_EXT: Record<string, string> = {
   "image/jpg": "jpg",
   "image/png": "png",
   "image/webp": "webp",
+};
+
+/** content types for pre-move rows, whose mime was never recorded */
+const LEGACY_TYPES: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
 };
 
 /**
@@ -60,26 +67,90 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
-  const relPath = `${session.tenantId}/firm/${randomUUID()}.${ext}`;
-  const absPath = path.join(uploadDir, relPath);
-  await mkdir(path.dirname(absPath), { recursive: true });
-  await writeFile(absPath, Buffer.from(await file.arrayBuffer()));
+  // Stored in the database, not on disk. Two images per firm, capped at 2 MB
+  // each, is well within what a row can carry — and unlike a file it survives a
+  // redeploy on a host with no persistent volume.
+  const bytes = Buffer.from(await file.arrayBuffer());
 
-  await withTenant(session.tenantId, async (tx) => {
+  const version = await withTenant(session.tenantId, async (tx) => {
     const before = await tx.firm.findUniqueOrThrow({ where: { id: session.firmId } });
     const after = await tx.firm.update({
       where: { id: session.firmId },
-      data: kind === "logo" ? { logoPath: relPath } : { sealPath: relPath },
+      data: {
+        ...(kind === "logo"
+          ? { logoData: bytes, logoMime: file.type, logoPath: null }
+          : { sealData: bytes, sealMime: file.type, sealPath: null }),
+        // the URL is stable, so without this the browser would keep showing the
+        // previous image from cache after a re-upload
+        brandingVersion: { increment: 1 },
+      },
     });
     await audit(tx, session, {
       entity: "Firm",
       entityId: session.firmId,
       action: "UPDATE",
-      before: { logoPath: before.logoPath, sealPath: before.sealPath },
-      after: { logoPath: after.logoPath, sealPath: after.sealPath },
+      // never audit the image bytes themselves — only that they changed
+      before: { [`${kind}Mime`]: kind === "logo" ? before.logoMime : before.sealMime },
+      after: { [`${kind}Mime`]: kind === "logo" ? after.logoMime : after.sealMime },
     });
+    return after.brandingVersion;
   });
 
-  return NextResponse.json({ ok: true, path: relPath });
+  return NextResponse.json({ ok: true, url: `/api/uploads/firm?kind=${kind}&v=${version}` });
+}
+
+/**
+ * GET ?kind=logo|seal — the current firm's branding image.
+ *
+ * Scoped to the session's firm rather than taking an id, so one tenant can
+ * never address another's. Falls back to the file on disk for rows written
+ * before the move, which is the only way a pre-existing logo keeps working.
+ */
+export async function GET(req: NextRequest) {
+  let session;
+  try {
+    session = requireSession();
+  } catch {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const kind = req.nextUrl.searchParams.get("kind");
+  if (kind !== "logo" && kind !== "seal") {
+    return NextResponse.json({ ok: false, error: "kind must be 'logo' or 'seal'" }, { status: 400 });
+  }
+
+  const firm = await withTenant(session.tenantId, (tx) =>
+    tx.firm.findUnique({ where: { id: session.firmId } })
+  );
+  if (!firm) return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+
+  const data = kind === "logo" ? firm.logoData : firm.sealData;
+  const mime = (kind === "logo" ? firm.logoMime : firm.sealMime) ?? "application/octet-stream";
+  const legacyPath = kind === "logo" ? firm.logoPath : firm.sealPath;
+
+  let body: Buffer | null = data ? Buffer.from(data) : null;
+  let contentType = mime;
+
+  if (!body && legacyPath) {
+    const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
+    const absPath = path.resolve(uploadDir, legacyPath);
+    if (absPath.startsWith(path.resolve(uploadDir) + path.sep)) {
+      try {
+        body = await readFile(absPath);
+        contentType = LEGACY_TYPES[path.extname(absPath).toLowerCase()] ?? contentType;
+      } catch {
+        // the file is gone — the usual case, and why this moved into the DB
+      }
+    }
+  }
+
+  if (!body) return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+
+  return new NextResponse(new Uint8Array(body), {
+    headers: {
+      "Content-Type": contentType,
+      // the ?v= query changes on every upload, so this can be cached hard
+      "Cache-Control": "private, max-age=86400",
+    },
+  });
 }

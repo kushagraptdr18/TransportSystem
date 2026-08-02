@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
+import { firmImageUrl } from "@/lib/branding";
 import { FirmForm, type FirmFormValues } from "@/components/settings/firm-form";
 
 export const dynamic = "force-dynamic";
@@ -66,8 +67,8 @@ export default async function FirmSettingsPage() {
       <h1 className="page-title">Firm Settings — {firm.name}</h1>
       <FirmForm
         defaults={defaults}
-        logoPath={firm.logoPath}
-        sealPath={firm.sealPath}
+        logoUrl={firmImageUrl(firm, "logo")}
+        sealUrl={firmImageUrl(firm, "seal")}
         bankOptions={banks.map((b) => ({ value: b.id, label: b.name }))}
         stateOptions={states.map((st) => ({ value: st.id, label: st.name }))}
         cityOptions={cities.map((c) => ({ value: c.id, label: c.name }))}
