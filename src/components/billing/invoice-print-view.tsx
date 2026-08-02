@@ -227,14 +227,19 @@ export function InvoicePrintView({
                   .join("  |  ")}
               </div>
             </td>
-            {/* the number a customer quotes back gets its own box, larger than
-                anything else in the header */}
-            <td className="w-[50mm] border-b border-l border-black px-2 py-1 text-[15px] font-bold">
+            {/*
+              The box is sized to hold a full bill number on one line —
+              whitespace-nowrap stops it wrapping, and the width is what stops
+              nowrap from pushing into the firm name instead. Not bold: at this
+              size it stands out by position and box, and bold made it heavier
+              than the firm name above the table.
+            */}
+            <td className="w-[62mm] whitespace-nowrap border-b border-l border-black px-2 py-1 text-[13px]">
               BILL NO. : {data.billNo}
             </td>
           </tr>
           <tr>
-            <td className="border-b border-l border-black px-2 py-1 text-[15px] font-bold">
+            <td className="whitespace-nowrap border-b border-l border-black px-2 py-1 text-[13px]">
               DATE : {data.billDate}
             </td>
           </tr>
