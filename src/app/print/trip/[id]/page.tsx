@@ -34,7 +34,13 @@ export default async function TripPrintPage({ params }: { params: { id: string }
     const slipIds = docs.filter((d) => d.refType === "BROKER_SLIP").map((d) => d.refId);
     const [chalans, slips] = await Promise.all([
       chalanIds.length
-        ? tx.chalan.findMany({ where: { id: { in: chalanIds } } })
+        ? tx.chalan.findMany({
+            where: { id: { in: chalanIds } },
+            // the chalan's own route may be blank on older documents, so the
+            // first LR is the fallback — same order the trip sheet's pending
+            // list uses, so the printed route matches what was picked there
+            include: { lrs: { include: { lr: true } } },
+          })
         : Promise.resolve([]),
       slipIds.length
         ? tx.brokerSlip.findMany({ where: { id: { in: slipIds } } })
@@ -44,25 +50,54 @@ export default async function TripPrintPage({ params }: { params: { id: string }
   });
 
   if (!data) notFound();
-  const { trip, firm, vehicle, driver, chalans, slips, settlement } = data;
+  const { trip, firm, vehicle, driver, chalans, slips, settlement, cities } = data;
   const n = (v: unknown) => toNum(String(v ?? 0));
+  const cityName = new Map(cities.map((c) => [c.id, c.name]));
+  const city = (id: string | null | undefined) => (id ? cityName.get(id) ?? "" : "");
 
   // the printed sheet shows the same Grand Total the screen and the vehicle
   // report do — a freight-only figure here would not reconcile with either
   const linkedDocs = [
-    ...chalans.map((c) => ({
-      type: "Chalan",
-      no: c.chalanNo,
-      date: c.chalanDate,
-      freight: chalanTotals(c).grandTotal,
-    })),
+    ...chalans.map((c) => {
+      const firstLr = c.lrs[0]?.lr;
+      return {
+        type: "Chalan",
+        no: c.chalanNo,
+        date: c.chalanDate,
+        from: city(c.sourceCityId) || city(firstLr?.sourceCityId),
+        to: city(c.destCityId) || city(firstLr?.destCityId),
+        freight: chalanTotals(c).grandTotal,
+      };
+    }),
     ...slips.map((s) => ({
       type: "Broker Slip",
       no: s.slipNo,
       date: s.slipDate,
+      from: city(s.loadStationId),
+      to: city(s.destCityId),
       freight: slipTotals(s).grandTotal,
     })),
   ];
+
+  /**
+   * Route printed in the header. One document means one route, so print it.
+   * Several documents usually mean several routes, so print MULTIPLE rather
+   * than picking one and implying the trip ran only that leg — the per-document
+   * rows below carry the detail. Several documents that happen to share a route
+   * still print that route, since it is the truth for all of them.
+   */
+  const routePart = (values: string[]): string => {
+    const distinct = Array.from(new Set(values.filter(Boolean)));
+    if (distinct.length === 1) return distinct[0];
+    if (distinct.length > 1) return "MULTIPLE";
+    return "";
+  };
+  const tripFrom = linkedDocs.length
+    ? routePart(linkedDocs.map((d) => d.from))
+    : city(trip.goingSourceCityId);
+  const tripTo = linkedDocs.length
+    ? routePart(linkedDocs.map((d) => d.to))
+    : city(trip.goingDestCityId);
   const freight = linkedDocs.length
     ? round2(linkedDocs.reduce((s, d) => s + d.freight, 0))
     : n(trip.gTotalFreight) + n(trip.rTotalFreight);
@@ -109,6 +144,14 @@ export default async function TripPrintPage({ params }: { params: { id: string }
                 {trip.toDate ? formatDate(trip.toDate) : ""}
               </td>
             </tr>
+            <tr>
+              <td className={label}>From</td>
+              <td className={cell}>{tripFrom}</td>
+              <td className={label}>To</td>
+              <td className={cell}>{tripTo}</td>
+              <td className={label}>Documents</td>
+              <td className={cell}>{linkedDocs.length || "—"}</td>
+            </tr>
           </tbody>
         </table>
 
@@ -124,11 +167,14 @@ export default async function TripPrintPage({ params }: { params: { id: string }
                     <td className={cell}>{d.type}</td>
                     <td className={cell}>{d.no}</td>
                     <td className={cell}>{formatDate(d.date)}</td>
+                    {/* the per-route detail behind a MULTIPLE in the header */}
+                    <td className={cell}>{d.from}</td>
+                    <td className={cell}>{d.to}</td>
                     <td className={`${cell} text-right`}>{formatMoney(d.freight)}</td>
                   </tr>
                 ))}
                 <tr className="font-semibold">
-                  <td colSpan={3} className={cell}>
+                  <td colSpan={5} className={cell}>
                     Total Grand Total
                   </td>
                   <td className={`${cell} text-right`}>{formatMoney(freight)}</td>
