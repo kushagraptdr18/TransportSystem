@@ -109,6 +109,8 @@ export async function InvoiceEntryPage({
           ibaCode: firm?.ibaCode ?? "",
           vendorCode: firm?.vendorCode ?? "",
           rcmCovered: firm?.rcmCovered ?? true,
+          logoPath: firm?.logoPath ?? null,
+          sealPath: firm?.sealPath ?? null,
         }}
         initial={initial && initial.kind === kind ? initial : null}
         partyOptions={parties.map((p) => ({

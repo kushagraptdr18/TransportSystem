@@ -91,6 +91,8 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
       ibaCode: firm?.ibaCode ?? "",
       vendorCode: firm?.vendorCode ?? "",
       rcmCovered: firm?.rcmCovered ?? true,
+      logoPath: firm?.logoPath ?? null,
+      sealPath: firm?.sealPath ?? null,
     },
     tdsPct: toNum(invoice.tdsPct) || 1,
     serviceDescription: "Goods Transport Service",
@@ -164,7 +166,9 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
   };
 
   return (
-    <div className="bg-white p-4 text-black">
+    // no padding when printing — every millimetre of height counts toward
+    // keeping the bill on one sheet
+    <div className="bg-white p-4 text-black print:p-0">
       {/*
         Landscape, scoped to this route. @page cannot be scoped by selector, so
         putting this in globals.css would rotate the chalan, LR, trip sheet and

@@ -59,6 +59,9 @@ export interface InvoiceViewData {
     ibaCode: string;
     vendorCode: string;
     rcmCovered: boolean;
+    /** upload paths from the Firm master; served via /api/uploads/<path> */
+    logoPath?: string | null;
+    sealPath?: string | null;
   };
   tdsPct: number;
   serviceDescription: string;
@@ -197,14 +200,28 @@ export function InvoicePrintView({
       </div>
 
       {/* company information (from Company Master) */}
-      <div className="border-b border-black px-2 py-1 text-center">
-        <div className="text-xl font-bold uppercase">{firm.name}</div>
-        {firm.address && <div className="text-xs">{firm.address}</div>}
-        <div className="text-xs">
-          {[firm.mobile && `Mob: ${firm.mobile}`, firm.email && `Email: ${firm.email}`]
-            .filter(Boolean)
-            .join("  |  ")}
+      <div className="flex items-center gap-3 border-b border-black px-2 py-1">
+        {/* the logo is absolutely positioned out of the flow so the name stays
+            optically centred on the sheet rather than being pushed right */}
+        {firm.logoPath && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`/api/uploads/${firm.logoPath}`}
+            alt=""
+            className="h-12 w-12 shrink-0 object-contain"
+          />
+        )}
+        <div className="min-w-0 flex-1 text-center">
+          <div className="text-xl font-bold uppercase">{firm.name}</div>
+          {firm.address && <div className="text-xs">{firm.address}</div>}
+          <div className="text-xs">
+            {[firm.mobile && `Mob: ${firm.mobile}`, firm.email && `Email: ${firm.email}`]
+              .filter(Boolean)
+              .join("  |  ")}
+          </div>
         </div>
+        {/* mirrors the logo's width so the centred block stays centred */}
+        {firm.logoPath && <div className="h-12 w-12 shrink-0" aria-hidden />}
       </div>
       <table className="w-full border-collapse text-xs">
         <tbody>
@@ -429,14 +446,18 @@ export function InvoicePrintView({
             // the one thing on the bill a customer must copy exactly, so it gets
             // its own labelled line each and a larger face than the surrounding
             // declaration text
-            <div className="border-b border-black p-2 text-[13px] leading-relaxed">
+            // tight leading and an auto-width label column: still one line per
+            // field, but the block takes the height it needs and no more
+            <div className="border-b border-black px-2 py-1 text-[12px] leading-[1.35]">
               <div className="font-semibold underline">Bank Details</div>
-              <table className="mt-0.5 w-full">
+              <table className="w-auto border-collapse">
                 <tbody>
                   {bankLines.map(([label, value, mono]) => (
                     <tr key={label}>
-                      <td className="pr-3 align-top font-semibold whitespace-nowrap">{label}</td>
-                      <td className={mono ? "font-mono tracking-wide" : undefined}>{value}</td>
+                      <td className="whitespace-nowrap py-0 pr-3 align-top font-semibold">
+                        {label}
+                      </td>
+                      <td className={`py-0 ${mono ? "font-mono tracking-tight" : ""}`}>{value}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -454,11 +475,21 @@ export function InvoicePrintView({
         </div>
         <div>All disputes are subject to Raigarh jurisdiction only.</div>
       </div>
-      <div className="flex border-t border-black text-xs">
-        <div className="flex h-24 w-1/2 items-end border-r border-black p-2">
-          Company Seal
+      {/* h-24 was pushing this block onto a second sheet; h-16 leaves room to
+          sign and keeps the bill on one page */}
+      <div className="flex break-inside-avoid border-t border-black text-xs">
+        <div className="flex h-16 w-1/2 items-end gap-2 border-r border-black p-2">
+          {firm.sealPath && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`/api/uploads/${firm.sealPath}`}
+              alt=""
+              className="h-14 w-14 object-contain"
+            />
+          )}
+          <span>Company Seal</span>
         </div>
-        <div className="flex h-24 w-1/2 flex-col items-end justify-between p-2">
+        <div className="flex h-16 w-1/2 flex-col items-end justify-between p-2">
           <div className="font-semibold">For {firm.name}</div>
           <div>Authorized Signatory</div>
         </div>
