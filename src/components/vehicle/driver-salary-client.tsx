@@ -320,7 +320,7 @@ export function DriverSalaryClient({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         {hideTitle ? <div /> : <h1 className="text-xl font-semibold">Driver Salary</h1>}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
             fileName="driver-salary-register"

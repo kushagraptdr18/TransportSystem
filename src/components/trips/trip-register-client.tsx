@@ -156,7 +156,7 @@ export function TripRegisterClient({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Trip Sheet Register</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
             fileName="trip-sheet-register"

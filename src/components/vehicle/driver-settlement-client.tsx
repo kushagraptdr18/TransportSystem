@@ -239,7 +239,7 @@ export function DriverSettlementClient({
         ) : (
           <h1 className="text-xl font-semibold">Driver +/- Settlement Register</h1>
         )}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
             fileName="driver-settlement-register"

@@ -275,7 +275,7 @@ export function ChalanRegisterClient({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Chalan Register</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
             fileName="chalan-register"

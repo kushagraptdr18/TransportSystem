@@ -220,7 +220,7 @@ export function DriverAdvanceClient({
         {/* the grouped Driver Management page owns the heading; the empty div
             keeps the action bar right-aligned */}
         {hideTitle ? <div /> : <h1 className="text-xl font-semibold">Driver Advance Register</h1>}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
             fileName="driver-advance-register"

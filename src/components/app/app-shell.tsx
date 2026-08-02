@@ -16,10 +16,19 @@ export function AppShell({
         userName={session.name}
         role={session.role}
       />
-      {/* the safe-area insets go on the wrapper so they add to the padding
-          utilities below instead of overriding them at md and up */}
+      {/*
+        The safe-area insets go on this wrapper so they add to the padding
+        utilities below instead of overriding them at md and up.
+
+        overflow-x-clip is a backstop, not the fix: if one stray element is
+        wider than the viewport, the page would otherwise scroll sideways and
+        the header - sized to the viewport - would stop short of the content,
+        leaving a strip of background down the right. Clip keeps the y axis
+        visible, unlike hidden/auto, so sticky positioning and popovers still
+        work.
+      */}
       <div
-        className="flex min-w-0 flex-1 flex-col"
+        className="flex min-w-0 flex-1 flex-col overflow-x-clip"
         style={{
           paddingBottom: "env(safe-area-inset-bottom)",
           paddingLeft: "env(safe-area-inset-left)",

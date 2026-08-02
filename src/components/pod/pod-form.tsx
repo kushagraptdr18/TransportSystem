@@ -307,7 +307,7 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles, initial
           </div>
           <div className="space-y-1.5 md:col-span-2">
             <Label>Add LR manually</Label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Input
                 value={manualLrNo}
                 onChange={(e) => setManualLrNo(e.target.value)}
@@ -487,7 +487,7 @@ export function PodForm({ defaultDocNo, vehicleOptions: initialVehicles, initial
         </Card>
       )}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button onClick={() => void handleSave()} disabled={saving || selectedLrs.length === 0}>
           {saving ? "Saving..." : "Save POD"}
         </Button>

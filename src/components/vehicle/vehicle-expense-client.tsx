@@ -280,7 +280,7 @@ export function VehicleExpenseClient({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Vehicle Expenses</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows.flatMap((r) =>
               r.items.map((i) => ({
@@ -455,7 +455,7 @@ export function VehicleExpenseClient({
                 Vehicle Selection ({validItems.length} vehicle{validItems.length === 1 ? "" : "s"} —
                 total {formatMoney(total)})
               </Label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <SplitControl onSplit={splitEqually} />
                 <Button
                   type="button"

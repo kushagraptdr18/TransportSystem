@@ -239,7 +239,7 @@ export function CourierDispatchClient({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Courier Dispatch</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows.flatMap((r) =>
               r.items.length
@@ -411,7 +411,7 @@ export function CourierDispatchClient({
 
           <div className="space-y-1">
             <Label className="text-xs">Courier Slip / Receipt (PDF / JPG / PNG)</Label>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
                 variant="outline"

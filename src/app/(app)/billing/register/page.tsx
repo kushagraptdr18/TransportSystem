@@ -105,7 +105,7 @@ export default async function BillingRegisterPage({
     <div className="space-y-4 p-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Billing Register</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button asChild size="sm" variant="outline">
             <Link href="/billing/part-truck">New PT Bill</Link>
           </Button>

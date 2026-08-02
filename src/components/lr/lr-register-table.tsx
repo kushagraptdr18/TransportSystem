@@ -278,7 +278,7 @@ export function LrRegisterTable({
       <Dialog open={!!statusFor} onOpenChange={(o) => !o && setStatusFor(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex flex-wrap items-center gap-2">
               LR Status — {statusFor?.lrNo}
               {lifecycle && (
                 <Badge variant={STATUS_VARIANT[lifecycle.booking.status] ?? "outline"}>

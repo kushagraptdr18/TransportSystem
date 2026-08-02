@@ -298,7 +298,7 @@ export function SimpleMaster<T>({
         {/* inside a tabbed screen the page owns the heading; the empty div
             keeps the action bar right-aligned */}
         {embedded ? <div /> : <h1 className="text-xl font-semibold">{title}</h1>}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {importConfig && <ImportButton config={importConfig} />}
           <ExportButton rows={rows} columns={exportColumns} fileName={exportName} />
           <Button size="sm" onClick={openNew}>

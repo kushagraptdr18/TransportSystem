@@ -403,7 +403,7 @@ export function TripSettlementForm({
         <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
           <CardTitle className="text-base">Step 1 — Trip Details</CardTitle>
           {initial?.id && (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {!liveMode ? (
                 <>
                   <Badge variant="secondary">Saved snapshot — frozen at final save</Badge>
@@ -564,7 +564,7 @@ export function TripSettlementForm({
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span>Toll</span>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Select value={tollType} onValueChange={(v) => setTollType(v as "DRIVER" | "COMPANY")}>
                     <SelectTrigger className="h-7 w-40 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -581,7 +581,7 @@ export function TripSettlementForm({
                 <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => setPopup("UREA")}>
                   Urea ({urea.totalQty.toLocaleString("en-IN")} L ×
                 </button>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <NumInput value={ureaRate} onChange={setUreaRate} className="h-7 w-20 text-xs" />
                   <Select value={ureaType} onValueChange={(v) => setUreaType(v as "DRIVER" | "COMPANY")}>
                     <SelectTrigger className="h-7 w-40 text-xs"><SelectValue /></SelectTrigger>
@@ -754,7 +754,7 @@ export function TripSettlementForm({
         </Card>
       )}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" onClick={() => router.push("/trips?tab=register")} disabled={busy}>
           Cancel
         </Button>

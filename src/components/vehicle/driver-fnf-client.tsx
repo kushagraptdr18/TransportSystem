@@ -201,7 +201,7 @@ export function DriverFnfClient({
         ) : (
           <h1 className="text-xl font-semibold">Driver Final Settlement (F&amp;F)</h1>
         )}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
             fileName="driver-final-settlements"

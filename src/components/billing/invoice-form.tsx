@@ -788,7 +788,7 @@ export function InvoiceForm({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Textarea
                 placeholder="Bulk add: paste LR numbers separated by space / comma / new line"
                 value={bulkText}
@@ -1195,7 +1195,7 @@ export function InvoiceForm({
         </CardContent>
       </Card>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" onClick={() => router.push(`/billing/register?kind=${kind}`)}>
           Cancel
         </Button>

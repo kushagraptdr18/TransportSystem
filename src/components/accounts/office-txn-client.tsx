@@ -276,7 +276,7 @@ export function OfficeTxnClient({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Office Income &amp; Expense</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
             fileName="office-income-expense-register"
@@ -499,7 +499,7 @@ export function OfficeTxnClient({
             </div>
             <div className="space-y-1 sm:col-span-3">
               <Label className="text-xs">Attachment (optional — PDF / JPG / PNG)</Label>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant="outline"

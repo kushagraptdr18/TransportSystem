@@ -174,7 +174,7 @@ export function MultiLrBatch(props: Omit<LrFormProps, "mode" | "isDummy">) {
                 — vehicle &amp; date stay the same for every LR; numbers are sequential
               </span>
             </span>
-            <span className="flex items-center gap-2">
+            <span className="flex flex-wrap items-center gap-2">
               {editIndex !== null && (
                 <Button variant="outline" onClick={() => endEdit()} disabled={saving}>
                   Cancel Edit

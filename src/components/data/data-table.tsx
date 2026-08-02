@@ -213,7 +213,7 @@ export function DataTable<TData, TValue>({
         <div>
           {data.length} record{data.length === 1 ? "" : "s"}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select
             value={String(table.getState().pagination.pageSize)}
             onValueChange={(v) => table.setPageSize(Number(v))}

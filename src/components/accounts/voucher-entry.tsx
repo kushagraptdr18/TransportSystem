@@ -484,7 +484,7 @@ export function VoucherEntry({
                 </span>
               )}
             </CardTitle>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button type="button" variant="outline" size="sm" onClick={autoAllocate} disabled={money <= 0}>
                 <Wand2 className="h-3.5 w-3.5" /> Auto Allocate
               </Button>
@@ -630,7 +630,7 @@ export function VoucherEntry({
         </Card>
       )}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" onClick={() => resetAll(type)} disabled={saving}>
           Reset
         </Button>

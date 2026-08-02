@@ -313,7 +313,7 @@ export function DriverClient({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Driver Master</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
             fileName="driver-master"
@@ -799,7 +799,7 @@ function OtherDocAdder({
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <Input
         className="h-7 w-44 text-xs"
         placeholder="Document title..."

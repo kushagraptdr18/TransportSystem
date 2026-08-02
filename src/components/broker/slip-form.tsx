@@ -732,7 +732,7 @@ export function BrokerSlipForm({
           <CardTitle className="flex items-center justify-between text-base">
             <span>{isP ? "Broker Side (Receivable)" : "Owner Side (Payable)"}</span>
             {!isP && (
-              <span className="flex items-center gap-2">
+              <span className="flex flex-wrap items-center gap-2">
                 {isOwnVehicle && (
                   <Badge variant="secondary">Own vehicle — TDS/Comm/Mamool default 0</Badge>
                 )}
@@ -1297,7 +1297,7 @@ export function BrokerSlipForm({
         </Card>
       </div>
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" onClick={() => router.push("/broker/register")}>
           Cancel
         </Button>

@@ -605,7 +605,7 @@ export function ChalanForm({
             </Badge>
           )}
         </h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {id && (
             <Button asChild variant="outline" size="sm">
               <Link href={`/print/chalan/${id}`} target="_blank">
@@ -804,7 +804,7 @@ export function ChalanForm({
           </Field>
 
           <Field label="TDS %" className="lg:col-span-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <NumInput
                 value={brokerTds?.tdsMode === "DECLARATION" ? 0 : tdsPct}
                 onChange={(n) => {
@@ -1063,7 +1063,7 @@ export function ChalanForm({
         <Card id="balance" className={isFinal ? "border-primary/50" : "opacity-70"}>
           <CardHeader className="p-4 pb-2">
             <CardTitle className="flex items-center justify-between text-sm">
-              <span className="flex items-center gap-2">
+              <span className="flex flex-wrap items-center gap-2">
                 Balance Payment
                 {paymentStatus === "PAID" ? (
                   <Badge>PAID</Badge>
