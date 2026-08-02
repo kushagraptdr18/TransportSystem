@@ -67,6 +67,36 @@
   ::selection {
     background: hsl(var(--primary) / 0.3);
   }
+
+  /*
+   * Touch devices only. A 32px icon button is comfortable with a mouse and
+   * fiddly with a thumb, so the minimum grows to 40px where the pointer is
+   * coarse - desktop keeps its current density untouched.
+   *
+   * min-height/width rather than height, so nothing that is already larger
+   * gets shrunk, and the visual box is unchanged: the extra area comes from
+   * the element's own hit region, not from new margins pushing rows apart.
+   */
+  @media (pointer: coarse) {
+    button,
+    [role="button"],
+    a[href],
+    summary,
+    input[type="checkbox"],
+    input[type="radio"] {
+      min-height: 40px;
+    }
+    /* icon-only controls are square, so they need the width too */
+    button:not(:has(> :not(svg))) {
+      min-width: 40px;
+    }
+    /* inline links in prose must not become 40px-tall blocks */
+    p a[href],
+    td a[href],
+    span a[href] {
+      min-height: 0;
+    }
+  }
 }
 
 @layer components {

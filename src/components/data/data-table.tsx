@@ -75,8 +75,10 @@ export function DataTable<TData, TValue>({
   );
 
   return (
-    <div className={cn("space-y-2", className)}>
-      <div className="rounded-md border">
+    // min-w-0 so a wide table scrolls inside its own border rather than
+    // stretching the page - without it the flex/grid parent refuses to shrink
+    <div className={cn("min-w-0 space-y-2", className)}>
+      <div className="min-w-0 rounded-md border">
         <Table>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
