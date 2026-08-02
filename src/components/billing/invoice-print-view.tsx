@@ -197,9 +197,19 @@ export function InvoicePrintView({
       {/* masthead — logo | firm | bill no & date */}
       <table className="w-full border-collapse text-xs">
         <tbody>
+          {/*
+            Bill No and Date are two real table rows spanned against the logo
+            and name cells, not two divs stacked inside one cell. Stacked divs
+            take their own content height and leave the remainder below the
+            second one, so the boxes came out unequal; as rows they split the
+            masthead height between them.
+          */}
           <tr>
             {firm.logoPath && (
-              <td className="w-[24mm] border-b border-r border-black p-1 align-middle">
+              <td
+                rowSpan={2}
+                className="w-[24mm] border-b border-r border-black p-1 align-middle"
+              >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={`/api/uploads/${firm.logoPath}`}
@@ -208,7 +218,7 @@ export function InvoicePrintView({
                 />
               </td>
             )}
-            <td className="border-b border-black px-2 py-1 text-center align-middle">
+            <td rowSpan={2} className="border-b border-black px-2 py-1 text-center align-middle">
               <div className="text-xl font-bold uppercase leading-tight">{firm.name}</div>
               {firm.address && <div className="text-[11px] font-semibold">{firm.address}</div>}
               <div className="text-[11px]">
@@ -219,11 +229,13 @@ export function InvoicePrintView({
             </td>
             {/* the number a customer quotes back gets its own box, larger than
                 anything else in the header */}
-            <td className="w-[50mm] border-b border-l border-black p-0 align-top">
-              <div className="border-b border-black px-2 py-1 text-[15px] font-bold">
-                BILL NO. : {data.billNo}
-              </div>
-              <div className="px-2 py-1 text-[15px] font-bold">DATE : {data.billDate}</div>
+            <td className="w-[50mm] border-b border-l border-black px-2 py-1 text-[15px] font-bold">
+              BILL NO. : {data.billNo}
+            </td>
+          </tr>
+          <tr>
+            <td className="border-b border-l border-black px-2 py-1 text-[15px] font-bold">
+              DATE : {data.billDate}
             </td>
           </tr>
         </tbody>

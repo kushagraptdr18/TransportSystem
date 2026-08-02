@@ -10,6 +10,9 @@ const CONTENT_TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
+  // the firm logo/seal upload accepts webp, so serving has to know it too —
+  // without this it went out as octet-stream and no browser rendered it
+  ".webp": "image/webp",
 };
 
 export async function GET(
