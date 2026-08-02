@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -140,23 +141,83 @@ function DesktopMenu({ pathname }: { pathname: string }) {
   );
 }
 
-/** Mobile: full-screen slide-down panel with accordion groups. */
+/**
+ * Mobile: a left drawer with an overlay, portalled to <body>.
+ *
+ * The portal is not optional. The header carries `backdrop-blur`, and an element
+ * with a backdrop-filter becomes the containing block for its fixed descendants -
+ * rendered in place, `inset-0` would resolve to the header strip and the drawer
+ * would be clipped inside it instead of covering the viewport.
+ */
 function MobileMenu({
   pathname,
+  firmName,
+  fyLabel,
   onClose,
 }: {
   pathname: string;
+  firmName: string;
+  fyLabel: string;
   onClose: () => void;
 }) {
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background lg:hidden">
-      <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
-        <Brand />
-        <button type="button" onClick={onClose} aria-label="Close menu" className="p-2">
-          <X className="h-5 w-5" />
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto p-3">
+  // close on Esc, and stop the page behind the drawer from scrolling
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 lg:hidden">
+      <div
+        className="absolute inset-0 bg-foreground/40 backdrop-blur-[2px]"
+        onClick={onClose}
+        aria-hidden
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Main menu"
+        className="absolute inset-y-0 left-0 flex w-[86vw] max-w-[340px] flex-col border-r bg-background shadow-xl"
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          paddingBottom: "env(safe-area-inset-bottom)",
+          paddingLeft: "env(safe-area-inset-left)",
+        }}
+      >
+        <div className="flex h-14 shrink-0 items-center justify-between border-b px-4">
+          <Brand />
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close menu"
+            className="-mr-2 flex h-10 w-10 items-center justify-center rounded-lg hover:bg-accent"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* the firm chip has no room in the header on a phone, so it lives here */}
+        <Link
+          href="/select-firm"
+          onClick={onClose}
+          className="flex shrink-0 items-center gap-2 border-b px-4 py-3 hover:bg-accent"
+        >
+          <Building2 className="h-4 w-4 shrink-0 text-primary" />
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{firmName}</span>
+          <Badge variant="secondary" className="shrink-0 text-[10px]">
+            FY {fyLabel}
+          </Badge>
+        </Link>
+
+        <div className="flex-1 overflow-y-auto overscroll-contain p-3">
         {NAV.map((group) =>
           group.href ? (
             <Link
@@ -232,8 +293,10 @@ function MobileMenu({
             </details>
           )
         )}
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -259,12 +322,19 @@ export function TopNav({ firmName, fyLabel, userName, role }: TopNavProps) {
   return (
     <header className="no-print sticky top-0 z-40 border-b bg-card/95 shadow-card backdrop-blur supports-[backdrop-filter]:bg-card/80">
       {/* Row 1 — brand, firm, search, user */}
-      <div className="flex h-14 items-center gap-3 px-4">
+      <div
+        className="flex h-14 items-center gap-2 px-3 sm:gap-3 sm:px-4"
+        style={{
+          paddingTop: "env(safe-area-inset-top)",
+          height: "calc(3.5rem + env(safe-area-inset-top))",
+        }}
+      >
         <button
           type="button"
-          className="p-1.5 lg:hidden"
+          className="-ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-lg hover:bg-accent lg:hidden"
           onClick={() => setMobileOpen(true)}
           aria-label="Open menu"
+          aria-expanded={mobileOpen}
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -301,7 +371,11 @@ export function TopNav({ firmName, fyLabel, userName, role }: TopNavProps) {
           </div>
         </form>
 
-        <ThemeToggle />
+        {/* the search form carries ml-auto, but it is hidden below md - without
+            this the controls bunch up against the brand on a phone */}
+        <div className="ml-auto shrink-0 md:ml-0">
+          <ThemeToggle />
+        </div>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -355,7 +429,14 @@ export function TopNav({ firmName, fyLabel, userName, role }: TopNavProps) {
         <DesktopMenu pathname={pathname} />
       </div>
 
-      {mobileOpen && <MobileMenu pathname={pathname} onClose={() => setMobileOpen(false)} />}
+      {mobileOpen && (
+        <MobileMenu
+          pathname={pathname}
+          firmName={firmName}
+          fyLabel={fyLabel}
+          onClose={() => setMobileOpen(false)}
+        />
+      )}
     </header>
   );
 }

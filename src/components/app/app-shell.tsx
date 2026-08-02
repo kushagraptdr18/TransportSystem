@@ -16,7 +16,20 @@ export function AppShell({
         userName={session.name}
         role={session.role}
       />
-      <main className="mx-auto w-full max-w-[1400px] flex-1 p-4 md:p-6">{children}</main>
+      {/* the safe-area insets go on the wrapper so they add to the padding
+          utilities below instead of overriding them at md and up */}
+      <div
+        className="flex min-w-0 flex-1 flex-col"
+        style={{
+          paddingBottom: "env(safe-area-inset-bottom)",
+          paddingLeft: "env(safe-area-inset-left)",
+          paddingRight: "env(safe-area-inset-right)",
+        }}
+      >
+        <main className="mx-auto w-full min-w-0 max-w-[1400px] flex-1 p-4 md:p-6">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }
