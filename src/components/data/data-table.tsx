@@ -46,9 +46,27 @@ interface DataTableProps<TData, TValue> {
   onRowClick?: (row: TData) => void;
   emptyMessage?: string;
   className?: string;
+  /**
+   * Pin the first column while the table scrolls sideways, so the reference
+   * number stays visible. Below lg only - on desktop the table usually fits,
+   * and a detaching column there is a change nobody asked for. Set false for
+   * narrow tables that never overflow.
+   */
+  stickyFirstColumn?: boolean;
 }
 
 const PAGE_SIZES = [25, 50, 100];
+
+/**
+ * bg-card matches the surface the table sits on, so rows passing underneath
+ * are hidden rather than showing through. The hairline plus a short shadow
+ * marks the seam without drawing a full border.
+ */
+const STICKY_BASE =
+  "sticky left-0 z-10 shadow-[1px_0_0_0_hsl(var(--border)),6px_0_8px_-8px_rgb(0_0_0/0.35)] lg:static lg:z-auto lg:bg-transparent lg:shadow-none";
+const STICKY_CELL = `${STICKY_BASE} bg-card`;
+/** the totals row sits on bg-muted/50, so its pinned cell has to match */
+const STICKY_FOOT = `${STICKY_BASE} bg-muted`;
 
 export function DataTable<TData, TValue>({
   columns,
@@ -56,6 +74,7 @@ export function DataTable<TData, TValue>({
   onRowClick,
   emptyMessage = "No records found.",
   className,
+  stickyFirstColumn = true,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
 
@@ -83,7 +102,7 @@ export function DataTable<TData, TValue>({
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => {
+                {headerGroup.headers.map((header, idx) => {
                   const meta = header.column.columnDef.meta as
                     | DataTableColumnMeta<TData>
                     | undefined;
@@ -92,7 +111,11 @@ export function DataTable<TData, TValue>({
                   return (
                     <TableHead
                       key={header.id}
-                      className={cn("whitespace-nowrap text-xs", meta?.numeric && "text-right")}
+                      className={cn(
+                        "whitespace-nowrap text-xs",
+                        meta?.numeric && "text-right",
+                        stickyFirstColumn && idx === 0 && STICKY_CELL
+                      )}
                     >
                       {header.isPlaceholder ? null : canSort ? (
                         <button
@@ -129,7 +152,7 @@ export function DataTable<TData, TValue>({
                   className={cn(onRowClick && "cursor-pointer")}
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                 >
-                  {row.getVisibleCells().map((cell) => {
+                  {row.getVisibleCells().map((cell, idx) => {
                     const meta = cell.column.columnDef.meta as
                       | DataTableColumnMeta<TData>
                       | undefined;
@@ -138,7 +161,8 @@ export function DataTable<TData, TValue>({
                         key={cell.id}
                         className={cn(
                           "whitespace-nowrap",
-                          meta?.numeric && "text-right tabular-nums"
+                          meta?.numeric && "text-right tabular-nums",
+                          stickyFirstColumn && idx === 0 && STICKY_CELL
                         )}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -170,7 +194,10 @@ export function DataTable<TData, TValue>({
                   return (
                     <TableCell
                       key={column.id}
-                      className={cn(meta?.numeric && "text-right tabular-nums")}
+                      className={cn(
+                        meta?.numeric && "text-right tabular-nums",
+                        stickyFirstColumn && idx === 0 && STICKY_FOOT
+                      )}
                     >
                       {idx === 0 && total === undefined ? "Total" : total}
                     </TableCell>

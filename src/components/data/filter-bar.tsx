@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, ChevronsUpDown, Search, X } from "lucide-react";
+import { Check, ChevronsUpDown, Search, SlidersHorizontal, X } from "lucide-react";
 import { cn, formatDate, parseDdMmYyyy } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -110,7 +110,11 @@ function DateRangeFilter({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-9 justify-between font-normal">
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9 w-full justify-between font-normal sm:w-auto"
+        >
           {label}
           <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
         </Button>
@@ -201,7 +205,7 @@ function ComboboxFilter({
           size="sm"
           role="combobox"
           aria-expanded={open}
-          className="h-9 min-w-[140px] justify-between font-normal"
+          className="h-9 w-full min-w-[140px] justify-between font-normal sm:w-auto"
         >
           <span className="truncate">{selected ? selected.label : def.label}</span>
           <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -259,13 +263,13 @@ function TextFilter({
   }, [text]);
 
   return (
-    <div className="relative">
+    <div className="relative w-full sm:w-56">
       <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
       <Input
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={def.label}
-        className="w-56 pl-8"
+        className="w-full pl-8"
       />
     </div>
   );
@@ -275,6 +279,7 @@ export function FilterBar({ filters, className }: FilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [open, setOpen] = React.useState(false);
 
   const setParams = React.useCallback(
     (updates: Record<string, string | null>) => {
@@ -333,7 +338,36 @@ export function FilterBar({ filters, className }: FilterBarProps) {
 
   return (
     <div className={cn("space-y-2", className)}>
-      <div className="flex flex-wrap items-center gap-2">
+      {/*
+        Below md the controls collapse behind one button - a full row of them
+        costs most of a phone screen before a single record is visible. The
+        active-filter chips stay outside the collapse on purpose: a register
+        figure means something different under a different date range, so what
+        is filtered must never be hidden, only the controls that set it.
+      */}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-9 w-full justify-center gap-2 md:hidden"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <SlidersHorizontal className="h-4 w-4" />
+        Filters
+        {chips.length > 0 && (
+          <Badge variant="secondary" className="px-1.5 text-[10px]">
+            {chips.length}
+          </Badge>
+        )}
+      </Button>
+
+      <div
+        className={cn(
+          "flex-wrap items-center gap-2 md:flex",
+          open ? "flex" : "hidden"
+        )}
+      >
         {filters.map((f) => {
             if (f.type === "text") {
               return (
@@ -375,7 +409,7 @@ export function FilterBar({ filters, className }: FilterBarProps) {
                 value={searchParams.get(f.key) ?? ""}
                 onValueChange={(v) => setParams({ [f.key]: v === "__all__" ? null : v })}
               >
-                <SelectTrigger className="h-9 w-auto min-w-[140px]">
+                <SelectTrigger className="h-9 w-full min-w-[140px] sm:w-auto">
                   <SelectValue placeholder={f.label} />
                 </SelectTrigger>
                 <SelectContent>
