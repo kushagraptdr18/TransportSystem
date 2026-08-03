@@ -554,7 +554,8 @@ const financeTxnSchema = z.object({
   remarks: z.string().nullish(),
 });
 
-export const FINANCE_TXN_LABEL: Record<string, string> = {
+// module-local: a "use server" file may only EXPORT async functions
+const FINANCE_TXN_LABEL: Record<string, string> = {
   PERSONAL: "Personal",
   TEMPORARY_LOAN: "Temporary Loan",
   FAMILY_TRANSFER: "Family Transfer",

@@ -1,5 +1,3 @@
-"use server";
-
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { round2 } from "@/lib/calc/tds";
@@ -181,14 +179,4 @@ export async function getFinanceData(): Promise<{
 
     return { loans: loanRows, emis: emiRows, txns: txnRows };
   });
-}
-
-/** The finance position of one vehicle, for the Vehicle Master finance tab. */
-export async function getVehicleFinance(vehicleId: string): Promise<LoanRow | null> {
-  const { loans } = await getFinanceData();
-  return (
-    loans.find((l) => l.vehicleId === vehicleId && l.status === "ACTIVE") ??
-    loans.find((l) => l.vehicleId === vehicleId) ??
-    null
-  );
 }
