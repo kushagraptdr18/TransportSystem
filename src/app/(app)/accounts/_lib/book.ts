@@ -19,6 +19,17 @@ export interface BookParams {
   refNo?: string;
   dateFrom?: string;
   dateTo?: string;
+  /** exact source-document type (CHALAN, VOUCHER, VEH_EXP_ALLOC, ...) */
+  refType?: string;
+  /** narration contains, case-insensitive */
+  narration?: string;
+  /** show only one side of the book */
+  side?: "DEBIT" | "CREDIT";
+  /** entries stamped with this vehicle */
+  vehicleId?: string;
+  /** amount range (applies to the entry amount, either side) */
+  amtFrom?: number;
+  amtTo?: number;
 }
 
 /**
@@ -31,8 +42,17 @@ export interface BookParams {
  */
 export async function ledgerBookRows(params: BookParams): Promise<{
   rows: ReportRow[];
-  parties: { id: string; name: string; ledgerGroup: LedgerGroup }[];
+  parties: {
+    id: string;
+    name: string;
+    alias: string | null;
+    transportName: string | null;
+    ledgerGroup: LedgerGroup;
+  }[];
   heads: { id: string; name: string; kind: string }[];
+  vehicles: { id: string; number: string }[];
+  /** distinct source-document types present in this firm+FY, for the filter */
+  refTypes: string[];
 }> {
   const { session } = params;
   return withTenant(session.tenantId, async (tx) => {
@@ -41,17 +61,30 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     const partyWhere: Prisma.PartyWhereInput = params.groups
       ? { ledgerGroup: { in: params.groups } }
       : { ledgerGroup: { notIn: ["BANK", "CASH"] } };
-    const [parties, allParties, heads] = await Promise.all([
+    const [parties, allParties, heads, vehicles, refTypeGroups] = await Promise.all([
       tx.party.findMany({
         where: { ...partyWhere, isActive: true },
         orderBy: { name: "asc" },
-        select: { id: true, name: true, ledgerGroup: true, openingBalance: true, openingSide: true },
+        select: {
+          id: true,
+          name: true,
+          alias: true,
+          transportName: true,
+          ledgerGroup: true,
+          openingBalance: true,
+          openingSide: true,
+        },
       }),
       // full name map (incl. bank/cash) for account display + payment details
       tx.party.findMany({ select: { id: true, name: true } }),
       tx.accountHead.findMany({
         orderBy: { name: "asc" },
         select: { id: true, name: true, kind: true },
+      }),
+      tx.vehicle.findMany({ orderBy: { number: "asc" }, select: { id: true, number: true } }),
+      tx.ledgerEntry.groupBy({
+        by: ["refType"],
+        where: { firmId: session.firmId, fyId: session.fyId },
       }),
     ]);
     const partyIds = params.partyId ? [params.partyId] : parties.map((p) => p.id);
@@ -75,6 +108,17 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         ...(params.dateTo ? { lte: new Date(params.dateTo + "T23:59:59") } : {}),
       };
     }
+    if (params.refType) where.refType = params.refType;
+    if (params.narration)
+      where.narration = { contains: params.narration.trim(), mode: "insensitive" };
+    if (params.side) where.side = params.side;
+    if (params.vehicleId) where.vehicleId = params.vehicleId;
+    if (params.amtFrom != null || params.amtTo != null) {
+      where.amount = {
+        ...(params.amtFrom != null ? { gte: params.amtFrom } : {}),
+        ...(params.amtTo != null ? { lte: params.amtTo } : {}),
+      };
+    }
     const entries = await tx.ledgerEntry.findMany({
       where,
       orderBy: [{ date: "asc" }, { createdAt: "asc" }],
@@ -82,6 +126,76 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     });
     const nameById = new Map(allParties.map((p) => [p.id, p.name]));
     const headNameById = new Map(heads.map((h) => [h.id, h.name]));
+    const vehicleNoById = new Map(vehicles.map((v) => [v.id, v.number]));
+
+    // ---- counter-account (Tally-style "Account" column): the OTHER legs of
+    // the same posting say where this entry came from — bank on a payment,
+    // the expense head on an allocation transfer, the party on a chalan
+    const legName = (l: {
+      partyId: string | null;
+      accountHeadId: string | null;
+      vehicleId: string | null;
+    }): string =>
+      (l.partyId && nameById.get(l.partyId)) ||
+      (l.accountHeadId && headNameById.get(l.accountHeadId)) ||
+      (l.vehicleId && `Vehicle ${vehicleNoById.get(l.vehicleId) ?? ""}`) ||
+      "";
+    const refIdsByType = new Map<string, string[]>();
+    for (const e of entries) {
+      refIdsByType.set(e.refType, [...(refIdsByType.get(e.refType) ?? []), e.refId]);
+    }
+    const siblings = entries.length
+      ? await tx.ledgerEntry.findMany({
+          where: {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            OR: Array.from(refIdsByType.entries()).map(([refType, ids]) => ({
+              refType,
+              refId: { in: Array.from(new Set(ids)) },
+            })),
+          },
+          select: {
+            id: true,
+            refType: true,
+            refId: true,
+            side: true,
+            partyId: true,
+            accountHeadId: true,
+            vehicleId: true,
+          },
+        })
+      : [];
+    const siblingsByRef = new Map<string, typeof siblings>();
+    for (const s of siblings) {
+      const key = `${s.refType}:${s.refId}`;
+      siblingsByRef.set(key, [...(siblingsByRef.get(key) ?? []), s]);
+    }
+    const counterAccount = (e: (typeof entries)[number]): string => {
+      const legs = siblingsByRef.get(`${e.refType}:${e.refId}`) ?? [];
+      const opposite = legs.filter((l) => l.id !== e.id && l.side !== e.side);
+      const pool = opposite.length ? opposite : legs.filter((l) => l.id !== e.id);
+      const names = Array.from(new Set(pool.map(legName).filter(Boolean))).filter(
+        (nm) => nm !== legName(e)
+      );
+      if (!names.length) return "";
+      return names.length <= 2 ? names.join(", ") : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+    };
+
+    // ---- drill-down: open the source document behind an entry (hrefs are
+    // relative to "/", matching SimpleReport's linkBase convention)
+    const drillLink = (refType: string, refId: string, voucherNo: string): string => {
+      if (refType.startsWith("CHALAN") || refType === "FREIGHT_CHALLAN")
+        return `chalan?id=${refId}`;
+      if (refType.startsWith("BROKER_SLIP") || refType === "BROKER_ENTRY")
+        return `broker/slip?id=${refId}`;
+      if (refType === "INVOICE" || refType === "BILLING" || refType === "GST_BILLING")
+        return `print/invoice/${refId}`;
+      if (refType === "LOAN") return `print/loan/${refId}`;
+      if (refType === "TRIP_UREA") return `print/trip-summary/${refId}`;
+      if (refType === "VOUCHER" && voucherNo)
+        return `accounts/vouchers/register?q=${encodeURIComponent(voucherNo)}`;
+      return "";
+    };
 
     // enrich voucher / office rows: voucher number + payment details
     const voucherIds = Array.from(
@@ -125,7 +239,18 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       : [];
     const advByVoucher = new Map(advances.map((a) => [a.voucherId ?? "", a]));
 
-    const trackRunning = !params.refNo && (!!params.partyId || !!params.headId);
+    // a running balance over a content-filtered subset would mislead — track
+    // it only when the rows are the ledger's complete story
+    const contentFiltered = !!(
+      params.refNo ||
+      params.refType ||
+      params.narration ||
+      params.side ||
+      params.vehicleId ||
+      params.amtFrom != null ||
+      params.amtTo != null
+    );
+    const trackRunning = !contentFiltered && (!!params.partyId || !!params.headId);
     let running = 0;
     if (params.partyId) {
       const p = parties.find((x) => x.id === params.partyId);
@@ -210,10 +335,13 @@ export async function ledgerBookRows(params: BookParams): Promise<{
           (e.partyId && nameById.get(e.partyId)) ||
           (e.accountHeadId && headNameById.get(e.accountHeadId)) ||
           "",
+        account: counterAccount(e),
         refType: e.refType,
         refNo: e.refNo,
+        link: drillLink(e.refType, e.refId, voucherNo),
         voucherNo,
         payment,
+        vehicle: (e.vehicleId && vehicleNoById.get(e.vehicleId)) || "",
         narration: e.narration ?? "",
         adjustments,
         debit,
@@ -223,17 +351,28 @@ export async function ledgerBookRows(params: BookParams): Promise<{
           : "",
       };
     });
-    return { rows, parties, heads };
+    return {
+      rows,
+      parties,
+      heads,
+      vehicles,
+      refTypes: refTypeGroups.map((g) => g.refType).sort(),
+    };
   });
 }
 
 export const BOOK_COLUMNS = [
   { key: "date", header: "Date", kind: "date" as const },
-  { key: "party", header: "Account" },
+  { key: "party", header: "Ledger" },
+  // the counter-ledger(s) of the same posting — where the entry came from
+  { key: "account", header: "Account" },
   { key: "refType", header: "Ref Type" },
-  { key: "refNo", header: "Reference No" },
+  // clicking the reference opens the source document (chalan, slip, invoice,
+  // loan, voucher register...) when a route exists for it
+  { key: "refNo", header: "Reference No", linkBase: "/", linkParamKey: "link" },
   { key: "voucherNo", header: "Voucher No" },
   { key: "payment", header: "Bank / Instrument" },
+  { key: "vehicle", header: "Vehicle" },
   { key: "narration", header: "Narration" },
   { key: "adjustments", header: "Adjustments", kind: "adjustments" as const },
   { key: "debit", header: "Debit", kind: "money" as const },

@@ -41,6 +41,10 @@ export async function VoucherRegisterTab({
     fyId: session.fyId,
     deletedAt: null,
     ...(type && ["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL"].includes(type) ? { type } : {}),
+    // ?q= deep-links from the Ledger Summary land on the exact voucher
+    ...(searchParams.q
+      ? { voucherNo: { contains: searchParams.q, mode: "insensitive" as const } }
+      : {}),
     ...(searchParams.party ? { partyId: searchParams.party } : {}),
     ...(searchParams.vehicle ? { vehicleId: searchParams.vehicle } : {}),
     ...(searchParams.module && MODULE_LINKS.includes(searchParams.module)
@@ -84,6 +88,7 @@ export async function VoucherRegisterTab({
     <div className="space-y-4">
       <FilterBar
         filters={[
+          { type: "text", key: "q", label: "Voucher No..." },
           { type: "daterange", key: "date", label: "Date" },
           {
             type: "select",
