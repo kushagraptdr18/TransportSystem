@@ -256,6 +256,34 @@ pay each EMI, close it.
   a loan with instalments cannot be deleted until they are, so no voucher is ever
   orphaned.
 
+## 2F. Advance re-adjustment in Receipt / Payment vouchers (3 Aug 2026)
+
+No schema change — built on `PartyAdvance` / `PartyAdvanceUse` and
+`applyManualAdvanceUses` (`src/lib/party-advance.ts`).
+
+- **Direction-correct pickers.** `getAllocationCandidates` now takes the
+  voucher type: a Receipt offers only receivable modules, a Payment only
+  payable ones. `getOpenAdvances` lists a party's open advances strictly by
+  direction (Receipt → `RECEIVED`, Payment → `PAID`), never another party's,
+  never a consumed one, never the advance the voucher being edited created.
+- **Adjust Advance grid** in the voucher form: each open advance shows
+  original / already adjusted / balance with an editable amount. One advance
+  can split across many references, many advances can fund one reference, and
+  a voucher may move no money at all (pure adjustment: amount 0, bank leg not
+  posted — zero-value ledger legs are dropped).
+- **Funding rule:** allocations ≤ money moved + advance adjusted, and advance
+  adjusted ≤ allocations — an adjusted advance settles references, it can
+  never silently convert into a new advance. The remainder rule is unchanged:
+  `netAmount + advanceUsed − allocated` becomes the party advance.
+- **No new ledger postings for the adjusted portion.** The advance voucher
+  already moved the money and posted the party leg; the adjustment is
+  reference bookkeeping (`VoucherAllocation` settles the document,
+  `PartyAdvanceUse` consumes the advance, refNo carries the settled document
+  references). Outstanding, ledger advance history and the Advance Register
+  all derive from those rows, so they agree by construction.
+- Save releases the voucher's previous uses and re-applies inside one
+  transaction; delete restores them (`restoreAdvanceUses`).
+
 ## 3. Guiding principles (do not regress these)
 
 1. **History is immutable** — corrections are always new vouchers linked to

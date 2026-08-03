@@ -32,10 +32,12 @@ import { MasterCombobox, type MasterOption } from "@/components/data/master-comb
 import {
   deleteVoucher,
   getAllocationCandidates,
+  getOpenAdvances,
   getPartyAdvanceInfo,
   saveVoucher,
   type AllocationCandidate,
 } from "@/app/(app)/accounts/vouchers/actions";
+import type { OpenAdvance } from "@/lib/party-advance";
 
 /**
  * Voucher Entry — rebuilt from scratch.
@@ -148,6 +150,9 @@ export function VoucherEntry({
 
   const [rows, setRows] = React.useState<SettleRow[]>([]);
   const [advInfo, setAdvInfo] = React.useState<{ received: number; paid: number } | null>(null);
+  // open advances of the selected party, same direction as the voucher type —
+  // each may be adjusted (fully or partly) against the pending references
+  const [advRows, setAdvRows] = React.useState<(OpenAdvance & { use: number })[]>([]);
 
   const resetAll = React.useCallback(
     (t: VType) => {
@@ -165,6 +170,7 @@ export function VoucherEntry({
       setRefNo("");
       setRows([]);
       setAdvInfo(null);
+      setAdvRows([]);
     },
     [peekNumbers]
   );
@@ -179,7 +185,11 @@ export function VoucherEntry({
       }
       setLoadingRefs(true);
       try {
-        const candidates = await getAllocationCandidates({ moduleLink: "ALL", partyId: pid });
+        const candidates = await getAllocationCandidates({
+          moduleLink: "ALL",
+          partyId: pid,
+          voucherType: type,
+        });
         setRows(
           candidates.map((c) => ({
             ...c,
@@ -204,9 +214,18 @@ export function VoucherEntry({
   const onParty = (pid: string | null) => {
     setPartyId(pid);
     void loadRefs(pid);
-    if (pid) getPartyAdvanceInfo(pid).then(setAdvInfo).catch(() => setAdvInfo(null));
-    else setAdvInfo(null);
+    setAdvRows([]);
+    if (pid) {
+      getPartyAdvanceInfo(pid).then(setAdvInfo).catch(() => setAdvInfo(null));
+      if (type === "RECEIPT" || type === "PAYMENT")
+        getOpenAdvances({ partyId: pid, type })
+          .then((list) => setAdvRows(list.map((a) => ({ ...a, use: 0 }))))
+          .catch(() => setAdvRows([]));
+    } else setAdvInfo(null);
   };
+
+  const setAdvRow = (i: number, use: number) =>
+    setAdvRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, use } : r)));
 
   const setRow = (i: number, patch: Partial<SettleRow>) =>
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -219,7 +238,11 @@ export function VoucherEntry({
   const dedTotal = round2(selected.reduce((s, r) => s + r.shortage + r.other + r.roundOff, 0));
   const roundOffTotal = round2(selected.reduce((s, r) => s + r.roundOff, 0));
   const allocated = round2(selected.reduce((s, r) => s + r.receive, 0));
-  const advanceRemainder = round2(money - allocated);
+  // previously received/paid advances adjusted against today's references —
+  // they fund allocations alongside the money actually moved
+  const advUsed = round2(advRows.reduce((s, r) => s + r.use, 0));
+  const funds = round2(money + advUsed);
+  const advanceRemainder = round2(funds - allocated);
   const gross = round2(money + tdsTotal + dedTotal);
 
   const rowError = (r: SettleRow): string | null => {
@@ -231,10 +254,19 @@ export function VoucherEntry({
     return null;
   };
   const hasRowErrors = selected.some((r) => rowError(r) !== null);
-  const overAllocated = allocated > money + 0.01;
+  const overAllocated = allocated > funds + 0.01;
+  const advRowError = (r: OpenAdvance & { use: number }): string | null => {
+    if (r.use < 0) return "negative value";
+    if (r.use > r.available + 0.01)
+      return `exceeds balance ${formatMoney(r.available)}`;
+    return null;
+  };
+  const hasAdvErrors = advRows.some((r) => advRowError(r) !== null);
+  // an adjusted advance exists to settle references — it cannot become new money
+  const advUnderApplied = advUsed > allocated + 0.01;
 
   const autoAllocate = () => {
-    let remaining = money;
+    let remaining = funds;
     setRows((prev) =>
       prev.map((r) => {
         const avail = Math.max(
@@ -277,6 +309,11 @@ export function VoucherEntry({
         remarks:
           type === "JOURNAL" && refNo ? `Ref: ${refNo}${remarks ? " — " + remarks : ""}` : remarks || null,
         adjustments: [],
+        advanceAdjustments: isMoney
+          ? advRows
+              .filter((r) => r.use > 0)
+              .map((r) => ({ advanceId: r.id, amount: r.use }))
+          : [],
         allocations: isMoney
           ? selected
               .filter((r) => Math.abs(r.receive + r.tds + r.shortage + r.other + r.roundOff) > 0)
@@ -300,10 +337,16 @@ export function VoucherEntry({
       if (res.ok) {
         toast({
           title: `${TYPE_META[type].title} voucher ${voucherNo} saved`,
-          description:
-            advanceRemainder > 0.009 && (type === "RECEIPT" || type === "PAYMENT")
+          description: [
+            advUsed > 0.009 && isMoney
+              ? `${formatMoney(advUsed)} adjusted from open advances.`
+              : null,
+            advanceRemainder > 0.009 && isMoney
               ? `${formatMoney(advanceRemainder)} stored as party advance (${type === "RECEIPT" ? "received" : "paid"}).`
-              : "Ledgers, outstanding, TDS and advance registers updated.",
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" ") || "Ledgers, outstanding, TDS and advance registers updated.",
         });
         resetAll(type);
         router.refresh();
@@ -316,12 +359,19 @@ export function VoucherEntry({
   const isMoneyType = type === "RECEIPT" || type === "PAYMENT";
   const canSave =
     !saving &&
-    money > 0 &&
     (type === "CONTRA"
-      ? !!partyId && !!bankPartyId && partyId !== bankPartyId
+      ? money > 0 && !!partyId && !!bankPartyId && partyId !== bankPartyId
       : type === "JOURNAL"
-        ? !!partyId && !!creditLedgerId && partyId !== creditLedgerId
-        : !!partyId && !!bankPartyId && !hasRowErrors && !overAllocated);
+        ? money > 0 && !!partyId && !!creditLedgerId && partyId !== creditLedgerId
+        : // a receipt/payment may move no money at all when it purely adjusts
+          // an open advance against pending references
+          (money > 0 || advUsed > 0) &&
+          !!partyId &&
+          !!bankPartyId &&
+          !hasRowErrors &&
+          !hasAdvErrors &&
+          !overAllocated &&
+          !advUnderApplied);
 
   return (
     <div className="space-y-4">
@@ -493,6 +543,70 @@ export function VoucherEntry({
         </p>
       )}
 
+      {/* ---------- advance adjustment ---------- */}
+      {isMoneyType && partyId && advRows.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Adjust Advance {type === "RECEIPT" ? "(Received)" : "(Paid)"}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                open advance vouchers of this party — enter the amount to adjust
+                against the pending references below
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Advance Voucher</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Original Amount</TableHead>
+                    <TableHead className="text-right">Already Adjusted</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                    <TableHead className="w-32 text-right">Amount to Adjust</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {advRows.map((r, i) => {
+                    const err = advRowError(r);
+                    return (
+                      <TableRow key={r.id} className={err ? "bg-destructive/5" : undefined}>
+                        <TableCell className="font-medium">{r.voucherNo}</TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">{formatDate(r.date)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatMoney(r.amount)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatMoney(r.consumed)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {formatMoney(r.available)}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            className="h-8 text-right"
+                            value={r.use ? String(r.use) : ""}
+                            placeholder="0"
+                            onChange={(e) => setAdvRow(i, Number(e.target.value) || 0)}
+                          />
+                          {err && <div className="mt-0.5 text-[11px] text-destructive">{err}</div>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+            {advUnderApplied && (
+              <p className="mt-2 text-xs font-medium text-destructive">
+                Advance adjusted ({formatMoney(advUsed)}) exceeds the amount allocated to
+                references ({formatMoney(allocated)}) — allocate the adjusted amount against
+                pending references below.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* ---------- settlement grid ---------- */}
       {isMoneyType && partyId && (
         <Card>
@@ -500,16 +614,16 @@ export function VoucherEntry({
             <CardTitle className="text-base">
               Settle Pending References{" "}
               {loadingRefs && <span className="text-xs font-normal">loading...</span>}
-              {advInfo && (advInfo.received > 0 || advInfo.paid > 0) && (
+              {advInfo && (type === "RECEIPT" ? advInfo.received : advInfo.paid) > 0 && (
                 <span className="ml-2 text-xs font-normal text-muted-foreground">
-                  {advInfo.received > 0 && `Adv received open: ${formatMoney(advInfo.received)}`}
-                  {advInfo.received > 0 && advInfo.paid > 0 && " · "}
-                  {advInfo.paid > 0 && `Adv paid open: ${formatMoney(advInfo.paid)}`}
+                  {type === "RECEIPT"
+                    ? `Adv received open: ${formatMoney(advInfo.received)}`
+                    : `Adv paid open: ${formatMoney(advInfo.paid)}`}
                 </span>
               )}
             </CardTitle>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={autoAllocate} disabled={money <= 0}>
+              <Button type="button" variant="outline" size="sm" onClick={autoAllocate} disabled={funds <= 0}>
                 <Wand2 className="h-3.5 w-3.5" /> Auto Allocate
               </Button>
               <Button
@@ -625,6 +739,7 @@ export function VoucherEntry({
               {(
                 [
                   [`${type === "RECEIPT" ? "Received" : "Paid"} (Bank/Cash)`, money, ""],
+                  ["Advance Adjusted", advUsed, advUsed > 0.009 ? "text-primary" : ""],
                   ["Allocated to references", allocated, overAllocated ? "text-destructive" : ""],
                   ["TDS", tdsTotal, ""],
                   ["Shortage + Other Ded.", round2(dedTotal - roundOffTotal), ""],
@@ -646,8 +761,9 @@ export function VoucherEntry({
             </div>
             {overAllocated && (
               <p className="mt-1 text-xs font-medium text-destructive">
-                Allocated exceeds the amount {type === "RECEIPT" ? "received" : "paid"} — reduce
-                the allocation or increase the amount.
+                Allocated exceeds the amount {type === "RECEIPT" ? "received" : "paid"}
+                {advUsed > 0.009 ? " plus the advance adjusted" : ""} — reduce the allocation
+                or increase the amount.
               </p>
             )}
           </CardContent>

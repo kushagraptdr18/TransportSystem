@@ -12,8 +12,19 @@ import { postLedger, reverseLedger, LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
 import { adjustmentsTotal, applyAdjustments, ensureAdjustmentHead } from "@/lib/adjust-engine";
 import { tdsHead } from "@/lib/account-heads";
-import { payableSettlement, refPositions } from "@/lib/settlement";
+import {
+  payableSettlement,
+  refPositions,
+  ALL_PAYABLE_REF_TYPES,
+  ALL_RECEIVABLE_REF_TYPES,
+} from "@/lib/settlement";
 import { raiseShortage, recoverShortage, releaseShortage } from "@/lib/shortage";
+import {
+  applyManualAdvanceUses,
+  listOpenAdvances,
+  restoreAdvanceUses,
+  type OpenAdvance,
+} from "@/lib/party-advance";
 
 const DOC_TYPE_BY_VOUCHER: Record<VoucherType, DocNumberType> = {
   RECEIPT: "VOUCHER_RECEIPT",
@@ -29,6 +40,13 @@ const adjustmentSchema = z.object({
   referenceDate: z.string().nullish(),
   amount: z.number().min(0).default(0),
   remarks: z.string().nullish(),
+});
+
+// manual adjustment of a previously received/paid advance against this
+// voucher's reference allocations
+const advanceUseSchema = z.object({
+  advanceId: z.string().min(1),
+  amount: z.number().min(0).default(0),
 });
 
 const allocationSchema = z.object({
@@ -98,7 +116,9 @@ const voucherSchema = z.object({
   creditHeadId: z.string().nullish(),
   chequeNo: z.string().nullish(),
   chequeDate: z.string().nullish(),
-  amount: z.number().min(0.01, "Amount is required"),
+  // 0 is allowed only for a pure advance-adjustment receipt/payment — enforced
+  // below, since journals/contras always move value
+  amount: z.number().min(0),
   tdsAmt: z.number().min(0).default(0),
   deduction: z.number().min(0).default(0),
   otherAmt: z.number().min(0).default(0),
@@ -106,6 +126,8 @@ const voucherSchema = z.object({
   allocations: z.array(allocationSchema).default([]),
   // central adjustment engine lines (shared by receipt / payment / journal)
   adjustments: z.array(adjustmentSchema).default([]),
+  // open party advances adjusted against this voucher's allocations
+  advanceAdjustments: z.array(advanceUseSchema).default([]),
 });
 
 export type SaveVoucherResult = { ok: true; id: string } | { ok: false; error: string };
@@ -156,10 +178,25 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
   const netAmount = round2(
     data.amount - data.tdsAmt - data.deduction + data.otherAmt - adjTotal
   );
+  const isMoneyType = data.type === "RECEIPT" || data.type === "PAYMENT";
+  const advanceKind = data.type === "RECEIPT" ? "RECEIVED" : "PAID";
+  const advUseTotal = round2(
+    data.advanceAdjustments.reduce((s, a) => s + a.amount, 0)
+  );
+  if (advUseTotal > 0.009 && (!isMoneyType || !data.partyId || data.accountHeadId)) {
+    return {
+      ok: false,
+      error: "Advance adjustment is only available on receipt/payment vouchers against a party",
+    };
+  }
+  const pureAdvanceAdjust = isMoneyType && advUseTotal > 0.009;
+  if (data.amount <= 0 && !pureAdvanceAdjust) {
+    return { ok: false, error: "Amount is required" };
+  }
   if (netAmount < 0) {
     return { ok: false, error: "Deductions + adjustments exceed the voucher amount" };
   }
-  if (netAmount <= 0 && data.type !== "JOURNAL") {
+  if (netAmount <= 0 && data.type !== "JOURNAL" && !pureAdvanceAdjust) {
     return { ok: false, error: "Net amount must be positive" };
   }
 
@@ -205,9 +242,18 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // ---- validation: never over-settle, never allocate beyond the money
       // moved (net amount = header amount − TDS − deductions)
       const allocatedSum = round2(data.allocations.reduce((s, a) => s + a.amount, 0));
-      if (allocatedSum > netAmount + 0.01) {
+      if (allocatedSum > round2(netAmount + advUseTotal) + 0.01) {
         throw new Error(
-          `Allocated ${allocatedSum} exceeds the received/paid amount ${netAmount}.`
+          `Allocated ${allocatedSum} exceeds the received/paid amount ${netAmount}` +
+            (advUseTotal > 0 ? ` plus advance adjusted ${advUseTotal}.` : ".")
+        );
+      }
+      // an adjusted advance exists only to settle references — it cannot turn
+      // into unallocated money (that would silently convert one advance into
+      // another and desync the reference trail)
+      if (advUseTotal > allocatedSum + 0.01) {
+        throw new Error(
+          `Advance adjusted ${advUseTotal} exceeds the ${allocatedSum} allocated to references — allocate the adjusted amount against pending references.`
         );
       }
       {
@@ -477,7 +523,9 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       });
       entries.push(...adjEntries);
 
-      await postLedger(tx, session, entries);
+      // a pure advance-adjustment voucher moves no money, so zero-value legs
+      // (bank/party) are dropped rather than posted
+      await postLedger(tx, session, entries.filter((e) => e.amount > 0.009));
 
       // Per-reference shortage on a voucher allocation. A PAYMENT deducts it
       // from what we hand over, so it is RECOVERED; a RECEIPT means the party
@@ -516,14 +564,43 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         savedNumber: data.voucherNo,
       });
 
+      // ---- manual advance adjustment (previously received/paid advances
+      // consumed against this voucher's reference allocations) ----
+      // Release whatever this voucher consumed before (edit path), then apply
+      // the requested lines — each validated against the advance's live open
+      // balance, party and direction inside the same transaction.
+      await restoreAdvanceUses(tx, "VOUCHER", savedId);
+      if (advUseTotal > 0.009 && data.partyId) {
+        const own = await tx.partyAdvance.findFirst({
+          where: {
+            voucherId: savedId,
+            id: { in: data.advanceAdjustments.map((l) => l.advanceId) },
+          },
+        });
+        if (own) throw new Error("A voucher cannot adjust the advance it created itself.");
+        await applyManualAdvanceUses(tx, {
+          tenantId: session.tenantId,
+          firmId: session.firmId,
+          partyId: data.partyId,
+          refType: "VOUCHER",
+          refId: savedId,
+          // carry the settled document references, so the Advance Register's
+          // "Used Against" reads "SBRL/001" rather than a bare voucher number
+          refNo: docRefNo,
+          date: voucherDate,
+          kinds: [advanceKind],
+          lines: data.advanceAdjustments,
+        });
+      }
+
       // ---- automatic party advance (receive-as-advance / over-payment /
       // advance-payment / over-payment on payables) ----
       // Any unallocated remainder of a party receipt OR payment becomes an
       // advance balance for that party — no second voucher is ever needed.
-      const advanceKind = data.type === "RECEIPT" ? "RECEIVED" : "PAID";
       if ((data.type === "RECEIPT" || data.type === "PAYMENT") && data.partyId && !data.accountHeadId) {
-        // advance = money moved that no reference consumed
-        const unallocated = round2(netAmount - allocatedSum);
+        // advance = money moved that no reference consumed; allocations funded
+        // by adjusted advances are not this voucher's money
+        const unallocated = round2(netAmount + advUseTotal - allocatedSum);
         const existingAdv = await tx.partyAdvance.findFirst({
           where: { voucherId: savedId, deletedAt: null },
         });
@@ -609,6 +686,8 @@ export async function deleteVoucher(
         await tx.partyAdvance.update({ where: { id: adv.id }, data: { deletedAt: new Date() } });
       }
       await tx.voucher.update({ where: { id }, data: { deletedAt: new Date() } });
+      // give back whatever OTHER advances this voucher had adjusted
+      await restoreAdvanceUses(tx, "VOUCHER", id);
       await reverseLedger(tx, "VOUCHER", id);
       await releaseShortage(tx, "VOUCHER", id);
       await audit(tx, session, { entity: "Voucher", entityId: id, action: "DELETE", before });
@@ -681,26 +760,33 @@ export async function getAllocationCandidates(input: {
   moduleLink: ModuleLink | "ALL";
   partyId?: string | null;
   voucherId?: string | null;
+  /** restricts "ALL" to the modules that voucher direction can settle —
+   *  a Receipt must never offer payables and vice versa */
+  voucherType?: "RECEIPT" | "PAYMENT" | null;
 }): Promise<AllocationCandidate[]> {
   const session = requireSession();
   const { partyId, voucherId } = input;
   const links: ModuleLink[] =
     input.moduleLink === "ALL"
-      ? [
-          "BILLING",
-          "GST_BILLING",
-          "FREIGHT_CHALLAN",
-          "BROKER_ENTRY",
-          "LORRY_HIRE",
-          "CASH_MEMO",
-          "OFFICE_EXPENSE",
-          "OFFICE_INCOME",
-          "STAFF_PAYROLL",
-          "VEHICLE_EXPENSE",
-          "STAFF_ADVANCE",
-          "DRIVER_SETTLEMENT",
-          "ADBLUE_PURCHASE",
-        ]
+      ? input.voucherType === "RECEIPT"
+        ? [...ALL_RECEIVABLE_REF_TYPES, "CASH_MEMO"]
+        : input.voucherType === "PAYMENT"
+          ? [...ALL_PAYABLE_REF_TYPES]
+          : [
+              "BILLING",
+              "GST_BILLING",
+              "FREIGHT_CHALLAN",
+              "BROKER_ENTRY",
+              "LORRY_HIRE",
+              "CASH_MEMO",
+              "OFFICE_EXPENSE",
+              "OFFICE_INCOME",
+              "STAFF_PAYROLL",
+              "VEHICLE_EXPENSE",
+              "STAFF_ADVANCE",
+              "DRIVER_SETTLEMENT",
+              "ADBLUE_PURCHASE",
+            ]
       : [input.moduleLink];
 
   return withTenant(session.tenantId, async (tx) => {
@@ -1063,6 +1149,31 @@ export async function getAccountHeadOptions(): Promise<
     tx.accountHead.findMany({ orderBy: { name: "asc" } })
   );
   return heads.map((h) => ({ value: h.id, label: h.name, meta: h.kind }));
+}
+
+/**
+ * Open advances of a party for the voucher's Adjust Advance grid — strictly
+ * the direction the voucher type may consume (Receipt adjusts advances
+ * RECEIVED from the party, Payment adjusts advances PAID to the party), never
+ * another party's and never a fully consumed one.
+ */
+export async function getOpenAdvances(input: {
+  partyId: string;
+  type: "RECEIPT" | "PAYMENT";
+  voucherId?: string | null;
+}): Promise<OpenAdvance[]> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const rows = await listOpenAdvances(tx, {
+      firmId: session.firmId,
+      partyId: input.partyId,
+      kinds: [input.type === "RECEIPT" ? "RECEIVED" : "PAID"],
+      includeRefType: "VOUCHER",
+      includeRefId: input.voucherId ?? undefined,
+    });
+    // a voucher must not offer the advance it created itself
+    return input.voucherId ? rows.filter((r) => r.voucherId !== input.voucherId) : rows;
+  });
 }
 
 /** Open advance balances of a party (shown in the voucher form). */
