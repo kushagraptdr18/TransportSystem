@@ -137,6 +137,10 @@ export async function saveVehicleExpenseTxn(
 
       let id: string;
       let voucherNo: string;
+      // bulk-purchase allocation items that survive this edit — their
+      // relative-owner transfers are reversed here and re-posted below so
+      // they always follow the voucher's current head and reference
+      let keptAllocItems: { id: string; vehicleId: string; amount: unknown; allocDate: Date }[] = [];
       if (d.id) {
         const before = await tx.vehicleExpenseVoucher.findFirstOrThrow({
           where: { id: d.id, deletedAt: null },
@@ -168,6 +172,14 @@ export async function saveVehicleExpenseTxn(
         // an edit that names vehicles replaces the split it owns
         if (d.items.length) {
           await tx.vehicleExpenseItem.deleteMany({ where: { voucherId: id } });
+        } else {
+          keptAllocItems = before.items;
+        }
+        // allocation transfers hang off item ids — reverse them all, whether
+        // the items are being replaced (their entries would be orphaned) or
+        // kept (the head/reference may have changed); kept ones re-post below
+        for (const item of before.items) {
+          await reverseLedger(tx, "VEH_EXP_ALLOC", item.id);
         }
         await reverseLedger(tx, "VEHICLE_EXPENSE", id);
         await audit(tx, session, {
@@ -285,6 +297,44 @@ export async function saveVehicleExpenseTxn(
         }
       }
       await postLedger(tx, session, entries);
+
+      // re-post relative-owner transfers for bulk-purchase allocations that
+      // survived the edit, against the voucher's CURRENT head and reference
+      if (keptAllocItems.length && d.txnType === "EXPENSE") {
+        const allocVehicles = await tx.vehicle.findMany({
+          where: { id: { in: keptAllocItems.map((i) => i.vehicleId) } },
+          select: { id: true, number: true, ownershipType: true, ownerId: true },
+        });
+        const byId = new Map(allocVehicles.map((v) => [v.id, v]));
+        const transferEntries: LedgerPostEntry[] = [];
+        for (const item of keptAllocItems) {
+          const v = byId.get(item.vehicleId);
+          if (v?.ownershipType !== "RELATIVE" || !v.ownerId) continue;
+          const allocCommon = {
+            date: item.allocDate,
+            refType: "VEH_EXP_ALLOC",
+            refId: item.id,
+            refNo: values.refNo || voucherNo,
+          };
+          transferEntries.push(
+            {
+              ...allocCommon,
+              partyId: v.ownerId,
+              side: "DEBIT",
+              amount: toNum(String(item.amount)),
+              narration: `${head.name} for relative vehicle ${v.number} — transferred to owner (allocation of ${voucherNo})`,
+            },
+            {
+              ...allocCommon,
+              accountHeadId: d.headId,
+              side: "CREDIT",
+              amount: toNum(String(item.amount)),
+              narration: `${head.name} ${v.number} — shifted to relative owner ledger (allocation of ${voucherNo})`,
+            }
+          );
+        }
+        if (transferEntries.length) await postLedger(tx, session, transferEntries);
+      }
 
       revalidatePath(REVALIDATE);
       return { ok: true as const, id, voucherNo };
