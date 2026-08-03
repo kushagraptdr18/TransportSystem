@@ -12,7 +12,14 @@ const tdsStatus = (amt: number) => (amt > 0.009 ? "DEDUCTED" : "NOT DEDUCTED");
 /**
  * TDS PAYABLE Register — TDS OUR company deducts while MAKING payments.
  * Sources: Chalan (owner payment side), Broker Slip (owner payment side),
- * PAYMENT vouchers. Receipt vouchers NEVER appear here.
+ * PAYMENT vouchers, and JOURNAL vouchers that touch the TDS Payable ledger.
+ * Receipt vouchers NEVER appear here.
+ *
+ * Journal rows are derived live from the LEDGER entries posted against the
+ * common "TDS Payable" head — the same entries an edit re-posts and a delete
+ * removes — so the register and the ledger can never disagree and no
+ * duplicate tracking is needed. A credit raises the liability (TDS deducted
+ * via journal); a debit reduces it and shows as a negative amount.
  */
 export async function TdsPayableTab({
   searchParams,
@@ -88,7 +95,54 @@ export async function TdsPayableTab({
     ]);
     const partyById = new Map(parties.map((p) => [p.id, p]));
 
+    // journal vouchers that touched the TDS Payable ledger head
+    const tdsHeads = await tx.accountHead.findMany({
+      where: { name: "TDS Payable" },
+      select: { id: true },
+    });
+    const tdsLedger = tdsHeads.length
+      ? await tx.ledgerEntry.findMany({
+          where: {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            refType: "VOUCHER",
+            accountHeadId: { in: tdsHeads.map((h) => h.id) },
+            ...(dateWhere ? { date: dateWhere } : {}),
+          },
+        })
+      : [];
+    const journals = tdsLedger.length
+      ? await tx.voucher.findMany({
+          where: {
+            id: { in: Array.from(new Set(tdsLedger.map((e) => e.refId))) },
+            type: "JOURNAL",
+            deletedAt: null,
+          },
+        })
+      : [];
+    const journalById = new Map(journals.map((v) => [v.id, v]));
+
     const out: ReportRow[] = [];
+    for (const e of tdsLedger) {
+      const v = journalById.get(e.refId);
+      if (!v) continue; // payment/receipt vouchers already have their own rows
+      const p = (v.partyId && partyById.get(v.partyId)) || (v.bankPartyId && partyById.get(v.bankPartyId)) || undefined;
+      // credit = liability raised (deducted); debit = paid off / reversed
+      const signedAmt = e.side === "CREDIT" ? toNum(String(e.amount)) : -toNum(String(e.amount));
+      out.push({
+        date: e.date.toISOString(),
+        module: "JOURNAL VOUCHER",
+        party: p?.name ?? "",
+        pan: p?.pan ?? "",
+        refNo: v.voucherNo,
+        invoiceAmount: toNum(String(v.amount)),
+        tdsPct: 0,
+        tdsAmt: signedAmt,
+        net: toNum(String(v.netAmount)),
+        status: tdsStatus(Math.abs(signedAmt)),
+        remarks: e.narration ?? v.remarks ?? "",
+      });
+    }
     for (const v of payVouchers) {
       const p = v.partyId ? partyById.get(v.partyId) : undefined;
       const allocTds = v.allocations.filter((a) => toNum(String(a.tdsAmt)) > 0);
@@ -200,6 +254,7 @@ export async function TdsPayableTab({
         { value: "PAYMENT VOUCHER", label: "Payment Voucher" },
         { value: "CHALLAN (OWNER)", label: "Challan (Owner)" },
         { value: "BROKER SLIP (OWNER)", label: "Broker Slip (Owner)" },
+        { value: "JOURNAL VOUCHER", label: "Journal Voucher" },
       ],
     },
     {

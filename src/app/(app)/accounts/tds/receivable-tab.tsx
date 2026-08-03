@@ -6,8 +6,14 @@ import { SimpleReport, type ReportRow } from "@/components/accounts/simple-repor
 
 /**
  * TDS RECEIVABLE Register — TDS other parties deduct while PAYING our
- * company. Sources: RECEIPT vouchers, Broker Slip (broker/party side).
- * Payment vouchers NEVER appear here. For Income Tax return filing.
+ * company. Sources: RECEIPT vouchers, Broker Slip (broker/party side), and
+ * JOURNAL vouchers that touch the TDS Receivable ledger. Payment vouchers
+ * NEVER appear here. For Income Tax return filing.
+ *
+ * Journal rows are derived live from the LEDGER entries posted against the
+ * common "TDS Receivable" head, so an edited or deleted journal can never
+ * leave a stale or duplicate register row. A debit recognises the receivable;
+ * a credit reduces it and shows as a negative amount.
  */
 export async function TdsReceivableTab({
   searchParams,
@@ -51,7 +57,56 @@ export async function TdsReceivableTab({
     ]);
     const partyById = new Map(parties.map((p) => [p.id, p]));
 
+    // journal vouchers that touched the TDS Receivable ledger head
+    const tdsHeads = await tx.accountHead.findMany({
+      where: { name: "TDS Receivable" },
+      select: { id: true },
+    });
+    const tdsLedger = tdsHeads.length
+      ? await tx.ledgerEntry.findMany({
+          where: {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            refType: "VOUCHER",
+            accountHeadId: { in: tdsHeads.map((h) => h.id) },
+            ...(dateWhere ? { date: dateWhere } : {}),
+          },
+        })
+      : [];
+    const journals = tdsLedger.length
+      ? await tx.voucher.findMany({
+          where: {
+            id: { in: Array.from(new Set(tdsLedger.map((e) => e.refId))) },
+            type: "JOURNAL",
+            deletedAt: null,
+          },
+        })
+      : [];
+    const journalById = new Map(journals.map((v) => [v.id, v]));
+
     const out: ReportRow[] = [];
+    for (const e of tdsLedger) {
+      const v = journalById.get(e.refId);
+      if (!v) continue; // receipt vouchers already have their own rows
+      const p =
+        (v.partyId && partyById.get(v.partyId)) ||
+        (v.bankPartyId && partyById.get(v.bankPartyId)) ||
+        undefined;
+      // debit = receivable recognised; credit = refunded / adjusted away
+      const signedAmt = e.side === "DEBIT" ? toNum(String(e.amount)) : -toNum(String(e.amount));
+      out.push({
+        date: e.date.toISOString(),
+        module: "JOURNAL VOUCHER",
+        party: p?.name ?? "",
+        pan: p?.pan ?? "",
+        refNo: v.voucherNo,
+        invoiceAmount: toNum(String(v.amount)),
+        tdsPct: 0,
+        tdsAmt: signedAmt,
+        net: toNum(String(v.netAmount)),
+        remarks: e.narration ?? v.remarks ?? "",
+      });
+    }
     for (const v of recVouchers) {
       const p = v.partyId ? partyById.get(v.partyId) : undefined;
       const allocTds = v.allocations.filter((a) => toNum(String(a.tdsAmt)) > 0);
@@ -139,6 +194,7 @@ export async function TdsReceivableTab({
       options: [
         { value: "RECEIPT VOUCHER", label: "Receipt Voucher" },
         { value: "BROKER SLIP (BROKER)", label: "Broker Slip (Broker)" },
+        { value: "JOURNAL VOUCHER", label: "Journal Voucher" },
       ],
     },
   ];
