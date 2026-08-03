@@ -8,7 +8,17 @@ import { PrintToolbar } from "@/components/lr/print-toolbar";
 
 export const dynamic = "force-dynamic";
 
-const COPIES = ["CONSIGNOR COPY", "CONSIGNEE COPY"] as const;
+/**
+ * One sheet per copy, in the order they are separated after printing: the two
+ * that leave with the goods first, then the three the office keeps.
+ */
+const COPIES = [
+  "CONSIGNOR COPY",
+  "CONSIGNEE COPY",
+  "LORRY COPY",
+  "ACCOUNT COPY",
+  "FILE COPY",
+] as const;
 
 function LabelValue({ label, value }: { label: string; value: React.ReactNode }) {
   if (value == null || value === "") return null;
@@ -118,7 +128,11 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
           `,
         }}
       />
-      <PrintToolbar note="Prints 2 copies: Consignor & Consignee" />
+      <PrintToolbar
+        note={`Prints ${COPIES.length} copies: ${COPIES.map((c) =>
+          c.replace(" COPY", "")
+        ).join(", ")}`}
+      />
 
       <div className="mx-auto max-w-[190mm] space-y-6 p-4">
         {COPIES.map((copyLabel) => (
