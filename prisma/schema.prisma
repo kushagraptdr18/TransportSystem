@@ -304,6 +304,25 @@ model UserPermission {
   @@unique([userId, module])
 }
 
+/// Per-tenant, per-role permission matrix edited from Settings -> Role
+/// Permissions. Resolution order in authorize(): OWNER bypass -> per-user
+/// override (UserPermission) -> role row here -> hard-coded role defaults.
+model RolePermission {
+  id        String  @id @default(cuid())
+  tenantId  String
+  role      Role
+  module    String
+  canView   Boolean @default(true)
+  canCreate Boolean @default(false)
+  canEdit   Boolean @default(false)
+  canDelete Boolean @default(false)
+  canPrint  Boolean @default(true)
+  canExport Boolean @default(true)
+
+  @@unique([tenantId, role, module])
+  @@index([tenantId])
+}
+
 model DocumentSequence {
   id       String        @id @default(cuid())
   tenantId String

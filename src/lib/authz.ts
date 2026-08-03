@@ -1,39 +1,47 @@
 import { Session } from "./session";
 import { withTenant } from "./db";
+import { ROLE_DEFAULTS, type Action } from "./permissions";
 
-export type Action = "view" | "create" | "edit" | "delete" | "print" | "export";
-
-const ROLE_DEFAULTS: Record<Session["role"], Action[]> = {
-  OWNER: ["view", "create", "edit", "delete", "print", "export"],
-  ADMIN: ["view", "create", "edit", "delete", "print", "export"],
-  OPERATOR: ["view", "create", "edit", "print", "export"],
-  ACCOUNTANT: ["view", "create", "edit", "print", "export"],
-  VIEWER: ["view", "print", "export"],
-};
+export type { Action };
 
 /**
  * Authorize `action` on `module` for the session user.
- * Per-user overrides (UserPermission rows) take precedence over role defaults.
+ *
+ * Resolution order:
+ *  1. OWNER always passes — the recovery path can never be configured away.
+ *  2. Per-user override (UserPermission row) — most specific wins.
+ *  3. Per-tenant role matrix (RolePermission, edited from Settings -> Role
+ *     Permissions).
+ *  4. Hard-coded role defaults.
  */
 export async function authorize(
   session: Session,
   module: string,
   action: Action
 ): Promise<void> {
-  const override = await withTenant(session.tenantId, (tx) =>
-    tx.userPermission.findUnique({
+  if (session.role === "OWNER") return;
+
+  const { override, roleRow } = await withTenant(session.tenantId, async (tx) => ({
+    override: await tx.userPermission.findUnique({
       where: { userId_module: { userId: session.userId, module } },
-    })
-  );
+    }),
+    roleRow: await tx.rolePermission.findUnique({
+      where: {
+        tenantId_role_module: { tenantId: session.tenantId, role: session.role, module },
+      },
+    }),
+  }));
+
+  const row = override ?? roleRow;
   let allowed: boolean;
-  if (override) {
+  if (row) {
     const map: Record<Action, boolean> = {
-      view: override.canView,
-      create: override.canCreate,
-      edit: override.canEdit,
-      delete: override.canDelete,
-      print: override.canPrint,
-      export: override.canExport,
+      view: row.canView,
+      create: row.canCreate,
+      edit: row.canEdit,
+      delete: row.canDelete,
+      print: row.canPrint,
+      export: row.canExport,
     };
     allowed = map[action];
   } else {

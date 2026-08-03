@@ -171,6 +171,7 @@ export const NAV: NavGroup[] = [
     items: [
       { label: "Firm Settings", href: "/settings/firm" },
       { label: "Users", href: "/settings/users" },
+      { label: "Role Permissions", href: "/settings/permissions" },
       { label: "Audit Log", href: "/settings/audit" },
     ],
   },
