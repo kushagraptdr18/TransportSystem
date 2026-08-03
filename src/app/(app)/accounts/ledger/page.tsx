@@ -1,18 +1,21 @@
+import { Search } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport } from "@/components/accounts/simple-report";
+import { Card, CardContent } from "@/components/ui/card";
 import { BOOK_COLUMNS, ledgerBookRows } from "../_lib/book";
 
 export const dynamic = "force-dynamic";
 
 /**
- * Ledger Summary — Tally-style ledger view.
- * Global ledger search (name / alias / trade name / group), full filter set
- * (reference, type, narration, side, vehicle, amount range, dates), running
- * balance with opening, counter-account column, and per-row drill-down to the
- * source document. Every module posts through the one LedgerEntry table, so
- * this screen is the single standardized ledger for the whole ERP.
+ * Ledger Summary — Tally-style, search-first.
+ * Opening the page shows only the ledger search; selecting a ledger (party,
+ * bank/cash or income/expense head) opens its book with running balance,
+ * counter-account column and per-row drill-down. Every filter — including the
+ * Ref No and Ref Type dropdowns — is scoped to the selected ledger only.
+ * Searching a Reference No WITHOUT a ledger keeps its cross-ledger meaning:
+ * the complete lifecycle of one document.
  */
 export default async function LedgerSummaryPage({
   searchParams,
@@ -37,12 +40,14 @@ export default async function LedgerSummaryPage({
   const selected = searchParams.party ?? "";
   const headId = selected.startsWith("head:") ? selected.slice(5) : undefined;
   const partyId = headId ? undefined : selected || undefined;
+  const hasLedger = !!(partyId || headId);
+  const tracingRef = !hasLedger && !!searchParams.ref;
   const num = (s?: string) => {
     const v = Number(s);
     return s && !isNaN(v) ? v : undefined;
   };
 
-  const { rows, parties, heads, vehicles, refTypes } = await ledgerBookRows({
+  const { rows, parties, heads, vehicles, refTypes, refNos } = await ledgerBookRows({
     session,
     partyId,
     headId,
@@ -77,11 +82,52 @@ export default async function LedgerSummaryPage({
       label: `${h.name} — ${h.kind === "INCOME" ? "Income" : h.kind === "EXPENSE" ? "Expense" : h.kind} Head`,
     })),
   ];
+  const searchFilter: FilterDef = {
+    type: "combobox",
+    key: "party",
+    label: "Search Ledger (name / alias / group)",
+    options: ledgerOptions,
+  };
 
+  // ---------- first screen: search only ----------
+  if (!hasLedger && !tracingRef) {
+    return (
+      <div className="space-y-4 p-4">
+        <h1 className="page-title">Ledger Summary</h1>
+        <Card className="mx-auto mt-10 max-w-2xl">
+          <CardContent className="space-y-4 p-8 text-center">
+            <div className="flex items-center justify-center gap-2 text-lg font-semibold">
+              <Search className="h-5 w-5" /> Search Ledger
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Type a ledger name, alias, trade name or group — parties, banks, cash,
+              income and expense heads are all here. Selecting one opens its complete
+              ledger with running balance and drill-down.
+            </p>
+            <FilterBar
+              filters={[
+                searchFilter,
+                { type: "text", key: "ref", label: "...or trace a Reference No across all ledgers" },
+              ]}
+            />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // ---------- ledger view (or cross-ledger reference trace) ----------
   const filters: FilterDef[] = [
-    { type: "combobox", key: "party", label: "Search Ledger (name / alias / group)", options: ledgerOptions },
+    searchFilter,
     { type: "daterange", key: "date", label: "Date" },
-    { type: "text", key: "ref", label: "Reference No..." },
+    hasLedger
+      ? {
+          type: "combobox",
+          key: "ref",
+          label: "Ref No (this ledger only)",
+          options: refNos.map((r) => ({ value: r, label: r })),
+        }
+      : { type: "text", key: "ref", label: "Reference No..." },
     {
       type: "select",
       key: "reftype",
@@ -117,25 +163,28 @@ export default async function LedgerSummaryPage({
     searchParams.amt_from ||
     searchParams.amt_to
   );
+  const selectedLabel = hasLedger
+    ? ledgerOptions.find((o) => o.value === selected)?.label ?? ""
+    : "";
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="page-title">Ledger Summary</h1>
+      <h1 className="page-title">
+        Ledger Summary{selectedLabel ? ` — ${selectedLabel}` : ""}
+      </h1>
       <p className="text-sm text-muted-foreground">
-        Search any ledger by name, alias, trade name or group and open it instantly. The
-        Account column shows the counter-ledger of each posting; click a Reference No to open
-        the source document. Excel export and printing follow the applied filters.
+        {hasLedger
+          ? "Every filter below — including the Ref No and Ref Type dropdowns — applies to this ledger only. The Account column shows the counter-ledger of each posting; click a Reference No to open the source document."
+          : `Reference-wise trace of "${searchParams.ref}" — every ledger the document touched, in date order.`}
       </p>
       <FilterBar filters={filters} />
       <SimpleReport
         title={
-          searchParams.ref
-            ? `Reference-wise details for "${searchParams.ref}" — complete lifecycle across all ledgers, in date order`
-            : selected
-              ? contentFiltered
-                ? "Filtered view — running balance is hidden because these rows are a subset of the ledger"
-                : "Opening balance included in running balance"
-              : "Select a ledger to see its book with running balance — or search a Reference No to trace a document end-to-end"
+          tracingRef
+            ? `Reference-wise details for "${searchParams.ref}"`
+            : contentFiltered
+              ? "Filtered view — running balance is hidden because these rows are a subset of the ledger"
+              : "Opening balance included in running balance"
         }
         columns={BOOK_COLUMNS}
         rows={rows}

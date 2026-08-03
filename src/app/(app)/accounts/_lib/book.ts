@@ -51,8 +51,10 @@ export async function ledgerBookRows(params: BookParams): Promise<{
   }[];
   heads: { id: string; name: string; kind: string }[];
   vehicles: { id: string; number: string }[];
-  /** distinct source-document types present in this firm+FY, for the filter */
+  /** distinct source-document types — scoped to the selected ledger when one is chosen */
   refTypes: string[];
+  /** distinct reference numbers OF THE SELECTED LEDGER ONLY (empty otherwise) */
+  refNos: string[];
 }> {
   const { session } = params;
   return withTenant(session.tenantId, async (tx) => {
@@ -82,25 +84,59 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         select: { id: true, name: true, kind: true },
       }),
       tx.vehicle.findMany({ orderBy: { number: "asc" }, select: { id: true, number: true } }),
+      // filter options belong to the SELECTED ledger only — a Ref Type or Ref
+      // No of some other party must never appear in the dropdowns
       tx.ledgerEntry.groupBy({
         by: ["refType"],
-        where: { firmId: session.firmId, fyId: session.fyId },
+        where: {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          ...(params.headId
+            ? { accountHeadId: params.headId }
+            : params.partyId
+              ? { partyId: params.partyId }
+              : {}),
+        },
       }),
     ]);
+    const refNoRows =
+      params.partyId || params.headId
+        ? await tx.ledgerEntry.findMany({
+            where: {
+              firmId: session.firmId,
+              fyId: session.fyId,
+              ...(params.headId
+                ? { accountHeadId: params.headId }
+                : { partyId: params.partyId }),
+            },
+            select: { refNo: true },
+            distinct: ["refNo"],
+            orderBy: { refNo: "asc" },
+            take: 1000,
+          })
+        : [];
     const partyIds = params.partyId ? [params.partyId] : parties.map((p) => p.id);
 
+    // With a ledger selected, EVERY filter (reference included) applies inside
+    // that ledger only. A reference search with no ledger selected keeps its
+    // cross-ledger meaning: the complete lifecycle of one document.
+    const ledgerScope: Prisma.LedgerEntryWhereInput | null = params.headId
+      ? { accountHeadId: params.headId }
+      : params.partyId || params.groups
+        ? { partyId: { in: partyIds } }
+        : null;
+    const refNoWhere = params.refNo
+      ? { refNo: { contains: params.refNo.trim(), mode: "insensitive" as const } }
+      : {};
     const where: Prisma.LedgerEntryWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
-      ...(params.refNo
-        ? // reference-wise: every ledger the reference touched
-          { refNo: { contains: params.refNo.trim(), mode: "insensitive" } }
-        : params.headId
-          ? { accountHeadId: params.headId }
-          : params.partyId || params.groups
-            ? { partyId: { in: partyIds } }
-            : // full ledger: keep unlinked entries, drop bank/cash-party entries
-              { OR: [{ partyId: { in: partyIds } }, { partyId: null }] }),
+      ...(ledgerScope
+        ? { ...ledgerScope, ...refNoWhere }
+        : params.refNo
+          ? refNoWhere
+          : // full ledger: keep unlinked entries, drop bank/cash-party entries
+            { OR: [{ partyId: { in: partyIds } }, { partyId: null }] }),
     };
     if (params.dateFrom || params.dateTo) {
       where.date = {
@@ -357,6 +393,7 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       heads,
       vehicles,
       refTypes: refTypeGroups.map((g) => g.refType).sort(),
+      refNos: refNoRows.map((r) => r.refNo).filter(Boolean),
     };
   });
 }
