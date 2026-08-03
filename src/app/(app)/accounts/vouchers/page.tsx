@@ -9,6 +9,7 @@ import { VoucherEntry, RecentVoucher } from "@/components/accounts/voucher-entry
 import { TYPE_META } from "@/components/accounts/voucher-types";
 import { VoucherType, DocNumberType } from "@prisma/client";
 import { VoucherRegisterTab } from "./register-tab";
+import { getAccountHeadOptions } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -49,10 +50,12 @@ export default async function VouchersPage({
     );
   }
 
-  const [partyOptions, bankOptions, vehicleOptions] = await Promise.all([
+  const [partyOptions, bankOptions, vehicleOptions, headOptions] = await Promise.all([
     getPartyOptions(),
     getBankOptions(),
     getVehicleOptions(),
+    // income / expense heads — the journal can debit or credit any of them
+    getAccountHeadOptions(),
   ]);
 
   const { peekNumbers, recent } = await withTenant(session.tenantId, async (tx) => {
@@ -128,6 +131,7 @@ export default async function VouchersPage({
         peekNumbers={peekNumbers}
         partyOptions={partyOptions}
         bankOptions={bankOptions}
+        headOptions={headOptions}
         vehicleOptions={vehicleOptions}
         recent={recent}
       />

@@ -6,13 +6,28 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
-import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
+import {
+  ensureAccountHead,
+  postLedger,
+  reverseLedger,
+  type LedgerPostEntry,
+} from "@/lib/ledger";
 import { toNum } from "@/lib/utils";
 
 /**
- * AdBlue (Urea) stock register — LITRES ONLY. Deliberately no accounting:
- * no expense/purchase voucher, no ledger entry, no value stored. The amount
- * is computed only inside a trip sheet (litres × manually entered rate).
+ * AdBlue (Urea) stock register.
+ *
+ * Stock arrives before the supplier's invoice does, so a refill is entered in
+ * two steps. Step one records the receipt — date, supplier, litres — and posts
+ * NOTHING: quantity moves, no ledger entry, no payable. It sits as "Pending
+ * Bill". Step two edits the SAME record with the bill (amount, bill no, date,
+ * GST, payment) and only then does the accounting happen: Urea Expense Dr /
+ * Supplier Cr, plus Supplier Dr / Cash-Bank Cr when it was paid on the spot.
+ * Left on credit it is a payable the Payment Voucher settles (ADBLUE_PURCHASE).
+ *
+ * The purchase never touches a vehicle. Urea reaches a vehicle's P&L only
+ * through trip-sheet consumption (litres x rate), which is where the owner,
+ * relative-vehicle and broker rules already apply — none of that changes here.
  */
 
 const REVALIDATE = "/vehicle/adblue";
@@ -22,11 +37,19 @@ const schema = z.object({
   type: z.enum(["REFILL", "ISSUE"]),
   date: z.string().min(1, "Date is required"),
   supplierName: z.string().nullish(),
+  supplierId: z.string().nullish(),
   vehicleId: z.string().nullish(),
   destination: z.string().nullish(),
   qty: z.number().min(0.01, "Quantity (litres) is required"),
-  amount: z.number().min(0).default(0), // purchase value (refill only, optional)
-  bankPartyId: z.string().nullish(), // paid from (refill only)
+  // everything below is optional at receipt time and filled in when the bill
+  // turns up a day or two later
+  amount: z.number().min(0).default(0),
+  billNo: z.string().nullish(),
+  billDate: z.string().nullish(),
+  gstPct: z.number().min(0).default(0),
+  gstAmount: z.number().min(0).default(0),
+  paymentMode: z.enum(["CASH", "BANK"]).nullish(), // blank = on credit
+  bankPartyId: z.string().nullish(),
   refNo: z.string().nullish(),
   remarks: z.string().nullish(),
 });
@@ -42,18 +65,63 @@ export async function saveAdblueTxn(
   if (d.type === "ISSUE" && !d.vehicleId) {
     return { ok: false, error: "Vehicle is required for an issue entry." };
   }
+  // Bill details travel together: an amount without a bill number (or the other
+  // way round) is a half-entered invoice, and it decides whether accounting is
+  // posted at all.
+  const billed = d.type === "REFILL" && d.amount > 0 && !!d.billNo?.trim();
+  if (d.type === "REFILL" && d.amount > 0 && !d.billNo?.trim()) {
+    return { ok: false, error: "Enter the bill number along with the purchase amount." };
+  }
+  if (billed && !d.supplierId && !d.bankPartyId) {
+    return {
+      ok: false,
+      error: "Choose the supplier ledger, or a payment mode with a cash/bank account.",
+    };
+  }
+  if (d.paymentMode && !d.bankPartyId) {
+    return { ok: false, error: "Cash / Bank account is required when a payment mode is selected." };
+  }
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
+      const isRefill = d.type === "REFILL";
+      const billNo = isRefill ? d.billNo?.trim() || null : null;
+      const supplierId = isRefill ? d.supplierId || null : null;
+      // The same invoice must not be booked twice against one supplier — the
+      // second entry would double both the expense and what he is owed.
+      if (billNo && supplierId) {
+        const dupe = await tx.adblueTxn.findFirst({
+          where: {
+            firmId: session.firmId,
+            supplierId,
+            billNo,
+            deletedAt: null,
+            ...(d.id ? { id: { not: d.id } } : {}),
+          },
+        });
+        if (dupe) {
+          return {
+            ok: false as const,
+            error: `Bill ${billNo} is already entered for this supplier.`,
+          };
+        }
+      }
+
       const values = {
         type: d.type,
         date: new Date(`${d.date}T00:00:00`),
-        supplierName: d.type === "REFILL" ? d.supplierName?.trim() || null : null,
+        supplierName: isRefill ? d.supplierName?.trim() || null : null,
+        supplierId,
         vehicleId: d.vehicleId || null,
         destination: d.type === "ISSUE" ? d.destination?.trim() || null : null,
         qty: d.qty,
-        amount: d.type === "REFILL" ? d.amount : 0,
-        bankPartyId: d.type === "REFILL" ? d.bankPartyId || null : null,
+        amount: isRefill ? d.amount : 0,
+        billNo,
+        billDate: isRefill && d.billDate ? new Date(`${d.billDate}T00:00:00`) : null,
+        gstPct: isRefill ? d.gstPct : 0,
+        gstAmount: isRefill ? d.gstAmount : 0,
+        paymentMode: isRefill ? d.paymentMode || null : null,
+        bankPartyId: isRefill ? d.bankPartyId || null : null,
         refNo: d.refNo?.trim() || null,
         remarks: d.remarks || null,
       };
@@ -77,22 +145,61 @@ export async function saveAdblueTxn(
         await audit(tx, session, { entity: "AdblueTxn", entityId: id, action: "CREATE", after: created });
       }
 
-      // refill purchase value posts to the Urea Expense Ledger (no vehicle
-      // allocation at purchase time); issues never post anything
+      // Accounting happens ONLY once the bill is in. A stock receipt awaiting its
+      // invoice posts nothing — no expense, no payable — and an issue never
+      // posts anything, because urea reaches a vehicle through the trip sheet.
+      // No entry here carries a vehicleId: the purchase must never land in
+      // vehicle P&L or the vehicle expense register.
       await reverseLedger(tx, "ADBLUE", id);
-      if (values.type === "REFILL" && values.amount > 0 && values.bankPartyId) {
+      if (billed) {
         const ureaHead = await ensureAccountHead(tx, session, "Urea Expense", "EXPENSE");
         const common = {
-          date: values.date,
+          date: values.billDate ?? values.date,
           refType: "ADBLUE",
           refId: id,
-          refNo: values.refNo || "ADBLUE",
+          refNo: values.billNo || values.refNo || "ADBLUE",
           narration: `AdBlue purchase ${values.qty} L${values.supplierName ? " — " + values.supplierName : ""}`,
         };
-        await postLedger(tx, session, [
+        const entries: LedgerPostEntry[] = [
           { ...common, accountHeadId: ureaHead, side: "DEBIT", amount: values.amount },
-          { ...common, partyId: values.bankPartyId, side: "CREDIT", amount: values.amount },
-        ]);
+        ];
+        if (values.supplierId) {
+          // bill on the supplier; paying it is a second, separate pair of legs so
+          // a credit purchase leaves a payable behind
+          entries.push({
+            ...common,
+            partyId: values.supplierId,
+            side: "CREDIT" as const,
+            amount: values.amount,
+          });
+          if (values.paymentMode && values.bankPartyId) {
+            entries.push(
+              {
+                ...common,
+                partyId: values.supplierId,
+                side: "DEBIT" as const,
+                amount: values.amount,
+                narration: `Payment to supplier (${values.paymentMode.toLowerCase()}) — bill ${values.billNo}`,
+              },
+              {
+                ...common,
+                partyId: values.bankPartyId,
+                side: "CREDIT" as const,
+                amount: values.amount,
+                narration: `AdBlue purchase ${values.qty} L — bill ${values.billNo}`,
+              }
+            );
+          }
+        } else {
+          // no supplier ledger: a straight cash/bank purchase, as before
+          entries.push({
+            ...common,
+            partyId: values.bankPartyId!,
+            side: "CREDIT" as const,
+            amount: values.amount,
+          });
+        }
+        await postLedger(tx, session, entries);
       }
       revalidatePath(REVALIDATE);
       return { ok: true as const, id };

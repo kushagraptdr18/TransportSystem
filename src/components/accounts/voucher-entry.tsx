@@ -46,6 +46,9 @@ import {
 
 export type { VType };
 
+/** marks a journal ledger option as an account head rather than a party */
+const HEAD_PREFIX = "head:";
+
 export interface RecentVoucher {
   id: string;
   voucherNo: string;
@@ -87,6 +90,7 @@ export function VoucherEntry({
   peekNumbers,
   partyOptions,
   bankOptions,
+  headOptions,
   vehicleOptions,
   recent,
   type,
@@ -94,6 +98,8 @@ export function VoucherEntry({
   peekNumbers: Record<VType, string>;
   partyOptions: MasterOption[];
   bankOptions: MasterOption[];
+  /** income / expense ledger heads — journal may debit or credit any of them */
+  headOptions: MasterOption[];
   vehicleOptions: MasterOption[];
   recent: Record<VType, RecentVoucher[]>;
   /** the voucher type being entered — the page owns the tabs */
@@ -123,6 +129,22 @@ export function VoucherEntry({
   // journal / contra specifics
   const [creditLedgerId, setCreditLedgerId] = React.useState<string | null>(null);
   const [refNo, setRefNo] = React.useState("");
+
+  // A journal adjusts ANY two ledgers, so both dropdowns offer every master
+  // ledger (party / customer / supplier / broker / owner / driver / staff),
+  // every bank and cash account and every income / expense head. Heads are
+  // tagged so the id can be told apart from a party id on save.
+  const journalLedgers = React.useMemo(
+    () => [
+      ...partyOptions,
+      ...bankOptions,
+      ...headOptions.map((h) => ({ ...h, value: `${HEAD_PREFIX}${h.value}` })),
+    ],
+    [partyOptions, bankOptions, headOptions]
+  );
+  const isHead = (v: string | null) => !!v && v.startsWith(HEAD_PREFIX);
+  const headId = (v: string | null) => (isHead(v) ? v!.slice(HEAD_PREFIX.length) : null);
+  const partyIdOf = (v: string | null) => (isHead(v) ? null : v);
 
   const [rows, setRows] = React.useState<SettleRow[]>([]);
   const [advInfo, setAdvInfo] = React.useState<{ received: number; paid: number } | null>(null);
@@ -238,11 +260,13 @@ export function VoucherEntry({
         voucherDate: toIso(dateText),
         entryType: type === "CONTRA" ? "CONTRA" : mode,
         moduleLink: "OTHERS",
-        partyId: type === "CONTRA" ? partyId : partyId, // contra: FROM account
+        // journal: either side may be a party/bank/cash ledger or a head
+        partyId: type === "JOURNAL" ? partyIdOf(partyId) : partyId, // contra: FROM account
         vehicleId,
-        accountHeadId: null,
+        accountHeadId: type === "JOURNAL" ? headId(partyId) : null,
         ledgerPosting: "PARTY",
-        bankPartyId: type === "JOURNAL" ? creditLedgerId ?? "" : bankPartyId ?? "",
+        bankPartyId: type === "JOURNAL" ? partyIdOf(creditLedgerId) : bankPartyId ?? null,
+        creditHeadId: type === "JOURNAL" ? headId(creditLedgerId) : null,
         chequeNo: chequeNo || null,
         chequeDate: chequeDateText ? toIso(chequeDateText) : null,
         // gross = money moved + TDS + deductions (party settles gross)
@@ -391,19 +415,19 @@ export function VoucherEntry({
               <div className="space-y-1">
                 <Label className="text-xs">Debit Ledger * (owes more / receives value)</Label>
                 <MasterCombobox
-                  options={partyOptions}
+                  options={journalLedgers}
                   value={partyId}
                   onChange={setPartyId}
-                  placeholder="e.g. party for a DEBIT note..."
+                  placeholder="party, bank, cash or income/expense head..."
                 />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Credit Ledger * (balance reduces / gives value)</Label>
                 <MasterCombobox
-                  options={[...partyOptions, ...bankOptions]}
+                  options={journalLedgers}
                   value={creditLedgerId}
                   onChange={setCreditLedgerId}
-                  placeholder="e.g. party for a CREDIT note..."
+                  placeholder="party, bank, cash or income/expense head..."
                 />
               </div>
               <div className="space-y-1">

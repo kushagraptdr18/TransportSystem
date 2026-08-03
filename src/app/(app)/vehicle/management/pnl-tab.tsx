@@ -53,8 +53,19 @@ export async function VehiclePnlTab({
       tripWhere.tripDate = { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) };
     }
 
-    const [vehicles, trips, drivers, cities, heads, expItems, salaries, assignments, settlements, advances] =
-      await Promise.all([
+    const [
+      vehicles,
+      trips,
+      drivers,
+      cities,
+      heads,
+      expItems,
+      salaries,
+      assignments,
+      settlements,
+      advances,
+      loanEmis,
+    ] = await Promise.all([
         tx.vehicle.findMany({
           where: { ownershipType: { in: ["OWNER", "RELATIVE"] } },
           orderBy: { number: "asc" },
@@ -65,14 +76,21 @@ export async function VehiclePnlTab({
         tx.accountHead.findMany(),
         tx.vehicleExpenseItem.findMany({
           where: {
+            // the ALLOCATION date decides the period, not the purchase date: a
+            // chain bought on the 1st and fitted on the 8th is the 8th's cost
+            ...(dateFrom || dateTo
+              ? {
+                  allocDate: {
+                    ...(dateFrom ? { gte: dateFrom } : {}),
+                    ...(dateTo ? { lte: dateTo } : {}),
+                  },
+                }
+              : {}),
             voucher: {
               firmId: session.firmId,
               fyId: session.fyId,
               txnType: "EXPENSE",
               deletedAt: null,
-              ...(dateFrom || dateTo
-                ? { date: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
-                : {}),
             },
           },
           include: { voucher: true },
@@ -88,6 +106,23 @@ export async function VehiclePnlTab({
         tx.driverAdvance.findMany({
           where: { firmId: session.firmId, deletedAt: null, tripId: { not: null } },
         }),
+        // vehicle loan instalments — a financed vehicle carries its EMI cost on
+        // the date the instalment was paid
+        tx.loanEmi.findMany({
+          where: {
+            deletedAt: null,
+            ...(dateFrom || dateTo
+              ? { payDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
+              : {}),
+            loan: {
+              firmId: session.firmId,
+              fyId: session.fyId,
+              deletedAt: null,
+              vehicleId: { not: null },
+            },
+          },
+          include: { loan: true },
+        }),
       ]);
     // live trip income from the linked chalans / broker slips
     const docTotals = await tripGrandTotals(tx, trips.map((t) => t.id));
@@ -102,6 +137,7 @@ export async function VehiclePnlTab({
       assignments,
       settlements,
       advances,
+      loanEmis,
       docTotals,
     };
   });
@@ -117,6 +153,7 @@ export async function VehiclePnlTab({
     assignments,
     settlements,
     advances,
+    loanEmis,
     docTotals,
   } = data;
 
@@ -174,6 +211,19 @@ export async function VehiclePnlTab({
       it.vehicleId,
       r2((vehExpByVehicle.get(it.vehicleId) ?? 0) + toNum(String(it.amount)))
     );
+  }
+  // A vehicle loan's cost to the fleet is the interest and charges on each
+  // instalment, not the whole EMI: repaying principal settles a liability, it
+  // does not consume anything. Counting the principal would show a vehicle
+  // losing money simply for paying off its own finance.
+  for (const emi of loanEmis) {
+    const vehicleId = emi.loan.vehicleId;
+    if (!vehicleId) continue;
+    const cost = r2(
+      toNum(String(emi.interest)) + toNum(String(emi.penalty)) + toNum(String(emi.otherAmt))
+    );
+    if (cost <= 0) continue;
+    vehExpByVehicle.set(vehicleId, r2((vehExpByVehicle.get(vehicleId) ?? 0) + cost));
   }
 
   const rows: VehiclePnlRow[] = vehicles

@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Plus } from "lucide-react";
-import { formatDate, parseDdMmYyyy } from "@/lib/utils";
+import { formatDate, formatMoney, parseDdMmYyyy } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +17,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { DataTable, type DataTableColumnMeta } from "@/components/data/data-table";
 import { DateInput } from "@/components/data/date-input";
@@ -30,14 +37,24 @@ export interface AdblueRow {
   type: string; // REFILL | ISSUE
   date: string;
   supplierName: string;
+  supplierId: string | null;
   vehicleId: string | null;
   vehicle: string;
   destination: string;
   qty: number;
   amount: number;
+  billNo: string;
+  billDate: string | null;
+  gstPct: number;
+  gstAmount: number;
+  paymentMode: string; // "" = on credit
   bankPartyId: string | null;
   refNo: string;
   remarks: string;
+  /** PENDING BILL | BILL UPDATED | PARTLY PAID | PAID */
+  status: string;
+  /** days a receipt has been waiting for its invoice */
+  pendingDays: number | null;
 }
 
 function textToIso(text: string): string {
@@ -59,6 +76,12 @@ const emptyForm = {
   destination: "",
   qty: 0,
   amount: 0,
+  supplierId: null as string | null,
+  billNo: "",
+  billDateText: "",
+  gstPct: 0,
+  gstAmount: 0,
+  paymentMode: "CREDIT" as "CASH" | "BANK" | "CREDIT",
   bankPartyId: null as string | null,
   refNo: "",
   remarks: "",
@@ -69,12 +92,14 @@ export function AdblueClient({
   totals,
   vehicleOptions,
   bankOptions,
+  partyOptions,
   canDelete,
 }: {
   rows: AdblueRow[];
   totals: { totalRefill: number; totalIssued: number; closing: number };
   vehicleOptions: MasterOption[];
   bankOptions: MasterOption[];
+  partyOptions: MasterOption[];
   canDelete: boolean;
 }) {
   const router = useRouter();
@@ -100,8 +125,14 @@ export function AdblueClient({
         vehicleId: form.vehicleId,
         destination: form.destination,
         qty: form.qty,
+        supplierId: form.supplierId,
         amount: form.amount,
-        bankPartyId: form.bankPartyId,
+        billNo: form.billNo,
+        billDate: form.billDateText ? textToIso(form.billDateText) : null,
+        gstPct: form.gstPct,
+        gstAmount: form.gstAmount,
+        paymentMode: form.paymentMode === "CREDIT" ? null : form.paymentMode,
+        bankPartyId: form.paymentMode === "CREDIT" ? null : form.bankPartyId,
         refNo: form.refNo,
         remarks: form.remarks,
       });
@@ -141,7 +172,29 @@ export function AdblueClient({
       ),
       meta: { numeric: true } satisfies DataTableColumnMeta<AdblueRow>,
     },
-    { accessorKey: "refNo", header: "Challan / Bill No" },
+    { accessorKey: "billNo", header: "Bill No" },
+    {
+      accessorKey: "amount",
+      header: "Purchase Amt",
+      cell: ({ row }) => (row.original.amount ? formatMoney(row.original.amount) : ""),
+      meta: { numeric: true } satisfies DataTableColumnMeta<AdblueRow>,
+    },
+    {
+      accessorKey: "status",
+      header: "Status",
+      cell: ({ row }) =>
+        row.original.type === "ISSUE" ? null : (
+          <Badge variant={row.original.status === "PENDING BILL" ? "destructive" : "outline"}>
+            {row.original.status}
+          </Badge>
+        ),
+    },
+    {
+      accessorKey: "pendingDays",
+      header: "Pending Days",
+      cell: ({ row }) => row.original.pendingDays ?? "",
+      meta: { numeric: true } satisfies DataTableColumnMeta<AdblueRow>,
+    },
     { accessorKey: "remarks", header: "Remarks" },
     {
       id: "actions",
@@ -158,10 +211,16 @@ export function AdblueClient({
                 type: row.original.type as "REFILL" | "ISSUE",
                 dateText: formatDate(row.original.date),
                 supplierName: row.original.supplierName,
+                supplierId: row.original.supplierId,
                 vehicleId: row.original.vehicleId,
                 destination: row.original.destination,
                 qty: row.original.qty,
                 amount: row.original.amount,
+                billNo: row.original.billNo,
+                billDateText: row.original.billDate ? formatDate(row.original.billDate) : "",
+                gstPct: row.original.gstPct,
+                gstAmount: row.original.gstAmount,
+                paymentMode: (row.original.paymentMode || "CREDIT") as "CASH" | "BANK" | "CREDIT",
                 bankPartyId: row.original.bankPartyId,
                 refNo: row.original.refNo,
                 remarks: row.original.remarks,
@@ -209,7 +268,11 @@ export function AdblueClient({
               { header: "Vehicle", key: "vehicle" },
               { header: "Destination", key: "destination" },
               { header: "Litres", key: "qty", numeric: true },
-              { header: "Challan / Bill No", key: "refNo" },
+              { header: "Challan No", key: "refNo" },
+              { header: "Bill No", key: "billNo" },
+              { header: "Purchase Amount", key: "amount", numeric: true },
+              { header: "Pending Days", key: "pendingDays", numeric: true },
+              { header: "Status", key: "status" },
               { header: "Remarks", key: "remarks" },
             ]}
           />
@@ -240,8 +303,10 @@ export function AdblueClient({
         ))}
       </div>
       <p className="text-sm text-muted-foreground">
-        Litre-only stock register — no purchase value, no vouchers, no ledger effect. The amount is
-        computed only inside a trip sheet (issued litres × the urea rate entered there).
+        Stock first, bill later: a refill increases litres immediately and posts nothing until its
+        invoice is entered on the same row. Purchase accounting never touches vehicle P&amp;L &mdash;
+        urea reaches a vehicle only through trip-sheet consumption (issued litres, at the rate
+        entered there).
       </p>
 
       <FilterBar
@@ -253,6 +318,17 @@ export function AdblueClient({
             options: [
               { value: "REFILL", label: "Refill (Stock In)" },
               { value: "ISSUE", label: "Issue (Consumption)" },
+            ],
+          },
+          {
+            type: "select",
+            key: "status",
+            label: "Bill Status",
+            options: [
+              { value: "PENDING", label: "Pending Bill" },
+              { value: "BILLED", label: "Bill Updated" },
+              { value: "PARTLY", label: "Partly Paid" },
+              { value: "PAID", label: "Paid" },
             ],
           },
           { type: "combobox", key: "vehicle", label: "Vehicle", options: vehicleOptions },
@@ -322,11 +398,39 @@ export function AdblueClient({
             {form.type === "REFILL" && (
               <>
                 <div className="space-y-1">
-                  <Label className="text-xs">Challan / Bill No (optional)</Label>
+                  <Label className="text-xs">Challan No (optional)</Label>
                   <Input className="h-8" value={form.refNo} onChange={(e) => set({ refNo: e.target.value })} />
                 </div>
+                <div className="space-y-1 sm:col-span-2">
+                  <p className="rounded-md border bg-muted/40 p-2 text-[11px] text-muted-foreground">
+                    <b>Bill details are optional.</b> Leave them blank while the invoice is awaited
+                    &mdash; stock increases now and nothing is posted. Fill them in on this same
+                    entry when the bill arrives, and the accounting is booked then.
+                  </p>
+                </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Purchase Amount (optional)</Label>
+                  <Label className="text-xs">Supplier Ledger</Label>
+                  <MasterCombobox
+                    options={partyOptions}
+                    value={form.supplierId}
+                    onChange={(v) => set({ supplierId: v })}
+                    placeholder="Select supplier..."
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Bill No</Label>
+                  <Input className="h-8" value={form.billNo} onChange={(e) => set({ billNo: e.target.value })} />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Bill Date</Label>
+                  <DateInput
+                    className="h-8"
+                    value={form.billDateText}
+                    onChange={(t) => set({ billDateText: t })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Purchase Amount (incl. GST)</Label>
                   <Input
                     type="number"
                     step="0.01"
@@ -336,20 +440,65 @@ export function AdblueClient({
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Paid From (Cash / Bank){form.amount > 0 ? " *" : ""}</Label>
-                  <MasterCombobox
-                    options={bankOptions}
-                    value={form.bankPartyId}
-                    onChange={(v) => set({ bankPartyId: v })}
-                    placeholder="Select account..."
+                  <Label className="text-xs">GST %</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    className="h-8 text-right"
+                    value={form.gstPct ? String(form.gstPct) : ""}
+                    onChange={(e) => {
+                      const gstPct = Number(e.target.value) || 0;
+                      // informational split of the amount already entered
+                      const gstAmount = form.amount
+                        ? Math.round((form.amount - form.amount / (1 + gstPct / 100)) * 100) / 100
+                        : 0;
+                      set({ gstPct, gstAmount });
+                    }}
                   />
-                  {form.amount > 0 && (
-                    <p className="text-[11px] text-muted-foreground">
-                      Amount posts to the Urea Expense Ledger; no vehicle-wise allocation happens
-                      at purchase time.
-                    </p>
-                  )}
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">GST Amount</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    className="h-8 text-right"
+                    value={form.gstAmount ? String(form.gstAmount) : ""}
+                    onChange={(e) => set({ gstAmount: Number(e.target.value) || 0 })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Payment</Label>
+                  <Select
+                    value={form.paymentMode}
+                    onValueChange={(v) => set({ paymentMode: v as "CASH" | "BANK" | "CREDIT" })}
+                  >
+                    <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="CREDIT">On credit (settle by voucher)</SelectItem>
+                      <SelectItem value="CASH">Paid &mdash; Cash</SelectItem>
+                      <SelectItem value="BANK">Paid &mdash; Bank</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {form.paymentMode !== "CREDIT" && (
+                  <div className="space-y-1">
+                    <Label className="text-xs">Paid From (Cash / Bank) *</Label>
+                    <MasterCombobox
+                      options={bankOptions}
+                      value={form.bankPartyId}
+                      onChange={(v) => set({ bankPartyId: v })}
+                      placeholder="Select account..."
+                    />
+                  </div>
+                )}
+                {form.amount > 0 && (
+                  <div className="space-y-1 sm:col-span-2">
+                    <p className="text-[11px] text-muted-foreground">
+                      Books Urea Expense Dr / Supplier Cr. It never reaches vehicle P&amp;L &mdash;
+                      urea hits a vehicle only through trip-sheet consumption.
+                    </p>
+                  </div>
+                )}
               </>
             )}
             <div className="space-y-1">

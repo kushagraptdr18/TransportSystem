@@ -27,22 +27,23 @@ export async function VehicleExpenseSummaryTab({
   const rows = await withTenant(session.tenantId, async (tx) => {
     const items = await tx.vehicleExpenseItem.findMany({
       where: {
+        // vehicle cost lands in the period it was ALLOCATED, not purchased
+        ...(searchParams.date_from || searchParams.date_to
+          ? {
+              allocDate: {
+                ...(searchParams.date_from
+                  ? { gte: new Date(searchParams.date_from + "T00:00:00") }
+                  : {}),
+                ...(searchParams.date_to
+                  ? { lte: new Date(searchParams.date_to + "T23:59:59") }
+                  : {}),
+              },
+            }
+          : {}),
         voucher: {
           firmId: session.firmId,
           fyId: session.fyId,
           deletedAt: null,
-          ...(searchParams.date_from || searchParams.date_to
-            ? {
-                date: {
-                  ...(searchParams.date_from
-                    ? { gte: new Date(searchParams.date_from + "T00:00:00") }
-                    : {}),
-                  ...(searchParams.date_to
-                    ? { lte: new Date(searchParams.date_to + "T23:59:59") }
-                    : {}),
-                },
-              }
-            : {}),
         },
       },
       include: { voucher: true },

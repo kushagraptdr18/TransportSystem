@@ -117,6 +117,145 @@ be validated.
 are reduced after filing), validated references (pick from a list instead of
 typing), and automatic DN/CN registers.
 
+## 2A. Common Accounting Ledger Framework (built 3 Aug 2026)
+
+One ledger head per accounting concept, for the whole software. The registry is
+`src/lib/account-heads.ts`; `ensureAccountHead` and `ensureAdjustmentHead` both
+resolve through it, so a module can keep asking for whatever name reads well
+locally and the entry still lands in the shared ledger.
+
+| Was | Now |
+| --- | --- |
+| `Detention Charges` (chalan) + `Detention Income` (broker slip) | `Detention` |
+| `Commission Allowed` + `Commission Income` | `Commission` |
+| `Mamool Allowed` + `Mamool Recovered` | `Mamool` |
+| `LD Charge Allowed` + `LD Charge Recovered` | `LD Charge` |
+| `ODC Charges` + `ODC Income`, `Fine Slip Charges` + `Fine Slip Income` | `ODC`, `Fine Slip` |
+| `Courier Recovered` | `Courier Charges` (recovery is the income side of it) |
+| voucher `TDS` / `DEDUCTION` / `ROUND OFF` adjustment heads | `TDS Payable` / `TDS Receivable`, `Shortage`, `Round Off` |
+
+Direction is expressed by the side of the entry — charged debits the head,
+recovered credits it — so the head's running balance is the net position and
+Trial Balance / P&L see one line. Consequences worth knowing:
+
+- A common head's `kind` is fixed by the registry, not by the caller, so no
+  module can reclassify a shared ledger.
+- Those heads are now `INCOME`/`EXPENSE` rather than `ADJUSTMENT`, which means
+  voucher TDS, shortage and round-off finally appear in Profit & Loss (it
+  filters on kind).
+- Per-allocation round-off on a voucher now posts (party leg + `Round Off`
+  head). It settled the reference before but posted nothing, so the party
+  ledger disagreed with the outstanding register by exactly the rounding.
+- Invoice additional charges each credit their own head instead of being clubbed
+  into `Freight Income`; a charge named after a common head joins that ledger.
+- `npx tsx scripts/merge-account-heads.ts` repoints existing history onto the
+  canonical heads and deletes the duplicates. Idempotent; amounts and sides are
+  never touched, so report totals are unchanged — they just stop being split.
+
+## 2B. Vehicle & staff references, journal any-to-any (3 Aug 2026)
+
+Migration `20260803000002_vehicle_staff_references`.
+
+- New `ModuleLink` values `VEHICLE_EXPENSE`, `STAFF_ADVANCE`,
+  `DRIVER_SETTLEMENT`, so a voucher can point at those documents. All three are
+  allocation candidates, settle partially, and take TDS / shortage / other /
+  round-off through the same engine as a bill or a chalan.
+- Ceilings that stop double settlement: a vehicle expense already paid at entry
+  offers 0; a staff advance nets what payroll already recovered; a driver
+  settlement already SETTLED from its own screen (which creates its own voucher)
+  offers 0.
+- `VehicleExpenseVoucher.refNo` now STORES the voucher-number fallback instead of
+  deriving it, matching office bills and salaries.
+- Vehicle expense bills on credit appear in the Outstanding Payables register.
+- **Driver Advance is deliberately NOT a settleable reference.** Every advance
+  records a payment mode and moves cash or bank at entry, so there is no
+  outstanding; offering it in the payment voucher would pay the driver twice.
+  Recovery happens against the driver's ledger via the trip settlement.
+- Journal vouchers are now ledger-to-ledger: both sides accept a party, a
+  bank/cash account or an income/expense head (`Voucher.creditHeadId` carries the
+  credit-side head). `bankPartyId` is therefore optional on journals only.
+
+## 2C. Vehicle expense allocation (3 Aug 2026)
+
+Migration `20260803000003_vehicle_expense_allocation`.
+
+Bulk stock — tyres, chains, batteries, spares — is bought before anyone knows
+which vehicle will use it. A purchase therefore no longer has to name a vehicle:
+
+- **Purchase**: booked once, expense head Dr / supplier Cr, exactly as before.
+  With no vehicle named it carries its own `amount`, plus optional `itemName` and
+  `qty`, and shows up as an *unallocated vehicle expense*.
+- **Allocation** (`/vehicle/management?tab=allocation`): hands quantity and
+  amount to one or many vehicles, each with its own **allocation date** and
+  remarks. It writes `VehicleExpenseItem` rows and **posts nothing to the
+  ledger** — the purchase already carries the accounting, so Trial Balance and
+  P&L never double-count. Amount and quantity are both capped at what is left.
+- **`VehicleExpenseItem.allocDate` is now the date every vehicle-cost reader
+  uses** (vehicle P&L, expense summary, both trip-sheet fetchers). A chain bought
+  on the 1st and fitted on the 8th hits that vehicle's P&L on the 8th and leaves
+  the 1st–7th alone. Existing rows were backfilled with their purchase date.
+- Editing a bulk purchase keeps its allocations and refuses to drop the amount
+  below what vehicles have already taken; editing a vehicle-wise voucher still
+  replaces the split it owns.
+
+## 2D. AdBlue / Urea: stock first, bill later (3 Aug 2026)
+
+Migration `20260803000004_adblue_pending_bill`.
+
+Stock is delivered before the supplier's invoice, so a refill is a two-step
+record on ONE row:
+
+1. **Receipt** — date, supplier, litres, remarks. Stock increases and **nothing
+   is posted**: no expense, no payable, no ledger entry. Status `PENDING BILL`,
+   with an aging day-count.
+2. **Bill update** — the same entry gains amount, bill no/date, GST, supplier
+   ledger and payment. Only now does it post `Urea Expense Dr / Supplier Cr`,
+   plus `Supplier Dr / Cash-Bank Cr` when paid on the spot. Left on credit it is
+   an `ADBLUE_PURCHASE` payable the Payment Voucher settles, and it shows in
+   Outstanding Payables.
+
+Status is derived, never stored: PENDING BILL → BILL UPDATED → PARTLY PAID →
+PAID (from voucher allocations). The register filters on it, so the pending-bill
+report is the same screen. Duplicate bill numbers per supplier are rejected.
+
+**The purchase never carries a vehicleId, and that is the point.** Urea reaches a
+vehicle's P&L only through trip-sheet consumption (litres x rate), where the
+owner, relative-vehicle, broker-settlement and expense-head rules already apply —
+none of which changed. Booking the purchase against a vehicle would double the
+cost against the trip that consumed it.
+
+## 2E. Finance & Loan Management (3 Aug 2026)
+
+Migration `20260803000005_finance_loan_management`; module at `/finance`.
+
+`Loan` + `LoanEmi` + `FinanceTxn`, engine in `src/lib/loan.ts`, actions in
+`src/app/(app)/finance/actions.ts`. Three things a user does: create the loan,
+pay each EMI, close it.
+
+- **No second accounting engine.** Every instalment, settlement and personal
+  transfer creates a real Payment/Receipt `Voucher` and posts through
+  `postLedger`, the same way a driver settlement does — so the Voucher Register,
+  Ledger Summary, Trial Balance, P&L and TDS reports pick it all up.
+- **Outstanding is derived**, never stored: loan amount less the principal of
+  the instalments recorded. The register, the reports and the vehicle finance tab
+  therefore cannot disagree.
+- **TDS applies to interest only.** The action rejects a deduction larger than
+  the instalment's interest, and TDS routes to `TDS Payable` / `TDS Receivable`
+  via the common-head registry — never a TDS head of the module's own.
+- **Interest is a suggestion, not a rule.** NONE / FLAT / REDUCING fill the EMI
+  screen in; every figure stays editable, because a lender's statement rarely
+  matches a formula to the rupee. The last instalment is capped at what is left
+  so a fixed EMI can never overpay the loan.
+- **Vehicle loans:** the instalment's interest, penalty and charges are the cost
+  to the vehicle and flow into Vehicle P&L on the PAYMENT date. Principal is
+  deliberately excluded — repaying a liability consumes nothing, and counting it
+  would show a vehicle losing money for paying off its own finance.
+- **Relative vehicles** reuse the existing rule: the whole instalment transfers
+  to the relative owner's ledger, exactly as diesel and every expense head do.
+- Deleting an instalment removes its voucher and postings and reopens the loan;
+  a loan with instalments cannot be deleted until they are, so no voucher is ever
+  orphaned.
+
 ## 3. Guiding principles (do not regress these)
 
 1. **History is immutable** — corrections are always new vouchers linked to
@@ -129,3 +268,6 @@ typing), and automatic DN/CN registers.
    rather than posting deductions themselves.
 4. **Types are data, not code** — new adjustment types come from the Account
    Head master (`kind = ADJUSTMENT`).
+5. **One head per concept** — never create a second ledger for the other
+   direction of an existing head (no `X Recovered` beside `X`). Add the name to
+   `COMMON_HEADS` in `src/lib/account-heads.ts` and post to the shared head.

@@ -47,9 +47,25 @@ const schema = z.object({
   remarks: z.string().nullish(),
   attachmentPath: z.string().nullish(),
   attachmentName: z.string().nullish(),
+  // what was bought, for bulk purchases allocated later
+  itemName: z.string().nullish(),
+  qty: z.number().min(0).nullish(),
+  /** total of the bill when no vehicle is named yet (bulk purchase) */
+  amount: z.number().min(0).nullish(),
+  // A purchase does NOT have to name a vehicle: bulk stock (tyres, chains,
+  // batteries, spares) is bought first and allocated to vehicles as they consume
+  // it, from the Expense Allocation tab.
   items: z
-    .array(z.object({ vehicleId: z.string().min(1), amount: z.number().min(0.01) }))
-    .min(1, "Select at least one vehicle"),
+    .array(
+      z.object({
+        vehicleId: z.string().min(1),
+        amount: z.number().min(0.01),
+        allocDate: z.string().nullish(),
+        qty: z.number().min(0).nullish(),
+        remarks: z.string().nullish(),
+      })
+    )
+    .default([]),
 });
 
 export async function saveVehicleExpenseTxn(
@@ -76,7 +92,16 @@ export async function saveVehicleExpenseTxn(
   if (uniqVehicles.size !== d.items.length) {
     return { ok: false, error: "The same vehicle is selected more than once." };
   }
-  const amount = round2(d.items.reduce((s, i) => s + i.amount, 0));
+  // A vehicle-wise entry totals its splits; a bulk purchase carries its own
+  // amount and stays unallocated until vehicles consume it.
+  const itemsTotal = round2(d.items.reduce((s, i) => s + i.amount, 0));
+  const amount = d.items.length ? itemsTotal : round2(d.amount ?? 0);
+  if (amount <= 0) {
+    return { ok: false, error: "Enter the purchase amount, or split it across vehicles." };
+  }
+  if (d.items.length && d.amount != null && round2(d.amount) < itemsTotal - 0.009) {
+    return { ok: false, error: "Vehicle splits exceed the purchase amount." };
+  }
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
@@ -102,6 +127,8 @@ export async function saveVehicleExpenseTxn(
           ? new Date(`${d.paymentDate || d.date}T00:00:00`)
           : null,
         amount,
+        itemName: d.itemName?.trim() || null,
+        qty: d.qty ?? null,
         refNo: d.refNo?.trim() || null,
         remarks: d.remarks || null,
         attachmentPath: d.attachmentPath || null,
@@ -115,10 +142,33 @@ export async function saveVehicleExpenseTxn(
           where: { id: d.id, deletedAt: null },
           include: { items: true },
         });
-        const updated = await tx.vehicleExpenseVoucher.update({ where: { id: d.id }, data: values });
+        // An edit that names no vehicle is a bulk purchase being corrected — its
+        // allocations were made later, on their own dates, and must survive; the
+        // amount just may not drop below what vehicles have already taken.
+        if (!d.items.length) {
+          const allocated = round2(
+            before.items.reduce((s, i) => s + toNum(String(i.amount)), 0)
+          );
+          if (amount < allocated - 0.009) {
+            return {
+              ok: false as const,
+              error: `${allocated} is already allocated to vehicles — the purchase cannot be reduced to ${amount}.`,
+            };
+          }
+        }
+        // a blank reference means "use the voucher number" — stored, not derived,
+        // so the payment voucher, the register and the ledger all name the bill
+        // the same way
+        const updated = await tx.vehicleExpenseVoucher.update({
+          where: { id: d.id },
+          data: { ...values, refNo: values.refNo || before.voucherNo },
+        });
         id = updated.id;
         voucherNo = updated.voucherNo;
-        await tx.vehicleExpenseItem.deleteMany({ where: { voucherId: id } });
+        // an edit that names vehicles replaces the split it owns
+        if (d.items.length) {
+          await tx.vehicleExpenseItem.deleteMany({ where: { voucherId: id } });
+        }
         await reverseLedger(tx, "VEHICLE_EXPENSE", id);
         await audit(tx, session, {
           entity: "VehicleExpenseVoucher",
@@ -137,6 +187,7 @@ export async function saveVehicleExpenseTxn(
             voucherNo,
             createdById: session.userId,
             ...values,
+            refNo: values.refNo || voucherNo,
           },
         });
         id = created.id;
@@ -153,6 +204,10 @@ export async function saveVehicleExpenseTxn(
           voucherId: id,
           vehicleId: i.vehicleId,
           amount: i.amount,
+          // split at purchase time = allocated on the purchase date
+          allocDate: i.allocDate ? new Date(`${i.allocDate}T00:00:00`) : values.date,
+          qty: i.qty ?? null,
+          remarks: i.remarks || null,
         })),
       });
 
@@ -295,14 +350,16 @@ export async function fetchOperatingExpensesForTrip(input: {
     const items = await tx.vehicleExpenseItem.findMany({
       where: {
         vehicleId: input.vehicleId,
+        // the trip sees costs ALLOCATED to the vehicle in its dates, not stock
+        // purchased in that window and fitted to some other vehicle later
+        allocDate: {
+          gte: new Date(`${input.dateFrom}T00:00:00`),
+          lte: new Date(`${input.dateTo}T23:59:59`),
+        },
         voucher: {
           firmId: session.firmId,
           txnType: "EXPENSE",
           deletedAt: null,
-          date: {
-            gte: new Date(`${input.dateFrom}T00:00:00`),
-            lte: new Date(`${input.dateTo}T23:59:59`),
-          },
         },
       },
       include: { voucher: true },
@@ -358,14 +415,16 @@ export async function fetchVehicleExpensesForTrip(input: {
     const items = await tx.vehicleExpenseItem.findMany({
       where: {
         vehicleId: input.vehicleId,
+        // the trip sees costs ALLOCATED to the vehicle in its dates, not stock
+        // purchased in that window and fitted to some other vehicle later
+        allocDate: {
+          gte: new Date(`${input.dateFrom}T00:00:00`),
+          lte: new Date(`${input.dateTo}T23:59:59`),
+        },
         voucher: {
           firmId: session.firmId,
           txnType: "EXPENSE",
           deletedAt: null,
-          date: {
-            gte: new Date(`${input.dateFrom}T00:00:00`),
-            lte: new Date(`${input.dateTo}T23:59:59`),
-          },
         },
       },
       include: { voucher: true },

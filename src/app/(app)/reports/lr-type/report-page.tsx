@@ -3,21 +3,10 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { formatDate, toNum } from "@/lib/utils";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
-import { SimpleReport, type ReportColumn } from "@/components/accounts/simple-report";
-
-const COLUMNS: ReportColumn[] = [
-  { key: "lrNo", header: "LR No" },
-  { key: "lrDate", header: "Date" },
-  { key: "route", header: "Route" },
-  { key: "consignor", header: "Consignor" },
-  { key: "consignee", header: "Consignee" },
-  { key: "vehicle", header: "Vehicle" },
-  { key: "qty", header: "Qty", kind: "money" },
-  { key: "chargeWt", header: "Charge Wt", kind: "money" },
-  { key: "freight", header: "Freight", kind: "money" },
-  { key: "grandTotal", header: "Grand Total", kind: "money" },
-  { key: "remarks", header: "Reason / Remarks" },
-];
+import {
+  LrTypeReportTable,
+  type LrTypeReportRow,
+} from "@/components/lr/lr-type-report-table";
 
 /**
  * Shared audit report for non-operational LR types (Cancelled / Paper Change).
@@ -36,8 +25,9 @@ export async function LrTypeReportPage({
   searchParams: { date_from?: string; date_to?: string; q?: string };
 }) {
   const session = requireSession();
+  const canDelete = session.role === "ADMIN" || session.role === "OWNER";
 
-  const rows = await withTenant(session.tenantId, async (tx) => {
+  const rows: LrTypeReportRow[] = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.LrWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
@@ -61,6 +51,8 @@ export async function LrTypeReportPage({
     const party = new Map(parties.map((p) => [p.id, p.name]));
     const vehicle = new Map(vehicles.map((v) => [v.id, v.number]));
     return lrs.map((lr) => ({
+      // the id drives the row's edit / print / delete actions
+      id: lr.id,
       lrNo: lr.lrNo,
       lrDate: formatDate(lr.lrDate),
       route: `${city.get(lr.sourceCityId) ?? ""} → ${city.get(lr.destCityId) ?? ""}`,
@@ -90,11 +82,11 @@ export async function LrTypeReportPage({
         </p>
       </div>
       <FilterBar filters={filters} />
-      <SimpleReport
-        columns={COLUMNS}
+      <LrTypeReportTable
         rows={rows}
         fileName={fileName}
         emptyMessage={`No ${title.toLowerCase()} found.`}
+        canDelete={canDelete}
       />
     </div>
   );

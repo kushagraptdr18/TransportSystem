@@ -27,9 +27,21 @@ export const ALL_PAYABLE_REF_TYPES: ModuleLink[] = [
   ...PAYABLE_REF_TYPES,
   "OFFICE_EXPENSE",
   "STAFF_PAYROLL",
+  "VEHICLE_EXPENSE",
+  "ADBLUE_PURCHASE",
+  // a driver's trip balance is payable when the company owes him and receivable
+  // when he owes the company, so it belongs to both lists — the sign on the
+  // settlement row says which way this one goes
+  "DRIVER_SETTLEMENT",
 ];
 /** Everything a Receipt Voucher can settle. */
-export const ALL_RECEIVABLE_REF_TYPES: ModuleLink[] = [...BILL_REF_TYPES, "OFFICE_INCOME"];
+export const ALL_RECEIVABLE_REF_TYPES: ModuleLink[] = [
+  ...BILL_REF_TYPES,
+  "OFFICE_INCOME",
+  // an advance is money the staff member owes back
+  "STAFF_ADVANCE",
+  "DRIVER_SETTLEMENT",
+];
 
 /**
  * A reference and everything that has happened to it. One shape for every

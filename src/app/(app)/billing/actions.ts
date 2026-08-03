@@ -649,7 +649,6 @@ export async function saveInvoice(
       // re-posted on every save so edits stay in sync
       await reverseLedger(tx, "INVOICE", invoiceId);
       if (totals.grandTotal > 0) {
-        const incomeHeadId = await ensureAccountHead(tx, session, "Freight Income", "INCOME");
         const invoiceDate = new Date(data.invoiceDate);
         const common = {
           date: invoiceDate,
@@ -657,7 +656,7 @@ export async function saveInvoice(
           refId: invoiceId,
           refNo: data.invoiceNo,
         };
-        await postLedger(tx, session, [
+        const entries: Parameters<typeof postLedger>[2] = [
           {
             ...common,
             partyId: data.partyId,
@@ -665,14 +664,42 @@ export async function saveInvoice(
             amount: totals.grandTotal,
             narration: `Invoice ${data.invoiceNo} (${data.kind.replace(/_/g, " ")})`,
           },
-          {
+        ];
+        // Every additional charge credits ITS OWN ledger head — loading,
+        // documentation, detention and the rest are separate income lines, not
+        // one clubbed "Freight Income" figure. A charge named after a common
+        // head (Detention, ODC, ...) lands in that shared ledger.
+        const billedCharges = data.charges.filter((c) => round2(c.amount) > 0);
+        // a bill whose charges alone exceed its grand total (heavy credit lines)
+        // cannot be split without unbalancing it — it stays one freight credit
+        const splittable =
+          round2(billedCharges.reduce((s, c) => s + c.amount, 0)) < totals.grandTotal - 0.009;
+        let chargesTotal = 0;
+        for (const c of splittable ? billedCharges : []) {
+          const amount = round2(c.amount);
+          chargesTotal = round2(chargesTotal + amount);
+          const headId = await ensureAccountHead(tx, session, c.chargeType, "INCOME");
+          entries.push({
+            ...common,
+            accountHeadId: headId,
+            side: "CREDIT",
+            amount,
+            narration: `${c.chargeType}${c.description ? ` (${c.description})` : ""} — invoice ${data.invoiceNo}`,
+          });
+        }
+        // freight (plus GST, which the grand total carries) is the remainder
+        const freight = round2(totals.grandTotal - chargesTotal);
+        if (freight > 0) {
+          const incomeHeadId = await ensureAccountHead(tx, session, "Freight Income", "INCOME");
+          entries.push({
             ...common,
             accountHeadId: incomeHeadId,
             side: "CREDIT",
-            amount: totals.grandTotal,
+            amount: freight,
             narration: `Freight income — invoice ${data.invoiceNo}`,
-          },
-        ]);
+          });
+        }
+        await postLedger(tx, session, entries);
       }
 
       if (data.setBankDefault && data.bankPartyId) {

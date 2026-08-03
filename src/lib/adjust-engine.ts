@@ -2,6 +2,7 @@ import { Tx } from "./db";
 import { Session } from "./session";
 import { round2 } from "./calc/tds";
 import type { LedgerPostEntry } from "./ledger";
+import { commonHead, tdsHead } from "./account-heads";
 
 /**
  * Central Reference-Based Adjustment Engine — shared by Receipt, Payment and
@@ -75,16 +76,27 @@ export const adjustmentsTotal = (lines: AdjustmentLine[]): number =>
 /**
  * Ensure a ledger head exists for an adjustment type (auto-created once in the
  * Account Head master — new types added there work without any code change).
+ *
+ * An adjustment type that names a common head (SHORTAGE, ROUND_OFF, COMMISSION,
+ * DETENTION, ...) posts to that ONE head rather than to a parallel
+ * adjustment-only ledger, so a shortage deducted on a voucher and a shortage
+ * deducted on a chalan sit in the same ledger. TDS is direction-aware: it never
+ * gets an adjustment head, only TDS Payable / TDS Receivable.
  */
 export async function ensureAdjustmentHead(
   tx: Tx,
   tenantId: string,
-  adjustmentType: string
+  adjustmentType: string,
+  voucherType?: "RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL"
 ): Promise<string> {
-  const name = adjustmentLabel(adjustmentType).toUpperCase();
+  const label = adjustmentLabel(adjustmentType);
+  const isTds = label.trim().toUpperCase() === "TDS";
+  const common = isTds ? commonHead(tdsHead(voucherType ?? "PAYMENT")) : commonHead(label);
+  const name = common ? common.name : label.toUpperCase();
+  const kind = common ? common.kind : "ADJUSTMENT";
   const head = await tx.accountHead.upsert({
     where: { tenantId_name: { tenantId, name } },
-    create: { tenantId, name, kind: "ADJUSTMENT" },
+    create: { tenantId, name, kind },
     update: {},
   });
   return head.id;
@@ -135,7 +147,12 @@ export async function applyAdjustments(
   await tx.voucherAdjustment.deleteMany({ where: { voucherId: args.voucherId } });
   const withHeads: { line: AdjustmentLine; accountHeadId: string }[] = [];
   for (const line of lines) {
-    const accountHeadId = await ensureAdjustmentHead(tx, session.tenantId, line.adjustmentType);
+    const accountHeadId = await ensureAdjustmentHead(
+      tx,
+      session.tenantId,
+      line.adjustmentType,
+      args.voucherType
+    );
     withHeads.push({ line, accountHeadId });
     await tx.voucherAdjustment.create({
       data: {

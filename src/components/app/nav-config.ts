@@ -135,6 +135,9 @@ export const NAV: NavGroup[] = [
       { label: "Shortage Ledger", href: "/accounts/shortage" },
       // office transactions and staff payroll are tabs of one screen
       { label: "Office Management", href: "/accounts/office" },
+      // loans and non-operational money live in their own module
+      { label: "Finance & Loans", href: "/finance" },
+      { label: "Common Ledgers", href: "/accounts/common-ledger" },
       { label: "Profit & Loss", href: "/accounts/pnl" },
     ],
   },

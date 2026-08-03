@@ -200,6 +200,14 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
               </div>
             </div>
 
+            {/* A cancelled or paper-change LR must be unmistakable on paper —
+                the small type badge above is easy to miss on a dense form. */}
+            {(lr.lrType === "CANCELLED" || lr.lrType === "PAPER_CHANGE") && (
+              <div className="print-fill border-y-2 border-black bg-black py-1 text-center text-[13px] font-black tracking-[0.3em] text-white">
+                {lr.lrType === "CANCELLED" ? "CANCELLED LR" : "PAPER CHANGE LR"}
+              </div>
+            )}
+
             {/* ---- LR number band ---- */}
             <div className="print-fill flex items-center justify-between border-y-2 border-black bg-neutral-100 px-3 py-1.5">
               <div className="text-[15px] font-black tracking-wide">

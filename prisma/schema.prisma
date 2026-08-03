@@ -83,6 +83,13 @@ enum ModuleLink {
   OFFICE_EXPENSE
   OFFICE_INCOME
   STAFF_PAYROLL
+  // vehicle & staff documents that carry an outstanding of their own: a vehicle
+  // expense bill left on credit, an advance the staff member still owes back,
+  // a driver's trip settlement balance
+  VEHICLE_EXPENSE
+  STAFF_ADVANCE
+  DRIVER_SETTLEMENT
+  ADBLUE_PURCHASE
   OTHERS
 }
 
@@ -1369,6 +1376,9 @@ model Voucher {
   accountHeadId String?
   ledgerPosting String           @default("PARTY") // PARTY | VEHICLE | BOTH
   bankPartyId   String?
+  // journal only: credit an income/expense head instead of a party/bank ledger,
+  // so a journal can adjust between ANY two ledgers
+  creditHeadId  String?
   chequeNo      String?
   chequeDate    DateTime?
   biltyNo       String?
@@ -1730,6 +1740,124 @@ model VehicleExpense {
   createdAt DateTime @default(now())
 
   @@index([tenantId, vehicleId, date])
+}
+
+// ============ FINANCE & LOAN MANAGEMENT ============
+// Loans and non-operational money movement, kept OUT of the transport modules
+// but posted through the same voucher + ledger engine everything else uses.
+
+model Loan {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  loanNo    String
+  date      DateTime
+  partyId   String // lender (loan taken) or borrower (loan given)
+  // BUSINESS_TAKEN | BUSINESS_GIVEN | VEHICLE | PERSONAL_TAKEN | PERSONAL_GIVEN
+  loanType  String
+  purpose   String?
+  vehicleId String? // vehicle loans only; one loan, one vehicle
+
+  amount    Decimal @default(0) @db.Decimal(14, 2)
+  // NONE | FLAT | REDUCING — drives the interest suggested on each EMI, which
+  // the user may always overwrite
+  interestMode String  @default("NONE")
+  interestRate Decimal @default(0) @db.Decimal(6, 3) // % per annum
+
+  emiApplicable Boolean   @default(false)
+  emiAmount     Decimal   @default(0) @db.Decimal(14, 2)
+  emiStartDate  DateTime?
+  emiFrequency  String    @default("MONTHLY") // MONTHLY | QUARTERLY | YEARLY
+  tenureMonths  Int       @default(0)
+
+  tdsApplicable Boolean @default(false)
+  tdsPct        Decimal @default(0) @db.Decimal(5, 2)
+
+  status  String  @default("ACTIVE") // ACTIVE | CLOSED
+  closedDate DateTime?
+  remarks String?
+
+  emis LoanEmi[]
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, loanNo])
+  @@index([tenantId, firmId, fyId, status])
+  @@index([tenantId, vehicleId])
+}
+
+// One instalment actually paid or received. Nothing is scheduled in advance:
+// the register derives the next due date from the last paid EMI, so an
+// irregular repayment never leaves a wrong schedule behind.
+model LoanEmi {
+  id       String   @id @default(cuid())
+  tenantId String
+  firmId   String
+  fyId     String
+  loanId   String
+  loan     Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  emiNo    Int
+  dueDate  DateTime?
+  payDate  DateTime
+
+  principal Decimal @default(0) @db.Decimal(14, 2)
+  interest  Decimal @default(0) @db.Decimal(14, 2)
+  penalty   Decimal @default(0) @db.Decimal(12, 2)
+  otherAmt  Decimal @default(0) @db.Decimal(12, 2)
+  // TDS is deducted from the INTEREST only, never from principal
+  tdsAmt    Decimal @default(0) @db.Decimal(12, 2)
+  /// principal + interest + penalty + other (before TDS)
+  total     Decimal @default(0) @db.Decimal(14, 2)
+  /// what actually moved through bank/cash: total - TDS
+  netPaid   Decimal @default(0) @db.Decimal(14, 2)
+
+  /// closing instalment that settles whatever is left
+  isSettlement Boolean @default(false)
+
+  bankPartyId String
+  voucherId   String?
+  voucherNo   String?
+  remarks     String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@index([tenantId, loanId, payDate])
+  @@index([tenantId, firmId, fyId, payDate])
+}
+
+// Money in or out that has nothing to do with transport operations — personal
+// transfers, security deposits, miscellaneous receipts. Posts party <-> bank
+// and appears in the ledgers, never in an operational report.
+model FinanceTxn {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  voucherNo String
+  date      DateTime
+  /// RECEIPT (money in) | PAYMENT (money out)
+  direction String
+  /// PERSONAL | TEMPORARY_LOAN | FAMILY_TRANSFER | SECURITY_DEPOSIT | MISC
+  txnType   String
+  partyId   String
+  amount    Decimal @default(0) @db.Decimal(14, 2)
+  entryType String  @default("CASH") // CASH | BANK
+  bankPartyId String
+  voucherId String?
+  remarks   String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@unique([firmId, fyId, voucherNo])
+  @@index([tenantId, firmId, fyId, date])
 }
 
 // ============ MAINTENANCE SUITE ============
@@ -2283,12 +2411,20 @@ model AdblueTxn {
   fyId        String
   date        DateTime
   type        String // REFILL | ISSUE
-  supplierName String? // refill only
+  supplierName String? // refill only, free text when the supplier is not a party
+  supplierId  String? // supplier party — required to book the purchase on credit
   vehicleId   String? // optional on refill, required on issue
   destination String? // issue only
   qty         Decimal  @default(0) @db.Decimal(12, 2) // litres
-  amount      Decimal  @default(0) @db.Decimal(14, 2) // purchase value (refill only, optional)
-  bankPartyId String? // paid from (refill only, optional)
+  // Bill details arrive a day or two after the stock does. Until they do the
+  // refill is stock-only: quantity moves, nothing is posted, nothing is owed.
+  amount      Decimal  @default(0) @db.Decimal(14, 2) // purchase value, once billed
+  billNo      String?
+  billDate    DateTime?
+  gstPct      Decimal  @default(0) @db.Decimal(5, 2)
+  gstAmount   Decimal  @default(0) @db.Decimal(12, 2) // included in amount
+  paymentMode String? // CASH | BANK — blank = on credit, settle later via voucher
+  bankPartyId String? // paid from, when a payment mode is set
   refNo       String? // challan / bill no (informational)
   remarks     String?
 
@@ -2319,7 +2455,11 @@ model VehicleExpenseVoucher {
   partyId   String? // supplier / party — optional
   paymentMode String? // CASH | BANK — blank = on credit
   bankPartyId String?
-  amount    Decimal @default(0) @db.Decimal(14, 2) // total (= sum of items)
+  amount    Decimal @default(0) @db.Decimal(14, 2) // total (>= sum of items; the rest is unallocated)
+  // bulk purchases: what was bought and how many, so allocation can work in
+  // quantities (3 of the 10 chains) rather than only in rupees
+  itemName  String?
+  qty       Decimal? @db.Decimal(12, 3)
   refNo     String?
   remarks   String?
   attachmentPath String?
@@ -2336,6 +2476,10 @@ model VehicleExpenseVoucher {
   @@index([tenantId, firmId, fyId, date])
 }
 
+// One vehicle's share of a purchase. A bulk purchase (10 chains for the stores)
+// is booked with NO items and allocated later, one item per vehicle that
+// actually consumed it — allocation moves cost between registers, never money,
+// so it posts nothing to the ledger.
 model VehicleExpenseItem {
   id        String                @id @default(cuid())
   tenantId  String
@@ -2343,9 +2487,18 @@ model VehicleExpenseItem {
   voucher   VehicleExpenseVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
   vehicleId String
   amount    Decimal               @default(0) @db.Decimal(14, 2)
+  // when this vehicle actually took the cost. Every vehicle-cost report reads
+  // THIS date, not the purchase date, so a chain bought on the 1st and fitted on
+  // the 8th does not distort the vehicle's P&L for the week in between.
+  allocDate DateTime
+  qty       Decimal?              @db.Decimal(12, 3)
+  remarks   String?
+
+  createdAt DateTime @default(now())
 
   @@index([tenantId, vehicleId])
   @@index([voucherId])
+  @@index([tenantId, allocDate])
 }
 
 // ============ VEHICLE TRACKING (live register) ============

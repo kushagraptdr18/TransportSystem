@@ -282,6 +282,10 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
     });
 
     revalidatePath("/lr/register");
+    // the two audit reports read the same LRs, so they must not serve a
+    // stale copy after an edit or delete
+    revalidatePath("/reports/cancelled-lrs");
+    revalidatePath("/reports/paper-change-lrs");
     return { ok: true, id };
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
@@ -312,6 +316,10 @@ export async function deleteLr(id: string): Promise<{ ok: true } | { ok: false; 
       await audit(tx, session, { entity: "Lr", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/lr/register");
+    // the two audit reports read the same LRs, so they must not serve a
+    // stale copy after an edit or delete
+    revalidatePath("/reports/cancelled-lrs");
+    revalidatePath("/reports/paper-change-lrs");
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Failed to delete LR" };
@@ -550,6 +558,10 @@ export async function saveLrBatch(
         savedNumber: lrNos[lrNos.length - 1],
       });
       revalidatePath("/lr/register");
+      // the two audit reports read the same LRs, so they must not serve a
+      // stale copy after an edit or delete
+      revalidatePath("/reports/cancelled-lrs");
+      revalidatePath("/reports/paper-change-lrs");
       return { ok: true as const, lrNos };
     });
   } catch (err) {

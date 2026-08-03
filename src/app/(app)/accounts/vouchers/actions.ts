@@ -11,6 +11,7 @@ import { syncSequenceTo } from "@/lib/sequences";
 import { postLedger, reverseLedger, LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
 import { adjustmentsTotal, applyAdjustments, ensureAdjustmentHead } from "@/lib/adjust-engine";
+import { tdsHead } from "@/lib/account-heads";
 import { payableSettlement, refPositions } from "@/lib/settlement";
 import { raiseShortage, recoverShortage, releaseShortage } from "@/lib/shortage";
 
@@ -45,6 +46,10 @@ const allocationSchema = z.object({
       "OFFICE_EXPENSE",
       "OFFICE_INCOME",
       "STAFF_PAYROLL",
+      "VEHICLE_EXPENSE",
+      "STAFF_ADVANCE",
+      "DRIVER_SETTLEMENT",
+      "ADBLUE_PURCHASE",
     ])
     .nullish(),
   billAmt: z.number().min(0).default(0),
@@ -76,6 +81,10 @@ const voucherSchema = z.object({
       "OFFICE_EXPENSE",
       "OFFICE_INCOME",
       "STAFF_PAYROLL",
+      "VEHICLE_EXPENSE",
+      "STAFF_ADVANCE",
+      "DRIVER_SETTLEMENT",
+      "ADBLUE_PURCHASE",
       "OTHERS",
     ])
     .default("OTHERS"),
@@ -83,7 +92,10 @@ const voucherSchema = z.object({
   vehicleId: z.string().nullish(),
   accountHeadId: z.string().nullish(),
   ledgerPosting: z.enum(["PARTY", "VEHICLE", "BOTH"]).default("PARTY"),
-  bankPartyId: z.string().min(1, "Bank/Cash (or journal credit) account is required"),
+  // journals may credit a ledger head instead of a party/bank account, so one
+  // of the two is required rather than bankPartyId always
+  bankPartyId: z.string().nullish(),
+  creditHeadId: z.string().nullish(),
   chequeNo: z.string().nullish(),
   chequeDate: z.string().nullish(),
   amount: z.number().min(0.01, "Amount is required"),
@@ -117,8 +129,23 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
   if (data.type === "CONTRA" && !data.partyId) {
     return { ok: false, error: "Counter Bank/Cash account is required for contra" };
   }
-  if (data.type === "JOURNAL" && !data.partyId) {
-    return { ok: false, error: "Debit party is required for a journal voucher" };
+  // A journal adjusts any two ledgers: either side may be a party, a bank/cash
+  // account or an income/expense head, so each side only has to be SOMETHING.
+  if (data.type === "JOURNAL" && !data.partyId && !data.accountHeadId) {
+    return { ok: false, error: "Debit ledger is required for a journal voucher" };
+  }
+  if (data.type === "JOURNAL" && !data.bankPartyId && !data.creditHeadId) {
+    return { ok: false, error: "Credit ledger is required for a journal voucher" };
+  }
+  if (data.type !== "JOURNAL" && !data.bankPartyId) {
+    return { ok: false, error: "Bank/Cash account is required" };
+  }
+  if (
+    data.type === "JOURNAL" &&
+    ((data.partyId && data.partyId === data.bankPartyId) ||
+      (data.accountHeadId && data.accountHeadId === data.creditHeadId))
+  ) {
+    return { ok: false, error: "Debit and credit ledgers must be different" };
   }
   if (data.type === "CONTRA" && data.adjustments.length > 0) {
     return { ok: false, error: "Adjustments are not applicable on contra vouchers" };
@@ -149,7 +176,8 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         vehicleId: data.vehicleId || null,
         accountHeadId: data.accountHeadId || null,
         ledgerPosting: data.ledgerPosting,
-        bankPartyId: data.bankPartyId,
+        bankPartyId: data.bankPartyId || null,
+        creditHeadId: data.creditHeadId || null,
         chequeNo: data.chequeNo || null,
         chequeDate: data.chequeDate ? toDate(data.chequeDate) : null,
         amount: data.amount,
@@ -243,6 +271,37 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
             sal.forEach((s) =>
               gross.set(s.id, round2(Number(s.netSalary) - Number(s.paidAmount)))
             );
+          } else if (refType === "VEHICLE_EXPENSE") {
+            const vex = await tx.vehicleExpenseVoucher.findMany({ where: { id: { in: refIds } } });
+            // paid at entry = the money already moved; nothing left to settle
+            vex.forEach((v) => gross.set(v.id, v.paymentMode ? 0 : Number(v.amount)));
+          } else if (refType === "STAFF_ADVANCE") {
+            const advs = await tx.staffAdvance.findMany({ where: { id: { in: refIds } } });
+            const recovered = await tx.staffSalary.groupBy({
+              by: ["advanceId"],
+              where: { advanceId: { in: refIds }, deletedAt: null },
+              _sum: { advanceRecovery: true },
+            });
+            const byAdvance = new Map(
+              recovered.map((r) => [r.advanceId ?? "", Number(r._sum.advanceRecovery ?? 0)])
+            );
+            // what payroll already recovered cannot be received again in cash
+            advs.forEach((a) =>
+              gross.set(a.id, round2(Number(a.amount) - (byAdvance.get(a.id) ?? 0)))
+            );
+          } else if (refType === "ADBLUE_PURCHASE") {
+            const refills = await tx.adblueTxn.findMany({ where: { id: { in: refIds } } });
+            // unbilled stock owes nothing yet, and a refill paid at entry is done
+            refills.forEach((r) =>
+              gross.set(r.id, r.billNo && !r.paymentMode ? Number(r.amount) : 0)
+            );
+          } else if (refType === "DRIVER_SETTLEMENT") {
+            const sets = await tx.driverSettlement.findMany({ where: { id: { in: refIds } } });
+            // settling from the driver-settlement screen creates its own voucher
+            // and marks the row SETTLED — it must not be payable twice
+            sets.forEach((s) =>
+              gross.set(s.id, s.status === "SETTLED" ? 0 : Math.abs(Number(s.amount)))
+            );
           }
           for (const r of rows) {
             const pending = round2((gross.get(r.refId) ?? Infinity) - (already.get(r.refId) ?? 0));
@@ -322,7 +381,14 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // destination bank, CREDIT source party.
       const bankSide = data.type === "PAYMENT" || data.type === "JOURNAL" ? "CREDIT" : "DEBIT";
       const counterSide = bankSide === "CREDIT" ? "DEBIT" : "CREDIT";
-      entries.push({ ...common, partyId: data.bankPartyId, side: bankSide, amount: netAmount });
+      // a journal may credit a ledger head instead of a bank/cash party
+      entries.push({
+        ...common,
+        partyId: data.creditHeadId ? null : data.bankPartyId,
+        accountHeadId: data.creditHeadId || null,
+        side: bankSide,
+        amount: netAmount,
+      });
 
       const postParty = data.ledgerPosting === "PARTY" || data.ledgerPosting === "BOTH";
       const postVehicle = data.ledgerPosting === "VEHICLE" || data.ledgerPosting === "BOTH";
@@ -349,15 +415,18 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
             amount: data.amount,
           });
         }
-        // legacy header deductions post to auto-created heads (TDS ledger etc.)
+        // Header deductions post to the COMMON ledger head for each concept —
+        // TDS to the statutory payable/receivable ledger (never a "TDS
+        // Adjustment" head), a deduction to the one Shortage ledger the chalan
+        // and broker slip also use.
         const legacy: [string, number, "bank" | "counter"][] = [
-          ["TDS", data.tdsAmt, "bank"],
-          ["DEDUCTION", data.deduction, "bank"],
-          ["OTHER CHARGES", data.otherAmt, "counter"],
+          [tdsHead(data.type), data.tdsAmt, "bank"],
+          ["Shortage", data.deduction, "bank"],
+          ["Other Charges", data.otherAmt, "counter"],
         ];
         for (const [name, amt, dir] of legacy) {
           if (amt > 0) {
-            const headId = await ensureAdjustmentHead(tx, session.tenantId, name);
+            const headId = await ensureAdjustmentHead(tx, session.tenantId, name, data.type);
             entries.push({
               ...common,
               accountHeadId: headId,
@@ -366,6 +435,35 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
               narration: `${name} on ${data.type.toLowerCase()} voucher ${data.voucherNo}`,
             });
           }
+        }
+        // Per-allocation round-off settles the reference but was never posted,
+        // so the party ledger disagreed with the outstanding register by exactly
+        // the rounding. It posts here to the one common Round Off ledger:
+        // knocked off the payable/receivable => Round Off income, added to it
+        // (a negative round-off) => Round Off expense, same head either way.
+        const allocRoundOff = round2(data.allocations.reduce((s, a) => s + a.roundOff, 0));
+        if (Math.abs(allocRoundOff) > 0.009 && (data.partyId || data.accountHeadId)) {
+          const headId = await ensureAdjustmentHead(tx, session.tenantId, "Round Off", data.type);
+          const amount = Math.abs(allocRoundOff);
+          const partySide = allocRoundOff > 0 ? counterSide : bankSide;
+          const headSide = allocRoundOff > 0 ? bankSide : counterSide;
+          entries.push(
+            {
+              ...common,
+              partyId: data.partyId || null,
+              accountHeadId: data.partyId ? null : data.accountHeadId,
+              side: partySide,
+              amount,
+              narration: `Round off on ${data.type.toLowerCase()} voucher ${data.voucherNo}`,
+            },
+            {
+              ...common,
+              accountHeadId: headId,
+              side: headSide,
+              amount,
+              narration: `Round off on ${data.type.toLowerCase()} voucher ${data.voucherNo}`,
+            }
+          );
         }
       }
 
@@ -598,6 +696,10 @@ export async function getAllocationCandidates(input: {
           "OFFICE_EXPENSE",
           "OFFICE_INCOME",
           "STAFF_PAYROLL",
+          "VEHICLE_EXPENSE",
+          "STAFF_ADVANCE",
+          "DRIVER_SETTLEMENT",
+          "ADBLUE_PURCHASE",
         ]
       : [input.moduleLink];
 
@@ -798,6 +900,150 @@ export async function getAllocationCandidates(input: {
             refNo: s.refNo || s.voucherNo || s.month,
             date: new Date(`${s.month}-01T00:00:00`).toISOString(),
             billAmt: Number(s.netSalary),
+            outstanding,
+            tdsPct: 0,
+            module: moduleLink,
+          });
+      }
+    } else if (moduleLink === "VEHICLE_EXPENSE") {
+      // only bills left ON CREDIT are outstanding — one with a payment mode was
+      // settled in cash or bank at entry, and offering it again would pay twice
+      const bills = await tx.vehicleExpenseVoucher.findMany({
+        where: {
+          ...scope,
+          paymentMode: null,
+          partyId: partyId ? partyId : { not: null },
+        },
+        orderBy: { date: "asc" },
+      });
+      const pos = await refPositions(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: moduleLink,
+        excludeVoucherId: voucherId,
+        docs: bills.map((b) => ({ id: b.id, original: Number(b.amount) })),
+      });
+      for (const b of bills) {
+        const outstanding = pos.get(b.id)?.outstanding ?? 0;
+        if (outstanding > 0)
+          out.push({
+            refId: b.id,
+            // blank reference falls back to the voucher number, the same rule
+            // office bills and salaries follow
+            refNo: b.refNo || b.voucherNo,
+            date: b.date.toISOString(),
+            billAmt: Number(b.amount),
+            outstanding,
+            tdsPct: 0,
+            module: moduleLink,
+          });
+      }
+    } else if (moduleLink === "STAFF_ADVANCE") {
+      // an advance is money the staff member owes back: it is RECEIVED, either
+      // as a payroll deduction (handled on the salary screen) or in cash here
+      const advances = await tx.staffAdvance.findMany({
+        where: { ...scope, ...(partyId ? { partyId } : {}) },
+        orderBy: { date: "asc" },
+      });
+      const recovered = await tx.staffSalary.groupBy({
+        by: ["advanceId"],
+        where: { advanceId: { in: advances.map((a) => a.id) }, deletedAt: null },
+        _sum: { advanceRecovery: true },
+      });
+      const byAdvance = new Map(
+        recovered.map((r) => [r.advanceId ?? "", Number(r._sum.advanceRecovery ?? 0)])
+      );
+      const pos = await refPositions(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: moduleLink,
+        excludeVoucherId: voucherId,
+        docs: advances.map((a) => ({
+          id: a.id,
+          original: Number(a.amount),
+          ownSettled: byAdvance.get(a.id) ?? 0,
+        })),
+      });
+      for (const a of advances) {
+        const outstanding = pos.get(a.id)?.outstanding ?? 0;
+        if (outstanding > 0)
+          out.push({
+            refId: a.id,
+            refNo: a.advanceNo,
+            date: a.date.toISOString(),
+            billAmt: Number(a.amount),
+            outstanding,
+            tdsPct: 0,
+            module: moduleLink,
+          });
+      }
+    } else if (moduleLink === "ADBLUE_PURCHASE") {
+      // a billed refill left on credit. Stock still waiting for its invoice owes
+      // nothing yet, and one paid at entry has already moved the money.
+      const refills = await tx.adblueTxn.findMany({
+        where: {
+          ...scope,
+          type: "REFILL",
+          billNo: { not: null },
+          paymentMode: null,
+          supplierId: partyId ? partyId : { not: null },
+        },
+        orderBy: { date: "asc" },
+      });
+      const pos = await refPositions(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: moduleLink,
+        excludeVoucherId: voucherId,
+        docs: refills.map((r) => ({ id: r.id, original: Number(r.amount) })),
+      });
+      for (const r of refills) {
+        const outstanding = pos.get(r.id)?.outstanding ?? 0;
+        if (outstanding > 0)
+          out.push({
+            refId: r.id,
+            refNo: r.billNo!,
+            date: (r.billDate ?? r.date).toISOString(),
+            billAmt: Number(r.amount),
+            outstanding,
+            tdsPct: 0,
+            module: moduleLink,
+          });
+      }
+    } else if (moduleLink === "DRIVER_SETTLEMENT") {
+      // a pending trip settlement balance: positive = the company pays the
+      // driver, negative = the driver pays the company. Settling it from its own
+      // screen creates a voucher and marks it SETTLED, so only PENDING rows are
+      // offered here and the same balance can never be settled twice.
+      const settlements = await tx.driverSettlement.findMany({
+        where: { ...scope, status: "PENDING" },
+        orderBy: { date: "asc" },
+      });
+      const drivers = settlements.length
+        ? await tx.driver.findMany({
+            where: { id: { in: settlements.map((s) => s.driverId) } },
+            select: { id: true, partyId: true, driverCode: true },
+          })
+        : [];
+      const driverById = new Map(drivers.map((d) => [d.id, d]));
+      const mine = settlements.filter((s) =>
+        partyId ? driverById.get(s.driverId)?.partyId === partyId : true
+      );
+      const pos = await refPositions(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: moduleLink,
+        excludeVoucherId: voucherId,
+        docs: mine.map((s) => ({ id: s.id, original: Math.abs(Number(s.amount)) })),
+      });
+      for (const s of mine) {
+        const outstanding = pos.get(s.id)?.outstanding ?? 0;
+        if (outstanding > 0)
+          out.push({
+            refId: s.id,
+            refNo: s.voucherNo || s.tripRef || `SETT-${driverById.get(s.driverId)?.driverCode ?? ""}`,
+            date: s.date.toISOString(),
+            billAmt: Math.abs(Number(s.amount)),
             outstanding,
             tdsPct: 0,
             module: moduleLink,

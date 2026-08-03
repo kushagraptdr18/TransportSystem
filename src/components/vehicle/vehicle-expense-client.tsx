@@ -61,6 +61,8 @@ export interface VehicleExpenseRow {
   bank: string;
   paymentDate: string | null;
   amount: number;
+  itemName: string;
+  qty: number | null;
   refNo: string;
   remarks: string;
   attachmentPath: string | null;
@@ -92,6 +94,9 @@ const emptyForm = {
   paymentDateText: formatDate(new Date()),
   refNo: "",
   remarks: "",
+  itemName: "",
+  qty: 0,
+  bulkAmount: 0,
   attachmentPath: null as string | null,
   attachmentName: "",
   items: [{ vehicleId: null, amount: 0 }] as FormItem[],
@@ -145,6 +150,10 @@ export function VehicleExpenseClient({
       paymentDateText: row.paymentDate ? formatDate(row.paymentDate) : formatDate(row.date),
       refNo: row.refNo,
       remarks: row.remarks,
+      itemName: row.itemName,
+      qty: row.qty ?? 0,
+      // a purchase with no vehicle split keeps its own amount
+      bulkAmount: row.items.length ? 0 : row.amount,
       attachmentPath: row.attachmentPath,
       attachmentName: row.attachmentName,
       items: row.items.map((i) => ({ vehicleId: i.vehicleId, amount: i.amount })),
@@ -169,6 +178,10 @@ export function VehicleExpenseClient({
         remarks: form.remarks,
         attachmentPath: form.attachmentPath,
         attachmentName: form.attachmentName,
+        itemName: form.itemName || null,
+        qty: form.qty || null,
+        // no vehicle named: bulk stock, allocated to vehicles later
+        amount: validItems.length ? null : form.bulkAmount,
         items: validItems.map((i) => ({ vehicleId: i.vehicleId!, amount: i.amount })),
       });
       if (res.ok) {
@@ -439,6 +452,25 @@ export function VehicleExpenseClient({
               </>
             )}
             <div className="space-y-1">
+              <Label className="text-xs">Item / Material</Label>
+              <Input
+                className="h-8"
+                placeholder="e.g. Chain, Tyre, Battery"
+                value={form.itemName}
+                onChange={(e) => set({ itemName: e.target.value })}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Quantity</Label>
+              <Input
+                type="number"
+                className="h-8 text-right"
+                placeholder="e.g. 10"
+                value={form.qty ? String(form.qty) : ""}
+                onChange={(e) => set({ qty: Number(e.target.value) || 0 })}
+              />
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs">Reference / Bill No</Label>
               <Input className="h-8" value={form.refNo} onChange={(e) => set({ refNo: e.target.value })} />
             </div>
@@ -452,8 +484,8 @@ export function VehicleExpenseClient({
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label className="text-xs font-medium">
-                Vehicle Selection ({validItems.length} vehicle{validItems.length === 1 ? "" : "s"} —
-                total {formatMoney(total)})
+                Vehicle Selection — optional ({validItems.length} vehicle
+                {validItems.length === 1 ? "" : "s"} — total {formatMoney(total)})
               </Label>
               <div className="flex flex-wrap gap-2">
                 <SplitControl onSplit={splitEqually} />
@@ -470,6 +502,23 @@ export function VehicleExpenseClient({
                 </Button>
               </div>
             </div>
+            {validItems.length === 0 && (
+              <div className="grid gap-1 rounded-md border bg-muted/40 p-2 sm:grid-cols-[1fr_160px]">
+                <p className="text-xs text-muted-foreground">
+                  No vehicle selected — this is a <b>bulk purchase</b>. It posts the accounting now
+                  and waits in <b>Expense Allocation</b> until vehicles consume it.
+                </p>
+                <div className="space-y-1">
+                  <Label className="text-xs">Purchase Amount *</Label>
+                  <Input
+                    type="number"
+                    className="h-8 text-right"
+                    value={form.bulkAmount ? String(form.bulkAmount) : ""}
+                    onChange={(e) => set({ bulkAmount: Number(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+            )}
             {form.items.map((it, i) => (
               <div key={i} className="grid grid-cols-[1fr_140px_2rem] gap-1">
                 <MasterCombobox
@@ -494,7 +543,7 @@ export function VehicleExpenseClient({
                   variant="ghost"
                   size="sm"
                   className="h-9 w-8 p-0 text-destructive"
-                  disabled={form.items.length === 1}
+                  disabled={form.items.length === 1 && !form.items[0].vehicleId}
                   onClick={() =>
                     set({ items: form.items.filter((_, idx) => idx !== i) })
                   }
@@ -523,7 +572,7 @@ export function VehicleExpenseClient({
               disabled={
                 busy ||
                 !form.headId ||
-                validItems.length === 0 ||
+                (validItems.length === 0 && form.bulkAmount <= 0) ||
                 (form.paymentMode === "CREDIT" ? !form.partyId : !form.bankPartyId)
               }
               onClick={submit}

@@ -93,6 +93,8 @@ export async function VehicleExpensesTab({
     bank: v.bankPartyId ? partyName.get(v.bankPartyId) ?? "" : "",
     paymentDate: v.paymentDate ? v.paymentDate.toISOString() : null,
     amount: toNum(String(v.amount)),
+    itemName: v.itemName ?? "",
+    qty: v.qty == null ? null : toNum(String(v.qty)),
     refNo: v.refNo ?? "",
     remarks: v.remarks ?? "",
     attachmentPath: v.attachmentPath,

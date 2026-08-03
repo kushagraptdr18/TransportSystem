@@ -1,6 +1,7 @@
 import { Tx } from "./db";
 import { Session } from "./session";
 import { EntrySide } from "@prisma/client";
+import { resolveHead } from "./account-heads";
 
 export interface LedgerPostEntry {
   date: Date;
@@ -56,6 +57,11 @@ export async function reverseLedger(tx: Tx, refType: string, refId: string): Pro
 /**
  * Find-or-create an AccountHead by name so modules can post to a stable
  * income/expense ledger without requiring the user to set it up first.
+ *
+ * Names that belong to a common head (Detention, Commission, Round Off, ...)
+ * are resolved to that one head first, so a module asking for "Detention
+ * Charges" and one asking for "Detention Income" land in the SAME ledger and
+ * the head's balance is the net position. See `src/lib/account-heads.ts`.
  */
 export async function ensureAccountHead(
   tx: Tx,
@@ -63,13 +69,14 @@ export async function ensureAccountHead(
   name: string,
   kind: "INCOME" | "EXPENSE"
 ): Promise<string> {
+  const head = resolveHead(name, kind);
   const existing = await tx.accountHead.findFirst({
-    where: { tenantId: session.tenantId, name },
+    where: { tenantId: session.tenantId, name: head.name },
     select: { id: true },
   });
   if (existing) return existing.id;
   const created = await tx.accountHead.create({
-    data: { tenantId: session.tenantId, name, kind },
+    data: { tenantId: session.tenantId, name: head.name, kind: head.kind },
   });
   return created.id;
 }
