@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
+import { refPositions } from "@/lib/settlement";
 import {
   OfficeTxnClient,
   type OfficeTxnRow,
@@ -18,7 +19,7 @@ export async function OfficeIncomeExpenseTab({
   await authorize(session, "vouchers", "view");
   const { date_from, date_to, type, head, party, mode, q } = searchParams;
 
-  const { txns, heads, parties, banks } = await withTenant(session.tenantId, async (tx) => {
+  const { txns, heads, parties, banks, expPos, incPos } = await withTenant(session.tenantId, async (tx) => {
     const [txns, heads, parties, banks] = await Promise.all([
       tx.officeTransaction.findMany({
         where: {
@@ -65,11 +66,50 @@ export async function OfficeIncomeExpenseTab({
         orderBy: { name: "asc" },
       }),
     ]);
-    return { txns, heads, parties, banks };
+    // live settlement of the credit entries, read through the shared engine so
+    // the register agrees with the voucher grid and the outstanding report
+    // rather than deriving its own figure
+    const credit = txns.filter((t) => !t.paymentMode);
+    const [expPos, incPos] = await Promise.all([
+      refPositions(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: "OFFICE_EXPENSE",
+        docs: credit
+          .filter((t) => t.txnType === "EXPENSE")
+          .map((t) => ({ id: t.id, original: toNum(String(t.amount)) })),
+      }),
+      refPositions(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: "OFFICE_INCOME",
+        docs: credit
+          .filter((t) => t.txnType === "INCOME")
+          .map((t) => ({ id: t.id, original: toNum(String(t.amount)) })),
+      }),
+    ]);
+    return { txns, heads, parties, banks, expPos, incPos };
   });
 
   const headName = new Map(heads.map((h) => [h.id, h.name]));
   const partyName = new Map([...parties, ...banks].map((p) => [p.id, p.name]));
+
+  /**
+   * An entry paid at source has nothing outstanding and no reference to settle,
+   * so it reports as SETTLED rather than as a reference nobody can act on.
+   */
+  const settlementOf = (t: { id: string; txnType: string; paymentMode: string | null; amount: unknown }) => {
+    if (t.paymentMode) {
+      const amt = toNum(String(t.amount));
+      return { settled: amt, outstanding: 0, status: "SETTLED AT ENTRY" };
+    }
+    const p = (t.txnType === "EXPENSE" ? expPos : incPos).get(t.id);
+    return {
+      settled: p?.settled ?? 0,
+      outstanding: p?.outstanding ?? toNum(String(t.amount)),
+      status: p?.status ?? "UNPAID",
+    };
+  };
 
   const rows: OfficeTxnRow[] = txns.map((t) => ({
     id: t.id,
@@ -86,9 +126,12 @@ export async function OfficeIncomeExpenseTab({
     amount: toNum(String(t.amount)),
     gstPct: toNum(String(t.gstPct)),
     gstAmount: toNum(String(t.gstAmount)),
-    refNo: t.refNo ?? "",
+    // blank reference falls back to the voucher number — the same value that
+    // was persisted on save and that the voucher grid offers for settlement
+    refNo: t.refNo || t.voucherNo,
     remarks: t.remarks ?? "",
     attachmentPath: t.attachmentPath,
+    ...settlementOf(t),
   }));
 
   return (

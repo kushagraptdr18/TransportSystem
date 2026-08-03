@@ -20,6 +20,116 @@ export const BILL_REF_TYPES: ModuleLink[] = ["BILLING", "GST_BILLING"];
 export const PAYABLE_REF_TYPES: ModuleLink[] = ["BROKER_ENTRY", "FREIGHT_CHALLAN", "LORRY_HIRE"];
 
 /**
+ * Everything a Payment Voucher can settle — freight documents, office bills and
+ * salaries alike.
+ */
+export const ALL_PAYABLE_REF_TYPES: ModuleLink[] = [
+  ...PAYABLE_REF_TYPES,
+  "OFFICE_EXPENSE",
+  "STAFF_PAYROLL",
+];
+/** Everything a Receipt Voucher can settle. */
+export const ALL_RECEIVABLE_REF_TYPES: ModuleLink[] = [...BILL_REF_TYPES, "OFFICE_INCOME"];
+
+/**
+ * A reference and everything that has happened to it. One shape for every
+ * module, so a register, a voucher grid and a source document all read the same
+ * figures rather than each deriving its own.
+ */
+export interface RefPosition {
+  /** the document's value before anything was settled */
+  original: number;
+  /** settled from the source document's own screen, where it has one */
+  ownSettled: number;
+  paid: number;
+  tds: number;
+  deduction: number;
+  otherAmt: number;
+  roundOff: number;
+  /** ownSettled + every voucher allocation, deductions included */
+  settled: number;
+  outstanding: number;
+  status: SettlementStatus;
+}
+
+/**
+ * Live position of any set of references, whatever the module.
+ *
+ * `ownSettled` covers documents that can also be settled where they were
+ * entered — a salary marked paid on the payroll screen, a chalan paid from its
+ * balance-payment block. Documents with no such path pass 0 and the allocations
+ * are the whole story. Either way the caller must use this rather than a stored
+ * balance column, which goes stale the moment a voucher is entered elsewhere.
+ */
+export async function refPositions(
+  tx: Tx,
+  opts: {
+    firmId: string;
+    fyId: string;
+    refType: ModuleLink;
+    docs: { id: string; original: number; ownSettled?: number }[];
+    excludeVoucherId?: string | null;
+  }
+): Promise<Map<string, RefPosition>> {
+  const ids = opts.docs.map((d) => d.id);
+  const allocations = ids.length
+    ? await tx.voucherAllocation.findMany({
+        where: {
+          refType: opts.refType,
+          refId: { in: ids },
+          voucher: {
+            deletedAt: null,
+            firmId: opts.firmId,
+            fyId: opts.fyId,
+            ...(opts.excludeVoucherId ? { id: { not: opts.excludeVoucherId } } : {}),
+          },
+        },
+        select: {
+          refId: true,
+          amount: true,
+          tdsAmt: true,
+          deduction: true,
+          otherAmt: true,
+          roundOff: true,
+        },
+      })
+    : [];
+
+  const zero = () => ({ paid: 0, tds: 0, deduction: 0, otherAmt: 0, roundOff: 0 });
+  const byRef = new Map<string, ReturnType<typeof zero>>();
+  for (const a of allocations) {
+    const acc = byRef.get(a.refId) ?? zero();
+    acc.paid = round2(acc.paid + Number(a.amount));
+    acc.tds = round2(acc.tds + Number(a.tdsAmt));
+    acc.deduction = round2(acc.deduction + Number(a.deduction));
+    acc.otherAmt = round2(acc.otherAmt + Number(a.otherAmt));
+    acc.roundOff = round2(acc.roundOff + Number(a.roundOff));
+    byRef.set(a.refId, acc);
+  }
+
+  const out = new Map<string, RefPosition>();
+  for (const d of opts.docs) {
+    const v = byRef.get(d.id) ?? zero();
+    const ownSettled = round2(d.ownSettled ?? 0);
+    // every approved deduction settles the reference exactly like money moved —
+    // an amount knocked off as TDS must never stay outstanding
+    const settled = round2(
+      ownSettled + v.paid + v.tds + v.deduction + v.otherAmt + v.roundOff
+    );
+    const outstanding = round2(d.original - settled);
+    out.set(d.id, {
+      original: d.original,
+      ownSettled,
+      ...v,
+      settled,
+      outstanding,
+      status: settlementStatus(d.original, outstanding),
+    });
+  }
+  return out;
+}
+
+/**
  * Amount settled per refId from live vouchers of this firm + FY.
  * Approved deductions (TDS / deduction) settle a document just like money
  * moved — an adjusted amount must never remain outstanding.

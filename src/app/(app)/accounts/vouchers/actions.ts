@@ -11,7 +11,7 @@ import { syncSequenceTo } from "@/lib/sequences";
 import { postLedger, reverseLedger, LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
 import { adjustmentsTotal, applyAdjustments, ensureAdjustmentHead } from "@/lib/adjust-engine";
-import { payableSettlement } from "@/lib/settlement";
+import { payableSettlement, refPositions } from "@/lib/settlement";
 import { raiseShortage, recoverShortage, releaseShortage } from "@/lib/shortage";
 
 const DOC_TYPE_BY_VOUCHER: Record<VoucherType, DocNumberType> = {
@@ -35,7 +35,17 @@ const allocationSchema = z.object({
   refNo: z.string().min(1),
   /** per-row module — set when the grid runs in "All modules" mode */
   refType: z
-    .enum(["BILLING", "GST_BILLING", "FREIGHT_CHALLAN", "BROKER_ENTRY", "LORRY_HIRE", "CASH_MEMO"])
+    .enum([
+      "BILLING",
+      "GST_BILLING",
+      "FREIGHT_CHALLAN",
+      "BROKER_ENTRY",
+      "LORRY_HIRE",
+      "CASH_MEMO",
+      "OFFICE_EXPENSE",
+      "OFFICE_INCOME",
+      "STAFF_PAYROLL",
+    ])
     .nullish(),
   billAmt: z.number().min(0).default(0),
   tdsPct: z.number().min(0).default(0),
@@ -63,6 +73,9 @@ const voucherSchema = z.object({
       "CASH_MEMO",
       "GST_BILLING",
       "LR_ENTRY",
+      "OFFICE_EXPENSE",
+      "OFFICE_INCOME",
+      "STAFF_PAYROLL",
       "OTHERS",
     ])
     .default("OTHERS"),
@@ -218,6 +231,18 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
           } else if (refType === "CASH_MEMO") {
             const ds = await tx.delivery.findMany({ where: { id: { in: refIds } } });
             ds.forEach((d2) => gross.set(d2.id, Number(d2.total)));
+          } else if (refType === "OFFICE_EXPENSE" || refType === "OFFICE_INCOME") {
+            const ots = await tx.officeTransaction.findMany({ where: { id: { in: refIds } } });
+            ots.forEach((o) =>
+              // an entry already paid at source has nothing left to settle, so
+              // its ceiling is zero rather than its amount
+              gross.set(o.id, o.paymentMode ? 0 : Number(o.amount))
+            );
+          } else if (refType === "STAFF_PAYROLL") {
+            const sal = await tx.staffSalary.findMany({ where: { id: { in: refIds } } });
+            sal.forEach((s) =>
+              gross.set(s.id, round2(Number(s.netSalary) - Number(s.paidAmount)))
+            );
           }
           for (const r of rows) {
             const pending = round2((gross.get(r.refId) ?? Infinity) - (already.get(r.refId) ?? 0));
@@ -563,7 +588,17 @@ export async function getAllocationCandidates(input: {
   const { partyId, voucherId } = input;
   const links: ModuleLink[] =
     input.moduleLink === "ALL"
-      ? ["BILLING", "GST_BILLING", "FREIGHT_CHALLAN", "BROKER_ENTRY", "LORRY_HIRE", "CASH_MEMO"]
+      ? [
+          "BILLING",
+          "GST_BILLING",
+          "FREIGHT_CHALLAN",
+          "BROKER_ENTRY",
+          "LORRY_HIRE",
+          "CASH_MEMO",
+          "OFFICE_EXPENSE",
+          "OFFICE_INCOME",
+          "STAFF_PAYROLL",
+        ]
       : [input.moduleLink];
 
   return withTenant(session.tenantId, async (tx) => {
@@ -697,6 +732,72 @@ export async function getAllocationCandidates(input: {
             refNo: d.delNo,
             date: d.delDate.toISOString(),
             billAmt: Number(d.total),
+            outstanding,
+            tdsPct: 0,
+            module: moduleLink,
+          });
+      }
+    } else if (moduleLink === "OFFICE_EXPENSE" || moduleLink === "OFFICE_INCOME") {
+      // Only entries left ON CREDIT are outstanding. One with a payment mode
+      // was settled in cash or bank at entry — the money has already moved, and
+      // offering it for settlement again would pay it twice.
+      const txns = await tx.officeTransaction.findMany({
+        where: {
+          ...scope,
+          txnType: moduleLink === "OFFICE_EXPENSE" ? "EXPENSE" : "INCOME",
+          paymentMode: null,
+          // an entry with no party has nobody to owe or be owed by
+          partyId: partyId ? partyId : { not: null },
+        },
+        orderBy: { date: "asc" },
+      });
+      const pos = await refPositions(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: moduleLink,
+        excludeVoucherId: voucherId,
+        docs: txns.map((t) => ({ id: t.id, original: Number(t.amount) })),
+      });
+      for (const t of txns) {
+        const outstanding = pos.get(t.id)?.outstanding ?? 0;
+        if (outstanding > 0)
+          out.push({
+            refId: t.id,
+            // blank reference falls back to the voucher number, matching what
+            // was persisted on save and what the ledger already shows
+            refNo: t.refNo || t.voucherNo,
+            date: t.date.toISOString(),
+            billAmt: Number(t.amount),
+            outstanding,
+            tdsPct: 0,
+            module: moduleLink,
+          });
+      }
+    } else if (moduleLink === "STAFF_PAYROLL") {
+      const salaries = await tx.staffSalary.findMany({
+        where: { ...scope, ...(partyId ? { partyId } : {}) },
+        orderBy: { month: "asc" },
+      });
+      // a salary can be settled on the payroll screen too, so both paths count
+      const pos = await refPositions(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: moduleLink,
+        excludeVoucherId: voucherId,
+        docs: salaries.map((s) => ({
+          id: s.id,
+          original: Number(s.netSalary),
+          ownSettled: Number(s.paidAmount),
+        })),
+      });
+      for (const s of salaries) {
+        const outstanding = pos.get(s.id)?.outstanding ?? 0;
+        if (outstanding > 0)
+          out.push({
+            refId: s.id,
+            refNo: s.refNo || s.voucherNo || s.month,
+            date: new Date(`${s.month}-01T00:00:00`).toISOString(),
+            billAmt: Number(s.netSalary),
             outstanding,
             tdsPct: 0,
             module: moduleLink,

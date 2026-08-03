@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
+import { ALL_PAYABLE_REF_TYPES } from "@/lib/settlement";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport } from "@/components/accounts/simple-report";
 
@@ -63,7 +64,19 @@ export async function OutstandingPayableTab({
     };
     if (searchParams.party) salaryWhere.partyId = searchParams.party;
 
-    const [chalans, slips, salaries, parties, allocations] = await Promise.all([
+    const officeWhere: Prisma.OfficeTransactionWhereInput = {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+      txnType: "EXPENSE",
+      // only entries left on credit are payable — one with a payment mode was
+      // settled in cash or bank at entry
+      paymentMode: null,
+      partyId: searchParams.party ? searchParams.party : { not: null },
+    };
+    if (dateWhere) officeWhere.date = dateWhere;
+
+    const [chalans, slips, salaries, office, parties, allocations] = await Promise.all([
       source && source !== "CHALAN"
         ? Promise.resolve([])
         : tx.chalan.findMany({ where: chalanWhere, orderBy: { chalanDate: "asc" } }),
@@ -73,6 +86,9 @@ export async function OutstandingPayableTab({
       source && source !== "SALARY"
         ? Promise.resolve([])
         : tx.staffSalary.findMany({ where: salaryWhere, orderBy: { month: "asc" } }),
+      source && source !== "OFFICE_EXPENSE"
+        ? Promise.resolve([])
+        : tx.officeTransaction.findMany({ where: officeWhere, orderBy: { date: "asc" } }),
       tx.party.findMany({
         where: {
           ledgerGroup: { in: ["OWNER_BROKER", "SUPPLIERS", "STAFF", "DRIVER"] },
@@ -82,7 +98,7 @@ export async function OutstandingPayableTab({
       }),
       tx.voucherAllocation.findMany({
         where: {
-          refType: { in: ["FREIGHT_CHALLAN", "LORRY_HIRE", "BROKER_ENTRY"] },
+          refType: { in: ALL_PAYABLE_REF_TYPES },
           // only live PAYMENT vouchers of this firm + FY count as paid
           voucher: {
             deletedAt: null,
@@ -94,8 +110,8 @@ export async function OutstandingPayableTab({
         select: { refId: true, amount: true, tdsAmt: true, deduction: true, otherAmt: true },
       }),
     ]);
-    return { chalans, slips, salaries, parties, allocations };
-  }).then(({ chalans, slips, salaries, parties, allocations }) => {
+    return { chalans, slips, salaries, office, parties, allocations };
+  }).then(({ chalans, slips, salaries, office, parties, allocations }) => {
     const paidByRef = new Map<string, number>();
     for (const a of allocations) {
       // approved deductions (TDS / deduction) settle the payable just like
@@ -164,10 +180,13 @@ export async function OutstandingPayableTab({
 
     const salaryRows = salaries.map((s) => {
       const gross = toNum(s.netSalary);
-      const paid = s.paymentStatus === "PAID" ? gross : 0;
+      // settled from the payroll screen PLUS anything allocated by a payment
+      // voucher — before this, a salary paid by voucher still read as fully
+      // outstanding here
+      const paid = toNum(s.paidAmount) + (paidByRef.get(s.id) ?? 0);
       const outstanding = Math.round((gross - paid) * 100) / 100;
       return {
-        refNo: `Salary ${s.month}`,
+        refNo: s.refNo || s.voucherNo || `Salary ${s.month}`,
         date: new Date(`${s.month}-01T00:00:00`).toISOString(),
         kind: "SALARY",
         partyType: "Staff",
@@ -180,9 +199,27 @@ export async function OutstandingPayableTab({
       };
     });
 
+    const officeRows = office.map((o) => {
+      const gross = toNum(o.amount);
+      const paid = paidByRef.get(o.id) ?? 0;
+      const outstanding = Math.round((gross - paid) * 100) / 100;
+      return {
+        refNo: o.refNo || o.voucherNo,
+        date: o.date.toISOString(),
+        kind: "OFFICE_EXPENSE",
+        partyType: partyType(o.partyId, "Supplier"),
+        party: (o.partyId && partyById.get(o.partyId)?.name) ?? "",
+        gross,
+        paid,
+        outstanding,
+        status: status(gross, outstanding),
+        link: `accounts/office?id=${o.id}`,
+      };
+    });
+
     return {
       parties,
-      rows: [...chalanRows, ...slipRows, ...salaryRows]
+      rows: [...chalanRows, ...slipRows, ...salaryRows, ...officeRows]
         .filter((r) => r.gross > 0)
         .filter((r) => showClosed || r.outstanding > 0.009)
         .sort((a, b) => a.date.localeCompare(b.date)),
@@ -208,6 +245,7 @@ export async function OutstandingPayableTab({
         { value: "CHALAN", label: "Chalan (Freight Payable)" },
         { value: "BROKER_SLIP", label: "Broker Slip (Owner Payable)" },
         { value: "SALARY", label: "Staff Salary" },
+        { value: "OFFICE_EXPENSE", label: "Office Expense" },
       ],
     },
     {

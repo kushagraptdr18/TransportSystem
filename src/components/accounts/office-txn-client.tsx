@@ -50,9 +50,14 @@ export interface OfficeTxnRow {
   amount: number;
   gstPct: number;
   gstAmount: number;
+  /** blank on entry falls back to the voucher number, and is stored that way */
   refNo: string;
   remarks: string;
   attachmentPath: string | null;
+  /** live position from the shared settlement engine */
+  settled: number;
+  outstanding: number;
+  status: string;
 }
 
 function textToIso(text: string): string {
@@ -232,6 +237,44 @@ export function OfficeTxnClient({
       } satisfies DataTableColumnMeta<OfficeTxnRow>,
     },
     { accessorKey: "refNo", header: "Reference No" },
+    {
+      accessorKey: "settled",
+      header: "Settled",
+      cell: ({ row }) => formatMoney(row.original.settled),
+      meta: {
+        numeric: true,
+        total: (rs) => formatMoney(rs.reduce((s, r) => s + r.settled, 0)),
+      } satisfies DataTableColumnMeta<OfficeTxnRow>,
+    },
+    {
+      accessorKey: "outstanding",
+      header: "Outstanding",
+      cell: ({ row }) => formatMoney(row.original.outstanding),
+      meta: {
+        numeric: true,
+        total: (rs) => formatMoney(rs.reduce((s, r) => s + r.outstanding, 0)),
+      } satisfies DataTableColumnMeta<OfficeTxnRow>,
+    },
+    {
+      accessorKey: "status",
+      header: "Status",
+      cell: ({ row }) => {
+        const s = row.original.status;
+        return (
+          <Badge
+            variant={
+              s === "PAID" || s === "SETTLED AT ENTRY"
+                ? "secondary"
+                : s === "PARTLY PAID"
+                  ? "outline"
+                  : "destructive"
+            }
+          >
+            {s}
+          </Badge>
+        );
+      },
+    },
     { accessorKey: "remarks", header: "Remarks" },
     {
       id: "attachment",
@@ -293,6 +336,9 @@ export function OfficeTxnClient({
               { header: "GST %", key: "gstPct", numeric: true },
               { header: "GST Amount", key: "gstAmount", numeric: true },
               { header: "Reference No", key: "refNo" },
+              { header: "Settled", key: "settled", numeric: true },
+              { header: "Outstanding", key: "outstanding", numeric: true },
+              { header: "Status", key: "status" },
               { header: "Remarks", key: "remarks" },
             ]}
           />

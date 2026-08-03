@@ -41,6 +41,15 @@ async function nextNo(tx: Tx, table: "staffAdvance" | "staffLoan", firmId: strin
   return `${prefix}${String(max + 1).padStart(4, "0")}`;
 }
 
+/** Next PAY-#### for the firm + FY, following the advance / loan numbering. */
+async function nextSalaryNo(tx: Tx, firmId: string, fyId: string): Promise<string> {
+  const rows = await tx.$queryRaw<{ max: bigint | null }[]>`
+    SELECT MAX(NULLIF(regexp_replace("voucherNo", '\\D', '', 'g'), '')::bigint) AS max
+    FROM "StaffSalary" WHERE "firmId" = ${firmId} AND "fyId" = ${fyId}`;
+  const max = rows[0]?.max ? Number(rows[0].max) : 0;
+  return `PAY-${String(max + 1).padStart(4, "0")}`;
+}
+
 function toDate(s: string): Date {
   return new Date(s.includes("T") ? s : `${s}T00:00:00`);
 }
@@ -378,6 +387,10 @@ export async function processStaffSalary(
               paymentStatus: "PAID",
               paymentDate: toDate(d.paymentDate as string),
               paymentHeadId: d.paymentHeadId,
+              // recorded as an amount, not just a flag: the payment voucher
+              // needs to know how much of this salary is already settled here,
+              // and a status cannot be netted against a partial allocation
+              paidAmount: netSalary,
             }
           : {}),
       };
@@ -395,6 +408,11 @@ export async function processStaffSalary(
           after: updated,
         });
       } else {
+        // A salary needs a document number of its own before a payment voucher
+        // can point at it — employee + month is not something an allocation can
+        // reference. Blank refNo means "use the voucher number", the same rule
+        // office transactions follow.
+        const salaryNo = await nextSalaryNo(tx, session.firmId, session.fyId);
         const created = await tx.staffSalary.create({
           data: {
             tenantId: session.tenantId,
@@ -402,6 +420,8 @@ export async function processStaffSalary(
             fyId: session.fyId,
             partyId: d.partyId,
             month: d.month,
+            voucherNo: salaryNo,
+            refNo: salaryNo,
             createdById: session.userId,
             ...values,
           },
@@ -447,6 +467,7 @@ export async function payStaffSalary(input: {
           paymentStatus: "PAID",
           paymentDate: toDate(input.paymentDate),
           paymentHeadId: input.paymentHeadId,
+          paidAmount: before.netSalary,
         },
       });
       await reverseLedger(tx, "STAFF_SALARY", input.salaryId);

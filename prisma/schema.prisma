@@ -77,6 +77,12 @@ enum ModuleLink {
   CASH_MEMO
   GST_BILLING
   LR_ENTRY
+  // settleable references outside the freight modules — an office bill, an
+  // office income accrual and a month's salary behave exactly like a chalan or
+  // an invoice once they are on credit
+  OFFICE_EXPENSE
+  OFFICE_INCOME
+  STAFF_PAYROLL
   OTHERS
 }
 
@@ -1296,6 +1302,11 @@ model StaffSalary {
   paymentStatus String    @default("PENDING") // PENDING | PAID
   paymentDate   DateTime?
   paymentHeadId String? // bank/cash party paid from
+  /** amount settled from THIS screen; voucher settlements are counted live */
+  paidAmount    Decimal   @default(0) @db.Decimal(12, 2)
+  /** auto PAY-<seq>; the outstanding reference when refNo is blank */
+  voucherNo     String?
+  refNo         String?
   remarks       String?
 
   createdById String?

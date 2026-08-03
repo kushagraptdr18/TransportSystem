@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
+import { ALL_RECEIVABLE_REF_TYPES } from "@/lib/settlement";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport } from "@/components/accounts/simple-report";
 
@@ -57,28 +58,43 @@ export async function OutstandingReceivableTab({
     };
     if (dateWhere) slipWhere.slipDate = dateWhere;
 
-    const [invoices, slips, parties, allocations] = await Promise.all([
-      source === "BROKER_SLIP"
+    const officeWhere: Prisma.OfficeTransactionWhereInput = {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+      txnType: "INCOME",
+      // only income booked on credit is receivable — one with a payment mode
+      // was already received in cash or bank at entry
+      paymentMode: null,
+      partyId: searchParams.party ? searchParams.party : { not: null },
+    };
+    if (dateWhere) officeWhere.date = dateWhere;
+
+    const [invoices, slips, office, parties, allocations] = await Promise.all([
+      source && source !== "INVOICE"
         ? Promise.resolve([])
         : tx.invoice.findMany({ where: invoiceWhere, orderBy: { invoiceDate: "asc" } }),
-      source === "INVOICE"
+      source && source !== "BROKER_SLIP"
         ? Promise.resolve([])
         : tx.brokerSlip.findMany({ where: slipWhere, orderBy: { slipDate: "asc" } }),
+      source && source !== "OFFICE_INCOME"
+        ? Promise.resolve([])
+        : tx.officeTransaction.findMany({ where: officeWhere, orderBy: { date: "asc" } }),
       tx.party.findMany({
         where: { ledgerGroup: { in: ["CONSIGNEE_CONSIGNOR", "OWNER_BROKER"] }, isActive: true },
         orderBy: { name: "asc" },
       }),
       tx.voucherAllocation.findMany({
         where: {
-          refType: { in: ["BILLING", "GST_BILLING", "BROKER_ENTRY"] },
+          refType: { in: [...ALL_RECEIVABLE_REF_TYPES, "BROKER_ENTRY"] },
           // only live vouchers of this firm + FY count towards received
           voucher: { deletedAt: null, firmId: session.firmId, fyId: session.fyId },
         },
         select: { refId: true, amount: true, tdsAmt: true, deduction: true, otherAmt: true },
       }),
     ]);
-    return { invoices, slips, parties, allocations };
-  }).then(({ invoices, slips, parties, allocations }) => {
+    return { invoices, slips, office, parties, allocations };
+  }).then(({ invoices, slips, office, parties, allocations }) => {
     const settledByRef = new Map<string, number>();
     for (const a of allocations) {
       // approved deductions (TDS / deduction) settle the bill just like money
@@ -132,9 +148,26 @@ export async function OutstandingReceivableTab({
       };
     });
 
+    const officeRows = office.map((o) => {
+      const net = toNum(String(o.amount));
+      const received = settledByRef.get(o.id) ?? 0;
+      const outstanding = Math.round((net - received) * 100) / 100;
+      return {
+        refNo: o.refNo || o.voucherNo,
+        date: o.date.toISOString(),
+        kind: "OFFICE_INCOME",
+        party: (o.partyId && partyById.get(o.partyId)) || "",
+        netTotal: net,
+        received,
+        outstanding,
+        status: status(net, outstanding),
+        link: `accounts/office?id=${o.id}`,
+      };
+    });
+
     return {
       parties,
-      rows: [...invoiceRows, ...slipRows]
+      rows: [...invoiceRows, ...slipRows, ...officeRows]
         .filter((r) => r.netTotal > 0)
         .filter((r) => showClosed || r.outstanding > 0.009)
         .sort((a, b) => a.date.localeCompare(b.date)),
@@ -159,6 +192,7 @@ export async function OutstandingReceivableTab({
       options: [
         { value: "INVOICE", label: "Customer Invoices" },
         { value: "BROKER_SLIP", label: "Broker Slips" },
+        { value: "OFFICE_INCOME", label: "Office Income" },
       ],
     },
     {

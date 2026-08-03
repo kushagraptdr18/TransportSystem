@@ -7,6 +7,7 @@ import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
+import { settledByRef } from "@/lib/settlement";
 
 /**
  * Office Income & Expense — automatic double-entry posting (refType
@@ -82,6 +83,34 @@ export async function saveOfficeTransaction(
         };
       }
 
+      // Once a voucher has settled against this entry, the entry can no longer
+      // move underneath it: dropping the amount below what is already settled
+      // would leave a negative outstanding, and switching a credit entry to
+      // cash/bank would pay it a second time. Release the voucher first.
+      if (d.id) {
+        const settledHere = await settledByRef(tx, {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          refTypes: [d.txnType === "EXPENSE" ? "OFFICE_EXPENSE" : "OFFICE_INCOME"],
+          refIds: [d.id],
+        });
+        const settled = settledHere.get(d.id) ?? 0;
+        if (settled > 0.009) {
+          if (d.paymentMode) {
+            return {
+              ok: false as const,
+              error: `${settled.toFixed(2)} has already been settled against this entry by a voucher. Remove that allocation before marking it paid in cash/bank.`,
+            };
+          }
+          if (d.amount < settled - 0.009) {
+            return {
+              ok: false as const,
+              error: `Amount cannot be less than the ${settled.toFixed(2)} already settled against this entry.`,
+            };
+          }
+        }
+      }
+
       const date = new Date(`${d.date}T00:00:00`);
       const values = {
         date,
@@ -104,7 +133,13 @@ export async function saveOfficeTransaction(
         const before = await tx.officeTransaction.findFirstOrThrow({
           where: { id: d.id, deletedAt: null },
         });
-        const updated = await tx.officeTransaction.update({ where: { id: d.id }, data: values });
+        const updated = await tx.officeTransaction.update({
+          where: { id: d.id },
+          // a blank reference means "use the voucher number" — persisted rather
+          // than derived, so the register, the voucher grid and the ledger all
+          // read one stored value instead of three copies of the same rule
+          data: { ...values, refNo: values.refNo || before.voucherNo },
+        });
         id = updated.id;
         voucherNo = updated.voucherNo;
         await reverseLedger(tx, "OFFICE_TXN", id);
@@ -125,6 +160,7 @@ export async function saveOfficeTransaction(
             voucherNo,
             createdById: session.userId,
             ...values,
+            refNo: values.refNo || voucherNo,
           },
         });
         id = created.id;
@@ -246,6 +282,20 @@ export async function deleteOfficeTransaction(
       const before = await tx.officeTransaction.findFirstOrThrow({
         where: { id, deletedAt: null },
       });
+      // deleting a settled entry would leave the voucher allocation pointing at
+      // nothing, and the money it settled unaccounted for on both sides
+      const settled = await settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: [before.txnType === "EXPENSE" ? "OFFICE_EXPENSE" : "OFFICE_INCOME"],
+        refIds: [id],
+      });
+      const amount = settled.get(id) ?? 0;
+      if (amount > 0.009) {
+        throw new Error(
+          `${amount.toFixed(2)} has been settled against ${before.refNo || before.voucherNo} by a voucher. Delete or edit that voucher first.`
+        );
+      }
       await tx.officeTransaction.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "OFFICE_TXN", id);
       await audit(tx, session, {
