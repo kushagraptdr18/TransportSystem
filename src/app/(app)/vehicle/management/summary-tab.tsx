@@ -48,9 +48,35 @@ export async function VehicleExpenseSummaryTab({
       },
       include: { voucher: true },
     });
-    const [vehicles, heads] = await Promise.all([
+    const [vehicles, heads, loanEmis] = await Promise.all([
       tx.vehicle.findMany(),
       tx.accountHead.findMany(),
+      // vehicle-loan instalments count as vehicle cost in the period paid,
+      // exactly as the Vehicle P&L shows them — full EMI, from Finance & Loans
+      tx.loanEmi.findMany({
+        where: {
+          deletedAt: null,
+          ...(searchParams.date_from || searchParams.date_to
+            ? {
+                payDate: {
+                  ...(searchParams.date_from
+                    ? { gte: new Date(searchParams.date_from + "T00:00:00") }
+                    : {}),
+                  ...(searchParams.date_to
+                    ? { lte: new Date(searchParams.date_to + "T23:59:59") }
+                    : {}),
+                },
+              }
+            : {}),
+          loan: {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            deletedAt: null,
+            vehicleId: { not: null },
+          },
+        },
+        include: { loan: true },
+      }),
     ]);
     const vehicleById = new Map(vehicles.map((v) => [v.id, v]));
     const headName = new Map(heads.map((h) => [h.id, h.name]));
@@ -94,6 +120,20 @@ export async function VehicleExpenseSummaryTab({
       const amt = toNum(String(it.amount));
       if (it.voucher.txnType === "INCOME") b.income += amt;
       else b.expense += amt;
+      b.count += 1;
+      buckets.set(key, b);
+    }
+    for (const emi of loanEmis) {
+      const vehicleId = emi.loan.vehicleId!;
+      let key: string;
+      if (group === "HEAD") key = "EMI (Loan Instalments)";
+      else if (group === "MONTH") key = emi.payDate.toISOString().slice(0, 7);
+      else if (group === "TYPE") {
+        const ot = vehicleById.get(vehicleId)?.ownershipType ?? "";
+        key = OWNERSHIP_LABEL[ot] ?? "Unknown";
+      } else key = vehicleById.get(vehicleId)?.number ?? "(unknown vehicle)";
+      const b = buckets.get(key) ?? { expense: 0, income: 0, count: 0, link: "finance" };
+      b.expense += toNum(String(emi.total));
       b.count += 1;
       buckets.set(key, b);
     }

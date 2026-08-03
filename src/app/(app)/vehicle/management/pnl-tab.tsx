@@ -23,6 +23,12 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * trip and commission, mamul and courier are suffered on it, so freight alone
  * overstates what the vehicle made. It is read live through the TripDoc links
  * so editing a chalan updates this report with nothing to re-save.
+ *
+ * EMI Expenses is its own row: the FULL instalment (principal + interest +
+ * penalty + charges) paid in the period counts as the financing cost of
+ * operating the vehicle. This is profitability analysis only — the ledger
+ * still posts principal against the loan liability, and a relative vehicle's
+ * instalment still transfers to the owner's ledger as before.
  */
 export async function VehiclePnlTab({
   searchParams,
@@ -126,7 +132,10 @@ export async function VehiclePnlTab({
       ]);
     // live trip income from the linked chalans / broker slips
     const docTotals = await tripGrandTotals(tx, trips.map((t) => t.id));
+    // finance company names for the EMI drill-down
+    const parties = await tx.party.findMany({ select: { id: true, name: true } });
     return {
+      parties,
       vehicles,
       trips,
       drivers,
@@ -143,6 +152,7 @@ export async function VehiclePnlTab({
   });
 
   const {
+    parties,
     vehicles,
     trips,
     drivers,
@@ -212,18 +222,49 @@ export async function VehiclePnlTab({
       r2((vehExpByVehicle.get(it.vehicleId) ?? 0) + toNum(String(it.amount)))
     );
   }
-  // A vehicle loan's cost to the fleet is the interest and charges on each
-  // instalment, not the whole EMI: repaying principal settles a liability, it
-  // does not consume anything. Counting the principal would show a vehicle
-  // losing money simply for paying off its own finance.
+  // EMI Expenses — its own P&L row. For profitability analysis the FULL
+  // instalment (principal + interest + penalty + charges) is the financing
+  // cost of running the vehicle in the period it was paid; the ledger keeps
+  // treating principal as a liability repayment. Sourced only from the
+  // Finance & Loan module — never entered here.
+  const partyName = new Map(parties.map((p) => [p.id, p.name]));
+  const emiByVehicle = new Map<string, number>();
+  const emiDetailsByVehicle = new Map<
+    string,
+    {
+      payDate: string;
+      loanId: string;
+      loanNo: string;
+      financeCompany: string;
+      principal: number;
+      interest: number;
+      penalty: number;
+      total: number;
+      voucherNo: string;
+    }[]
+  >();
   for (const emi of loanEmis) {
     const vehicleId = emi.loan.vehicleId;
     if (!vehicleId) continue;
-    const cost = r2(
-      toNum(String(emi.interest)) + toNum(String(emi.penalty)) + toNum(String(emi.otherAmt))
-    );
-    if (cost <= 0) continue;
-    vehExpByVehicle.set(vehicleId, r2((vehExpByVehicle.get(vehicleId) ?? 0) + cost));
+    const principal = toNum(String(emi.principal));
+    const interest = toNum(String(emi.interest));
+    const penalty = r2(toNum(String(emi.penalty)) + toNum(String(emi.otherAmt)));
+    const total = r2(principal + interest + penalty);
+    if (total <= 0) continue;
+    emiByVehicle.set(vehicleId, r2((emiByVehicle.get(vehicleId) ?? 0) + total));
+    const list = emiDetailsByVehicle.get(vehicleId) ?? [];
+    list.push({
+      payDate: emi.payDate.toISOString(),
+      loanId: emi.loanId,
+      loanNo: emi.loan.loanNo,
+      financeCompany: partyName.get(emi.loan.partyId) ?? "",
+      principal,
+      interest,
+      penalty,
+      total,
+      voucherNo: emi.voucherNo ?? "",
+    });
+    emiDetailsByVehicle.set(vehicleId, list);
   }
 
   const rows: VehiclePnlRow[] = vehicles
@@ -294,6 +335,7 @@ export async function VehiclePnlTab({
       const tripExpenses = r2(pnlTrips.reduce((s, t) => s + t.approved, 0));
       const vehicleExpenses = vehExpByVehicle.get(v.id) ?? 0;
       const driverSalary = salaryByVehicle.get(v.id) ?? 0;
+      const emi = emiByVehicle.get(v.id) ?? 0;
       return {
         id: v.id,
         vehicle: v.number,
@@ -303,11 +345,13 @@ export async function VehiclePnlTab({
         tripExpenses,
         vehicleExpenses,
         driverSalary,
-        net: r2(freight - tripExpenses - vehicleExpenses - driverSalary),
+        emi,
+        emis: emiDetailsByVehicle.get(v.id) ?? [],
+        net: r2(freight - tripExpenses - vehicleExpenses - driverSalary - emi),
         trips: pnlTrips,
       };
     })
-    .filter((r) => r.tripCount > 0 || r.vehicleExpenses > 0 || r.driverSalary > 0);
+    .filter((r) => r.tripCount > 0 || r.vehicleExpenses > 0 || r.driverSalary > 0 || r.emi > 0);
 
   return (
     <div className="space-y-4">

@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye, Pencil, Plus, Printer, Trash2 } from "lucide-react";
+import { Eye, FileSearch, Pencil, Plus, Printer, Trash2 } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -123,6 +123,15 @@ export function TripRegisterClient({
             onClick={() => window.open(`/print/trip/${row.original.id}`, "_blank")}
           >
             <Printer className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="View Complete Trip Summary (360°)"
+            onClick={() => window.open(`/print/trip-summary/${row.original.id}`, "_blank")}
+          >
+            <FileSearch className="h-4 w-4" />
           </Button>
           {canDelete && (
             <Button

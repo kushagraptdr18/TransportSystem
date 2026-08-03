@@ -41,6 +41,19 @@ export interface PnlTrip {
   vehicleExpenses: { date: string; head: string; voucherNo: string; amount: number }[];
 }
 
+export interface PnlEmi {
+  payDate: string;
+  loanId: string;
+  loanNo: string;
+  financeCompany: string;
+  principal: number;
+  interest: number;
+  /** penalty + other charges on the instalment */
+  penalty: number;
+  total: number;
+  voucherNo: string;
+}
+
 export interface VehiclePnlRow {
   id: string;
   vehicle: string;
@@ -50,6 +63,9 @@ export interface VehiclePnlRow {
   tripExpenses: number;
   vehicleExpenses: number;
   driverSalary: number;
+  /** full instalments (principal + interest + charges) paid in the period */
+  emi: number;
+  emis: PnlEmi[];
   net: number;
   trips: PnlTrip[];
 }
@@ -71,11 +87,12 @@ export function VehiclePnlClient({
 }) {
   const [vehicleOf, setVehicleOf] = React.useState<VehiclePnlRow | null>(null);
   const [tripOf, setTripOf] = React.useState<{ vehicle: VehiclePnlRow; trip: PnlTrip } | null>(null);
+  const [emiOf, setEmiOf] = React.useState<VehiclePnlRow | null>(null);
 
   const money = (
     key: keyof Pick<
       VehiclePnlRow,
-      "freight" | "tripExpenses" | "vehicleExpenses" | "driverSalary" | "net"
+      "freight" | "tripExpenses" | "vehicleExpenses" | "driverSalary" | "emi" | "net"
     >,
     header: string
   ): ColumnDef<VehiclePnlRow> => ({
@@ -123,6 +140,30 @@ export function VehiclePnlClient({
     money("tripExpenses", "Trip Expenses"),
     money("vehicleExpenses", "Vehicle Expenses"),
     money("driverSalary", "Driver Salary"),
+    {
+      accessorKey: "emi",
+      header: "EMI Expenses",
+      cell: ({ row }) =>
+        row.original.emi > 0 ? (
+          <button
+            type="button"
+            className="tabular-nums text-primary underline-offset-2 hover:underline"
+            title="View EMI instalments"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEmiOf(row.original);
+            }}
+          >
+            {formatMoney(row.original.emi)}
+          </button>
+        ) : (
+          <span>{formatMoney(0)}</span>
+        ),
+      meta: {
+        numeric: true,
+        total: (rs) => formatMoney(rs.reduce((s, r) => s + r.emi, 0)),
+      } satisfies DataTableColumnMeta<VehiclePnlRow>,
+    },
     money("net", "Net Profit / Loss"),
   ];
 
@@ -142,6 +183,7 @@ export function VehiclePnlClient({
             { header: "Trip Expenses", key: "tripExpenses", numeric: true },
             { header: "Vehicle Expenses", key: "vehicleExpenses", numeric: true },
             { header: "Driver Salary", key: "driverSalary", numeric: true },
+            { header: "EMI Expenses", key: "emi", numeric: true },
             { header: "Net Profit / Loss", key: "net", numeric: true },
           ]}
         />
@@ -149,7 +191,9 @@ export function VehiclePnlClient({
       <p className="text-sm text-muted-foreground">
         Own &amp; Relative vehicles only. P&amp;L = Trip Freight − Company Approved Trip Expenses −
         Vehicle Expenses (Diesel &amp; Toll excluded — already in trips) − Booked Driver Salary
-        (payment status never matters). Click a vehicle number to drill into its trips.
+        (payment status never matters) − EMI Expenses (full instalments paid in the period,
+        fetched from Finance &amp; Loans). Click a vehicle number to drill into its trips, or the
+        EMI amount for instalment details.
       </p>
       <FilterBar
         filters={[
@@ -187,7 +231,8 @@ export function VehiclePnlClient({
               {formatMoney(vehicleOf?.freight ?? 0)} − Trip Exp{" "}
               {formatMoney(vehicleOf?.tripExpenses ?? 0)} − Vehicle Exp{" "}
               {formatMoney(vehicleOf?.vehicleExpenses ?? 0)} − Booked Salary{" "}
-              {formatMoney(vehicleOf?.driverSalary ?? 0)}
+              {formatMoney(vehicleOf?.driverSalary ?? 0)} − EMI{" "}
+              {formatMoney(vehicleOf?.emi ?? 0)}
             </DialogDescription>
           </DialogHeader>
           <div className="overflow-x-auto">
@@ -252,6 +297,119 @@ export function VehiclePnlClient({
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setVehicleOf(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* -------- EMI drill-down: instalments in the period -------- */}
+      <Dialog open={!!emiOf} onOpenChange={(o) => !o && setEmiOf(null)}>
+        <DialogContent className="max-h-[95vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>EMI Expenses — {emiOf?.vehicle}</DialogTitle>
+            <DialogDescription>
+              Instalments paid in the selected period, fetched from Finance &amp; Loans. The
+              full EMI (principal + interest + charges) is the financing cost of operating the
+              vehicle; accounting entries are unchanged.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr>
+                  {[
+                    "Payment Date",
+                    "Loan No",
+                    "Finance Company",
+                    "Principal",
+                    "Interest",
+                    "Penalty / Charges",
+                    "Total EMI",
+                    "Voucher No",
+                    "",
+                  ].map((h) => (
+                    <th key={h} className="border px-1.5 py-1 text-left font-semibold">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {emiOf?.emis.map((e, i) => (
+                  <tr key={i}>
+                    <td className="border px-1.5 py-1">{formatDate(e.payDate)}</td>
+                    <td className="border px-1.5 py-1">{e.loanNo}</td>
+                    <td className="border px-1.5 py-1">{e.financeCompany}</td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(e.principal)}
+                    </td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(e.interest)}
+                    </td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(e.penalty)}
+                    </td>
+                    <td className="border px-1.5 py-1 text-right font-medium tabular-nums">
+                      {formatMoney(e.total)}
+                    </td>
+                    <td className="border px-1.5 py-1">{e.voucherNo || "—"}</td>
+                    <td className="whitespace-nowrap border px-1 py-0.5">
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" asChild>
+                        <a href={`/print/loan/${e.loanId}`} target="_blank" rel="noreferrer">
+                          Loan Entry
+                        </a>
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" asChild>
+                        <a href="/accounts/vouchers/register" target="_blank" rel="noreferrer">
+                          Voucher
+                        </a>
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+                {!emiOf?.emis.length && (
+                  <tr>
+                    <td colSpan={9} className="border px-1.5 py-2 text-center text-muted-foreground">
+                      No instalments paid in this period.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              {!!emiOf?.emis.length && (
+                <tfoot>
+                  <tr className="font-semibold">
+                    <td colSpan={3} className="border px-1.5 py-1">
+                      Total
+                    </td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(emiOf.emis.reduce((s, e) => s + e.principal, 0))}
+                    </td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(emiOf.emis.reduce((s, e) => s + e.interest, 0))}
+                    </td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(emiOf.emis.reduce((s, e) => s + e.penalty, 0))}
+                    </td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(emiOf.emi)}
+                    </td>
+                    <td colSpan={2} className="border" />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => window.print()}>
+              Print
+            </Button>
+            <Button size="sm" asChild>
+              <a href="/finance" target="_blank" rel="noreferrer">
+                Open Finance &amp; Loans
+              </a>
+            </Button>
+            <Button variant="outline" onClick={() => setEmiOf(null)}>
               Close
             </Button>
           </DialogFooter>
@@ -404,6 +562,11 @@ export function VehiclePnlClient({
             <Button variant="outline" size="sm" asChild>
               <a href={`/print/trip/${tripOf?.trip.id}`} target="_blank" rel="noreferrer">
                 Print Trip Sheet
+              </a>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <a href={`/print/trip-summary/${tripOf?.trip.id}`} target="_blank" rel="noreferrer">
+                360° Summary
               </a>
             </Button>
             <Button size="sm" asChild>

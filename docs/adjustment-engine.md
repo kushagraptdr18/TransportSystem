@@ -187,9 +187,15 @@ which vehicle will use it. A purchase therefore no longer has to name a vehicle:
   `qty`, and shows up as an *unallocated vehicle expense*.
 - **Allocation** (`/vehicle/management?tab=allocation`): hands quantity and
   amount to one or many vehicles, each with its own **allocation date** and
-  remarks. It writes `VehicleExpenseItem` rows and **posts nothing to the
-  ledger** — the purchase already carries the accounting, so Trial Balance and
-  P&L never double-count. Amount and quantity are both capped at what is left.
+  remarks. It writes `VehicleExpenseItem` rows. For a COMPANY vehicle it
+  **posts nothing to the ledger** — the purchase already carries the
+  accounting, so Trial Balance and P&L never double-count. For a **RELATIVE
+  vehicle** (4 Aug 2026) the allocated share transfers to the owner on the
+  allocation date — owner Dr / original expense head Cr, refType
+  `VEH_EXP_ALLOC` keyed by the item id, the same pair a vehicle-wise purchase
+  posts — so the company expense nets down and the owner's settlement payable
+  reduces. Undoing an allocation line (or deleting the purchase) reverses only
+  its own entries. Amount and quantity are both capped at what is left.
 - **`VehicleExpenseItem.allocDate` is now the date every vehicle-cost reader
   uses** (vehicle P&L, expense summary, both trip-sheet fetchers). A chain bought
   on the 1st and fitted on the 8th hits that vehicle's P&L on the 8th and leaves
@@ -246,10 +252,15 @@ pay each EMI, close it.
   screen in; every figure stays editable, because a lender's statement rarely
   matches a formula to the rupee. The last instalment is capped at what is left
   so a fixed EMI can never overpay the loan.
-- **Vehicle loans:** the instalment's interest, penalty and charges are the cost
-  to the vehicle and flow into Vehicle P&L on the PAYMENT date. Principal is
-  deliberately excluded — repaying a liability consumes nothing, and counting it
-  would show a vehicle losing money for paying off its own finance.
+- **Vehicle loans:** since 4 Aug 2026 the **full instalment** (principal +
+  interest + penalty + charges) appears in Vehicle P&L as its own "EMI
+  Expenses" row on the PAYMENT date — a profitability-analysis decision: the
+  whole EMI is the financing cost of running that vehicle. This is analysis
+  only; the LEDGER is unchanged (principal still settles the loan liability,
+  interest/penalty/charges post to their heads, and Trial Balance / company
+  P&L are untouched). The Vehicle Cost Summary mirrors the same figure so the
+  two reports can never disagree. EMIs come only from Finance & Loans — no
+  manual entry in the report.
 - **Relative vehicles** reuse the existing rule: the whole instalment transfers
   to the relative owner's ledger, exactly as diesel and every expense head do.
 - Deleting an instalment removes its voucher and postings and reopens the loan;

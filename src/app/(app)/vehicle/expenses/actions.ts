@@ -310,6 +310,11 @@ export async function deleteVehicleExpenseTxn(
       });
       await tx.vehicleExpenseVoucher.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "VEHICLE_EXPENSE", id);
+      // bulk-purchase allocations post relative-owner transfers under their
+      // own item ids — reverse those too, or the owner keeps a phantom debit
+      for (const item of before.items) {
+        await reverseLedger(tx, "VEH_EXP_ALLOC", item.id);
+      }
       await audit(tx, session, { entity: "VehicleExpenseVoucher", entityId: id, action: "DELETE", before });
     });
     revalidatePath(REVALIDATE);

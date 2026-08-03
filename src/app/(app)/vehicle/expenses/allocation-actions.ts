@@ -8,6 +8,7 @@ import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
+import { postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
 
 /**
  * Vehicle Expense Allocation.
@@ -15,11 +16,17 @@ import { toNum } from "@/lib/utils";
  * Stock bought in bulk — tyres, chains, batteries, spares — is booked once as a
  * purchase (expense head Dr / supplier Cr) with no vehicle named. It sits as an
  * UNALLOCATED vehicle expense until vehicles actually consume it; allocating
- * writes one VehicleExpenseItem per vehicle and posts NOTHING to the ledger,
- * because the money was already accounted for at purchase. Allocation only moves
- * cost into the vehicle registers, and it does so on the allocation date, so a
- * chain bought on the 1st and fitted on the 8th reaches that vehicle's P&L on
- * the 8th.
+ * writes one VehicleExpenseItem per vehicle. For a COMPANY vehicle it posts
+ * nothing — the purchase already carries the accounting and allocation is an
+ * internal cost transfer on the allocation date, so a chain bought on the 1st
+ * and fitted on the 8th reaches that vehicle's P&L on the 8th.
+ *
+ * A RELATIVE vehicle's share, however, is not the company's cost: exactly like
+ * a vehicle-wise purchase (see expenses/actions.ts) the allocated amount
+ * transfers OUT of the expense head and ONTO the relative owner's ledger
+ * (owner Dr / expense head Cr) on the allocation date. Each transfer posts
+ * under its own item id (refType VEH_EXP_ALLOC) so undoing one allocation
+ * line reverses only its own entries.
  */
 
 const REVALIDATE = "/vehicle/management";
@@ -91,11 +98,16 @@ export async function allocateVehicleExpense(
 
       const vehicles = await tx.vehicle.findMany({
         where: { id: { in: d.rows.map((r) => r.vehicleId) } },
-        select: { id: true },
+        select: { id: true, number: true, ownershipType: true, ownerId: true },
       });
       if (vehicles.length !== uniq.size) {
         return { ok: false as const, error: "One or more vehicles were not found." };
       }
+      const vehicleById = new Map(vehicles.map((v) => [v.id, v]));
+      const head = await tx.accountHead.findUniqueOrThrow({
+        where: { id: left.voucher.headId },
+        select: { name: true },
+      });
 
       const created = await Promise.all(
         d.rows.map((r) =>
@@ -112,8 +124,40 @@ export async function allocateVehicleExpense(
           })
         )
       );
-      // no postLedger here on purpose — the purchase already carries the
-      // accounting; allocation is an internal cost transfer
+      // Company vehicles: no postLedger on purpose — the purchase already
+      // carries the accounting; allocation is an internal cost transfer.
+      // Relative vehicles: the allocated share stops being a company expense
+      // the moment it is allocated — transfer it to the owner's ledger, the
+      // same pair the vehicle-wise purchase posts (owner Dr / expense head Cr).
+      const entries: LedgerPostEntry[] = [];
+      for (let i = 0; i < created.length; i++) {
+        const item = created[i];
+        const v = vehicleById.get(item.vehicleId);
+        if (v?.ownershipType !== "RELATIVE" || !v.ownerId) continue;
+        const common = {
+          date: item.allocDate,
+          refType: "VEH_EXP_ALLOC",
+          refId: item.id,
+          refNo: left.voucher.refNo || left.voucher.voucherNo,
+        };
+        entries.push(
+          {
+            ...common,
+            partyId: v.ownerId,
+            side: "DEBIT",
+            amount: d.rows[i].amount,
+            narration: `${head.name} for relative vehicle ${v.number} — transferred to owner (allocation of ${left.voucher.voucherNo})`,
+          },
+          {
+            ...common,
+            accountHeadId: left.voucher.headId,
+            side: "CREDIT",
+            amount: d.rows[i].amount,
+            narration: `${head.name} ${v.number} — shifted to relative owner ledger (allocation of ${left.voucher.voucherNo})`,
+          }
+        );
+      }
+      if (entries.length) await postLedger(tx, session, entries);
       await audit(tx, session, {
         entity: "VehicleExpenseAllocation",
         entityId: d.voucherId,
@@ -138,6 +182,8 @@ export async function deleteVehicleExpenseAllocation(
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.vehicleExpenseItem.findFirstOrThrow({ where: { id: itemId } });
       await tx.vehicleExpenseItem.delete({ where: { id: itemId } });
+      // undo the relative-owner transfer this line may have posted
+      await reverseLedger(tx, "VEH_EXP_ALLOC", itemId);
       await audit(tx, session, {
         entity: "VehicleExpenseAllocation",
         entityId: before.voucherId,
