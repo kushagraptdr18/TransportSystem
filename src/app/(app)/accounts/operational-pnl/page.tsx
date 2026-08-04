@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
- * Operational Profit & Loss — the transport business only.
+ * Company Operational Profit & Loss — the transport business only.
  *
  * Revenue: LR freight already billed (Lr.total via InvoiceLr on live
  * invoices — invoice ADDITIONAL charges are deliberately NOT LR revenue),
@@ -19,10 +19,11 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * slips. Expenses: the owner side of chalans and broker slips (lorry hire),
  * plus every operational ledger head.
  *
- * Ledger sections INCLUDE: chalan / broker-slip operational charge heads
- * (Detention, ODC, Fine Slip, LD, Shortage, Commission, Mamool, Courier,
- * Round Off, Other), everything from Office Management, and non-vehicle
- * loan interest from Finance.
+ * Ledger sections INCLUDE: Office Management entries and non-vehicle loan
+ * interest from Finance. NOTHING from chalans (FleetOps) or broker slips
+ * (either side) enters the ledger sections — those are vehicle-operation
+ * documents, and the Lorry Hire section already carries them at GROSS
+ * freight (before any deduction).
  *
  * Excluded on purpose:
  *  - Vehicle-module entries (vehicle expenses, allocations, AdBlue, trip
@@ -51,15 +52,20 @@ const EXCLUDED_REF_TYPES = [
   "DRIVER_SALARY",
   "DRIVER_SALARY_PAY",
   "DRIVER_SHORTAGE",
-  // relative-vehicle expense transfer: its debit side is a vehicle-module
-  // entry (excluded above), so counting only the credit would inflate income
+  // FleetOps (chalan) & broker slip — BOTH sides: vehicle-operation
+  // documents, already carried gross in the Lorry Hire section; none of
+  // their ledger legs (advances included) belong in the head sections
+  "CHALAN",
+  "CHALAN_ADVANCE",
+  "CHALAN_BALANCE",
+  "CHALAN_BALANCE_ADJ",
+  "FREIGHT_CHALLAN",
+  "BROKER_SLIP",
+  "BROKER_SLIP_ADVANCE",
   "BROKER_SLIP_EXP_TRANSFER",
+  "BROKER_ENTRY",
 ];
-// NOTE: chalan / broker-slip refTypes are deliberately INCLUDED — their head
-// legs are exactly the operational charges (Detention, ODC, Fine Slip, LD,
-// Shortage, Commission, Mamool, Courier, Round Off, Other) that belong in
-// the ledger sections; the freight legs hit parties, not heads, so they
-// never enter this aggregation. Office-module entries are included too.
+// Office-module entries stay included.
 
 // TDS Payable / Receivable are liability & asset ledgers, never operational
 // income or expense; Vehicle EMI Expense is financing; Freight Income IS the
@@ -140,11 +146,13 @@ export default async function OperationalPnlPage({
       }),
       tx.brokerSlip.aggregate({
         where: { ...scope, deletedAt: null, ...(dateWhere ? { slipDate: dateWhere } : {}) },
-        _sum: { pNetAmt: true, vNetAmt: true },
+        // owner side at GROSS freight (vChalanAmt) — before any deduction
+        _sum: { pNetAmt: true, vChalanAmt: true },
       }),
       tx.chalan.aggregate({
         where: { ...scope, deletedAt: null, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
-        _sum: { grandTotal: true },
+        // gross chalan amount — before commission / TDS / other deductions
+        _sum: { totalChalanAmt: true },
       }),
       tx.accountHead.findMany({ select: { id: true, name: true, kind: true } }),
       tx.ledgerEntry.groupBy({
@@ -180,9 +188,9 @@ export default async function OperationalPnlPage({
   const brokerRevenue = r2(toNum(String(slips._sum.pNetAmt ?? 0)));
   const totalRevenue = r2(billedLr + pendingLr + brokerRevenue);
 
-  // ---- lorry hire ----
-  const chalanOwner = r2(toNum(String(chalans._sum.grandTotal ?? 0)));
-  const brokerOwner = r2(toNum(String(slips._sum.vNetAmt ?? 0)));
+  // ---- lorry hire (GROSS freight, before any deduction) ----
+  const chalanOwner = r2(toNum(String(chalans._sum.totalChalanAmt ?? 0)));
+  const brokerOwner = r2(toNum(String(slips._sum.vChalanAmt ?? 0)));
   const lorryHire = r2(chalanOwner + brokerOwner);
 
   // ---- ledger heads (operational only) ----
@@ -243,7 +251,7 @@ export default async function OperationalPnlPage({
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="page-title">Operational Profit &amp; Loss</h1>
+      <h1 className="page-title">Company Operational Profit &amp; Loss</h1>
       <p className="text-sm text-muted-foreground">
         Transport operations only — vehicle-module costs, loan EMIs and finance entries are
         excluded (see Vehicle P&amp;L and Finance for those). Invoice additional charges are
@@ -269,7 +277,7 @@ export default async function OperationalPnlPage({
         </Card>
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-sm text-muted-foreground">Operational Profit / Loss</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">Company Operational Profit / Loss</CardTitle>
           </CardHeader>
           <CardContent
             className={`text-2xl font-bold tabular-nums ${profit >= 0 ? "text-emerald-600" : "text-destructive"}`}
@@ -316,8 +324,8 @@ export default async function OperationalPnlPage({
               <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
                 Lorry Hire Expenses
               </div>
-              {line("Challan Owner Expenses", chalanOwner)}
-              {line("Broker Owner Expenses (slip owner side)", brokerOwner)}
+              {line("Challan Owner Expenses (gross freight)", chalanOwner)}
+              {line("Broker Owner Expenses (gross freight, slip owner side)", brokerOwner)}
               {line("Total Lorry Hire Expenses", lorryHire, true)}
             </div>
             <div>
@@ -346,7 +354,7 @@ export default async function OperationalPnlPage({
           <div
             className={`mt-1 flex justify-between border-t pt-1 text-base font-bold ${profit >= 0 ? "text-emerald-600" : "text-destructive"}`}
           >
-            <span>Operational Profit / Loss</span>
+            <span>Company Operational Profit / Loss</span>
             <span className="tabular-nums">{money(profit)}</span>
           </div>
         </CardContent>
@@ -354,7 +362,7 @@ export default async function OperationalPnlPage({
 
       {/* ---- head detail with export ---- */}
       <SimpleReport
-        title="Operational ledger heads (vehicle-module, finance and document-echo entries excluded)"
+        title="Operational ledger heads (vehicle-module, chalan/broker-slip and vehicle-finance entries excluded)"
         columns={[
           { key: "head", header: "Ledger Head" },
           { key: "kind", header: "Kind", kind: "badge" },
