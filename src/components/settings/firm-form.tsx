@@ -34,6 +34,7 @@ export interface FirmFormValues {
   sgstPct: number;
   igstPct: number;
   defaultTdsPct: number;
+  podFollowUpDays: number;
   defaultBankPartyId: string;
   bankName: string;
   bankAccount: string;
@@ -169,6 +170,7 @@ export function FirmForm({
       sgstPct: Number(values.sgstPct) || 0,
       igstPct: Number(values.igstPct) || 0,
       defaultTdsPct: Number(values.defaultTdsPct) || 0,
+      podFollowUpDays: Math.max(1, Math.round(Number(values.podFollowUpDays) || 15)),
     });
     if (res.ok) toast({ title: "Firm settings saved" });
     else toast({ variant: "destructive", title: "Save failed", description: res.error });
@@ -283,6 +285,9 @@ export function FirmForm({
               onChange={(v) => setValue("defaultBankPartyId", v ?? "")}
               placeholder="Select bank..."
             />
+          </Field>
+          <Field label="POD Follow-up After (days from LR date)">
+            <Input type="number" step="1" {...register("podFollowUpDays", { valueAsNumber: true })} />
           </Field>
         </CardContent>
       </Card>

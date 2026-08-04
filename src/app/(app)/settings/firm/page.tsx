@@ -52,6 +52,7 @@ export default async function FirmSettingsPage() {
     sgstPct: toNum(String(firm.sgstPct)),
     igstPct: toNum(String(firm.igstPct)),
     defaultTdsPct: toNum(String(firm.defaultTdsPct)),
+    podFollowUpDays: firm.podFollowUpDays ?? 15,
     defaultBankPartyId: s(firm.defaultBankPartyId),
     bankName: s(firm.bankName),
     bankAccount: s(firm.bankAccount),

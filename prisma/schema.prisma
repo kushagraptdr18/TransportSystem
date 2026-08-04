@@ -237,6 +237,8 @@ model Firm {
   smtpPass           String?
   defaultBankPartyId String?
   defaultTdsPct      Decimal  @default(1) @db.Decimal(5, 2)
+  /// POD follow-up: an LR enters the pending list this many days after LR date
+  podFollowUpDays    Int      @default(15)
   isActive           Boolean  @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt

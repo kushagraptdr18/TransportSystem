@@ -88,6 +88,7 @@ export const NAV: NavGroup[] = [
     items: [
       { label: "POD Confirmation", href: "/pod" },
       { label: "POD Register", href: "/pod/register" },
+      { label: "POD Follow-up", href: "/pod/follow-up" },
     ],
   },
   {
