@@ -22,11 +22,18 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * Excluded on purpose:
  *  - Vehicle-module entries (vehicle expenses, allocations, AdBlue, trip
  *    urea, driver salary/advance/FNF/shortage) — costed in Vehicle P&L.
- *  - Finance entries (loan disbursements, the "Vehicle EMI Expense" head).
+ *  - EVERY Finance-module entry: loan disbursements, every EMI voucher,
+ *    every Other Receipt/Payment voucher, and the "Vehicle EMI Expense"
+ *    head — financing is never operational.
  *  - Chalan / broker-slip ledger legs — those documents are already counted
  *    at document value, so their ledger echoes would double-count.
  *  - The "Freight Income" head — that is the billed revenue itself; invoice
  *    ADDITIONAL charge heads stay in ledger income, per their own heads.
+ *
+ * Ledger heads classify AUTOMATICALLY by their DR/CR balance in the period:
+ * net credit → Ledger Head Income, net debit → Ledger Head Expense. No
+ * manual mapping — a new head appears in the right section the first time
+ * it is used.
  */
 
 const EXCLUDED_REF_TYPES = [
@@ -75,6 +82,24 @@ export default async function OperationalPnlPage({
   const data = await withTenant(session.tenantId, async (tx) => {
     const scope = { firmId: session.firmId, fyId: session.fyId };
 
+    // finance postings ride the generic VOUCHER refType, so the module's
+    // vouchers (EMIs + other receipts/payments) are excluded by id
+    const [emiVouchers, financeTxns] = await Promise.all([
+      tx.loanEmi.findMany({
+        where: { ...scope, deletedAt: null, voucherId: { not: null } },
+        select: { voucherId: true },
+      }),
+      tx.financeTxn.findMany({
+        where: { ...scope, voucherId: { not: null } },
+        select: { voucherId: true },
+      }),
+    ]);
+    const financeVoucherIds = Array.from(
+      new Set(
+        [...emiVouchers, ...financeTxns].map((v) => v.voucherId).filter(Boolean) as string[]
+      )
+    );
+
     const [billedLrLinks, pendingLrs, slips, chalans, heads, headSums] = await Promise.all([
       // LRs on LIVE invoices — billed in the period the BILL was made
       tx.invoiceLr.findMany({
@@ -113,6 +138,11 @@ export default async function OperationalPnlPage({
           ...scope,
           accountHeadId: { not: null },
           refType: { notIn: EXCLUDED_REF_TYPES },
+          // every voucher the Finance module created (EMI / other
+          // receipts & payments) is financial, never operational
+          ...(financeVoucherIds.length
+            ? { NOT: { refType: "VOUCHER", refId: { in: financeVoucherIds } } }
+            : {}),
           ...(dateWhere ? { date: dateWhere } : {}),
         },
         _sum: { amount: true },
@@ -152,9 +182,13 @@ export default async function OperationalPnlPage({
   for (const [headId, sums] of Array.from(perHead.entries())) {
     const head = headById.get(headId);
     if (!head || EXCLUDED_HEADS.includes(head.name)) continue;
-    const isIncome = head.kind === "INCOME";
-    const net = r2(isIncome ? sums.credit - sums.debit : sums.debit - sums.credit);
-    if (Math.abs(net) < 0.009) continue;
+    // automatic classification by the period's DR/CR balance — net credit is
+    // income, net debit is expense; no manual mapping, whatever the head's
+    // master kind says
+    const balance = r2(sums.credit - sums.debit);
+    if (Math.abs(balance) < 0.009) continue;
+    const isIncome = balance > 0;
+    const net = Math.abs(balance);
     if (isIncome) ledgerIncome = r2(ledgerIncome + net);
     else ledgerExpense = r2(ledgerExpense + net);
     headRows.push({
