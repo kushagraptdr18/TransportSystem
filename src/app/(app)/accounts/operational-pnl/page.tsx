@@ -74,6 +74,9 @@ const EXCLUDED_REF_TYPES = [
 const EXCLUDED_HEADS = [
   "Vehicle EMI Expense",
   "Freight Income",
+  // chalan / broker-slip freight accrues to this head — already counted
+  // gross in the Lorry Hire section, so it must never repeat here
+  "Lorry Hire Expense",
   "TDS Payable",
   "TDS Receivable",
 ];
@@ -147,8 +150,9 @@ export default async function OperationalPnlPage({
       }),
       tx.brokerSlip.aggregate({
         where: { ...scope, deletedAt: null, ...(dateWhere ? { slipDate: dateWhere } : {}) },
-        // owner side at GROSS freight (vChalanAmt) — before any deduction
-        _sum: { pNetAmt: true, vChalanAmt: true },
+        // BOTH sides at GROSS chalan amount — before any deduction; the
+        // deduction/charge effects live in the ledger head sections
+        _sum: { pChalanAmt: true, vChalanAmt: true },
       }),
       tx.chalan.aggregate({
         where: { ...scope, deletedAt: null, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
@@ -186,7 +190,8 @@ export default async function OperationalPnlPage({
   // ---- revenue ----
   const billedLr = r2(billedLrLinks.reduce((s, l) => s + toNum(String(l.lr.total)), 0));
   const pendingLr = r2(pendingLrs.reduce((s, l) => s + toNum(String(l.total)), 0));
-  const brokerRevenue = r2(toNum(String(slips._sum.pNetAmt ?? 0)));
+  // gross party-side amount — before TDS / commission / any deduction
+  const brokerRevenue = r2(toNum(String(slips._sum.pChalanAmt ?? 0)));
   const totalRevenue = r2(billedLr + pendingLr + brokerRevenue);
 
   // ---- lorry hire (GROSS freight, before any deduction) ----
@@ -301,7 +306,7 @@ export default async function OperationalPnlPage({
               </div>
               {line(`Billed LR Amount (${billedLrLinks.length} LRs)`, billedLr)}
               {line(`Pending LR Amount (${pendingLrs.length} LRs, bill not yet made)`, pendingLr)}
-              {line("Broker Revenue (broker slip party side)", brokerRevenue)}
+              {line("Broker Revenue (gross, broker slip party side)", brokerRevenue)}
               {line("Total Operational Revenue", totalRevenue, true)}
             </div>
             <div>
