@@ -154,3 +154,39 @@ export function resolveHead(name: string, kind: HeadKind): { name: string; kind:
 export function tdsHead(voucherType: "RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL"): string {
   return voucherType === "RECEIPT" ? "TDS Receivable" : "TDS Payable";
 }
+
+/**
+ * Module-dedicated heads the software posts to by name (outside the common
+ * registry). Together with COMMON_HEADS these are the SYSTEM heads: seeded
+ * up front so they exist before the first transaction, and protected — the
+ * Account Head master can neither rename, reclassify nor delete them,
+ * because every module's postings depend on these exact names.
+ */
+export const MODULE_HEADS: { name: string; kind: "INCOME" | "EXPENSE" }[] = [
+  { name: "Freight Income", kind: "INCOME" }, // billing
+  { name: "Lorry Hire Expense", kind: "EXPENSE" }, // chalan / broker slip owner side
+  { name: "Urea Expense", kind: "EXPENSE" }, // adblue + trip sheet
+  { name: "Driver Salary Expense", kind: "EXPENSE" }, // driver salary + F&F
+  { name: "Salary Deductions (Driver)", kind: "INCOME" },
+  { name: "Driver Recovery (F&F)", kind: "INCOME" },
+  { name: "Vehicle EMI Expense", kind: "EXPENSE" }, // vehicle loans
+  { name: "Interest Expense", kind: "EXPENSE" }, // non-vehicle loans
+  { name: "Interest Income", kind: "INCOME" },
+  { name: "Penalty", kind: "EXPENSE" },
+];
+
+/** Every system head with the kind it must carry, for seeding. */
+export const SYSTEM_HEADS: { name: string; kind: string }[] = [
+  ...COMMON_HEADS.map((h) => ({ name: h.name, kind: h.kind === "ADJUSTMENT" ? "EXPENSE" : h.kind })),
+  ...MODULE_HEADS,
+];
+
+const SYSTEM_NAMES = new Set<string>([
+  ...Array.from(CANONICAL_BY_ALIAS.keys()),
+  ...MODULE_HEADS.map((h) => normalize(h.name)),
+]);
+
+/** True when a head name (canonical or alias) belongs to the software itself. */
+export function isSystemHeadName(name: string): boolean {
+  return SYSTEM_NAMES.has(normalize(name));
+}

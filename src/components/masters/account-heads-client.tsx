@@ -9,6 +9,8 @@ interface Row {
   id: string;
   name: string;
   kind: string;
+  /** software-owned head — seeded automatically, cannot be edited or deleted */
+  system: boolean;
 }
 
 const columns: ColumnDef<Row, unknown>[] = [
@@ -21,6 +23,18 @@ const columns: ColumnDef<Row, unknown>[] = [
         {row.original.kind}
       </Badge>
     ),
+  },
+  {
+    accessorKey: "system",
+    header: "Source",
+    cell: ({ row }) =>
+      row.original.system ? (
+        <Badge variant="outline" title="Created and used by the software — cannot be edited or deleted">
+          SYSTEM
+        </Badge>
+      ) : (
+        <span className="text-xs text-muted-foreground">User</span>
+      ),
   },
 ];
 
@@ -71,6 +85,11 @@ export function AccountHeadsClient({ rows, canDelete }: { rows: Row[]; canDelete
         templateName: "account-heads",
       }}
       canDelete={canDelete}
+      rowLocked={(r) =>
+        r.system
+          ? `"${r.name}" is a system ledger head — the software posts to it automatically, so it cannot be edited or deleted.`
+          : null
+      }
     />
   );
 }

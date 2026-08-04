@@ -80,6 +80,11 @@ interface SimpleMasterProps<T> {
   dialogClassName?: string;
   /** Excel/CSV import + sample template (rendered next to Export). */
   importConfig?: ImportConfig;
+  /**
+   * Row-level lock: return a message to block editing that row (shown as a
+   * toast instead of opening the dialog). Used for system-owned records.
+   */
+  rowLocked?: (row: T) => string | null;
 }
 
 export function SimpleMaster<T>({
@@ -102,6 +107,7 @@ export function SimpleMaster<T>({
   renderExtra,
   dialogClassName,
   importConfig,
+  rowLocked,
 }: SimpleMasterProps<T>) {
   const router = useRouter();
   const { toast } = useToast();
@@ -123,6 +129,11 @@ export function SimpleMaster<T>({
   };
 
   const openEdit = (row: T) => {
+    const lock = rowLocked?.(row);
+    if (lock) {
+      toast({ title: "Locked", description: lock });
+      return;
+    }
     setEditingId(getId(row));
     setForm(toForm(row));
     setOpen(true);

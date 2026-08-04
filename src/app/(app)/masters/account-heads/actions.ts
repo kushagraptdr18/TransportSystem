@@ -7,6 +7,7 @@ import { runImport, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
+import { isSystemHeadName } from "@/lib/account-heads";
 import { actionError, zodError, type ActionResult } from "../_lib/util";
 
 const schema = z.object({
@@ -25,6 +26,13 @@ export async function saveAccountHead(input: unknown): Promise<ActionResult> {
     const result = await withTenant(session.tenantId, async (tx) => {
       if (data.id) {
         const before = await tx.accountHead.findUniqueOrThrow({ where: { id: data.id } });
+        // system heads carry the exact names every module posts to — renaming
+        // or reclassifying one would silently break those postings
+        if (isSystemHeadName(before.name)) {
+          throw new Error(
+            `"${before.name}" is a system ledger head used by the software itself — it cannot be edited.`
+          );
+        }
         const row = await tx.accountHead.update({
           where: { id: data.id },
           data: { name: data.name, kind: data.kind },
@@ -51,6 +59,11 @@ export async function deleteAccountHead(id: string): Promise<ActionResult> {
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.accountHead.findUniqueOrThrow({ where: { id } });
+      if (isSystemHeadName(before.name)) {
+        throw new Error(
+          `"${before.name}" is a system ledger head used by the software itself — it cannot be deleted.`
+        );
+      }
       await tx.accountHead.delete({ where: { id } });
       await audit(tx, session, { entity: "AccountHead", entityId: id, action: "DELETE", before });
     });
@@ -74,6 +87,8 @@ export async function importAccountHeads(formData: FormData): Promise<ImportSumm
       if (kind !== "INCOME" && kind !== "EXPENSE") throw new Error("Kind must be INCOME or EXPENSE");
       const existing = await tx.accountHead.findFirst({ where: { name } });
       if (existing) {
+        // an import must not reclassify a system head either
+        if (isSystemHeadName(existing.name)) return "skipped";
         await tx.accountHead.update({ where: { id: existing.id }, data: { kind } });
         return "updated";
       }

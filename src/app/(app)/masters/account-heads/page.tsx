@@ -1,7 +1,10 @@
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
+import { SYSTEM_HEADS, isSystemHeadName } from "@/lib/account-heads";
 import { AccountHeadsClient } from "@/components/masters/account-heads-client";
+
+export const dynamic = "force-dynamic";
 
 export default async function AccountHeadsPage({
   searchParams,
@@ -13,16 +16,35 @@ export default async function AccountHeadsPage({
   const q = searchParams.q?.trim();
   const kind = searchParams.kind;
 
-  const rows = await withTenant(session.tenantId, (tx) =>
-    tx.accountHead.findMany({
+  const rows = await withTenant(session.tenantId, async (tx) => {
+    // the software's own heads exist up front — every module posts to these
+    // exact names, so they are seeded here and protected from edit/delete
+    for (const h of SYSTEM_HEADS) {
+      await tx.accountHead.upsert({
+        where: { tenantId_name: { tenantId: session.tenantId, name: h.name } },
+        update: {},
+        create: { tenantId: session.tenantId, name: h.name, kind: h.kind },
+      });
+    }
+    return tx.accountHead.findMany({
       where: {
         ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
         ...(kind ? { kind } : {}),
       },
       orderBy: { name: "asc" },
-    })
-  );
+    });
+  });
 
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
-  return <AccountHeadsClient rows={rows} canDelete={canDelete} />;
+  return (
+    <AccountHeadsClient
+      rows={rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        kind: r.kind,
+        system: isSystemHeadName(r.name),
+      }))}
+      canDelete={canDelete}
+    />
+  );
 }
