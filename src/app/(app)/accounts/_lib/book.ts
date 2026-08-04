@@ -99,22 +99,36 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         },
       }),
     ]);
-    const refNoRows =
-      params.partyId || params.headId
-        ? await tx.ledgerEntry.findMany({
-            where: {
-              firmId: session.firmId,
-              fyId: session.fyId,
-              ...(params.headId
-                ? { accountHeadId: params.headId }
-                : { partyId: params.partyId }),
-            },
-            select: { refNo: true },
-            distinct: ["refNo"],
-            orderBy: { refNo: "asc" },
-            take: 1000,
-          })
-        : [];
+    const ledgerOnly = params.headId
+      ? { accountHeadId: params.headId }
+      : params.partyId
+        ? { partyId: params.partyId }
+        : null;
+    const refNoRows = ledgerOnly
+      ? await tx.ledgerEntry.findMany({
+          where: { firmId: session.firmId, fyId: session.fyId, ...ledgerOnly },
+          select: { refNo: true },
+          distinct: ["refNo"],
+          orderBy: { refNo: "asc" },
+          take: 1000,
+        })
+      : [];
+    // vehicle filter options: ONLY vehicles that appear in the selected
+    // ledger's entries — never another ledger's vehicles
+    const vehicleGroups = ledgerOnly
+      ? await tx.ledgerEntry.groupBy({
+          by: ["vehicleId"],
+          where: {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            ...ledgerOnly,
+            vehicleId: { not: null },
+          },
+        })
+      : null;
+    const scopedVehicleIds = vehicleGroups
+      ? new Set(vehicleGroups.map((g) => g.vehicleId))
+      : null;
     const partyIds = params.partyId ? [params.partyId] : parties.map((p) => p.id);
 
     // With a ledger selected, EVERY filter (reference included) applies inside
@@ -125,9 +139,21 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       : params.partyId || params.groups
         ? { partyId: { in: partyIds } }
         : null;
+    // EXACT reference match: "80001" must never match 180001 / 800012.
+    // A voucher settling several documents stores them comma-joined
+    // ("SBRL/001, SBRL/002"), so the row belongs to the lifecycle of each —
+    // the SQL `contains` is only a coarse pre-filter; the precise
+    // comma-token equality check runs on the fetched rows below.
+    const refQuery = params.refNo?.trim().toLowerCase();
     const refNoWhere = params.refNo
       ? { refNo: { contains: params.refNo.trim(), mode: "insensitive" as const } }
       : {};
+    const matchesRef = (refNo: string) =>
+      !refQuery ||
+      refNo
+        .split(",")
+        .map((t) => t.trim().toLowerCase())
+        .includes(refQuery);
     const where: Prisma.LedgerEntryWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
@@ -155,11 +181,12 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         ...(params.amtTo != null ? { lte: params.amtTo } : {}),
       };
     }
-    const entries = await tx.ledgerEntry.findMany({
+    const fetched = await tx.ledgerEntry.findMany({
       where,
       orderBy: [{ date: "asc" }, { createdAt: "asc" }],
       take: 2000,
     });
+    const entries = refQuery ? fetched.filter((e) => matchesRef(e.refNo)) : fetched;
     const nameById = new Map(allParties.map((p) => [p.id, p.name]));
     const headNameById = new Map(heads.map((h) => [h.id, h.name]));
     const vehicleNoById = new Map(vehicles.map((v) => [v.id, v.number]));
@@ -387,19 +414,28 @@ export async function ledgerBookRows(params: BookParams): Promise<{
           : "",
       };
     });
+    // a row settling several documents carries them comma-joined — the
+    // dropdown offers each individual reference, exact-match ready
+    const refNoTokens = Array.from(
+      new Set(
+        refNoRows.flatMap((r) => (r.refNo ?? "").split(",").map((t) => t.trim()).filter(Boolean))
+      )
+    ).sort();
     return {
       rows,
       parties,
       heads,
-      vehicles,
+      vehicles: scopedVehicleIds ? vehicles.filter((v) => scopedVehicleIds.has(v.id)) : vehicles,
       refTypes: refTypeGroups.map((g) => g.refType).sort(),
-      refNos: refNoRows.map((r) => r.refNo).filter(Boolean),
+      refNos: refNoTokens,
     };
   });
 }
 
 export const BOOK_COLUMNS = [
   { key: "date", header: "Date", kind: "date" as const },
+  // which vehicle generated the entry — blank for non-vehicle transactions
+  { key: "vehicle", header: "Vehicle No" },
   { key: "party", header: "Ledger" },
   // the counter-ledger(s) of the same posting — where the entry came from
   { key: "account", header: "Account" },
@@ -409,7 +445,6 @@ export const BOOK_COLUMNS = [
   { key: "refNo", header: "Reference No", linkBase: "/", linkParamKey: "link" },
   { key: "voucherNo", header: "Voucher No" },
   { key: "payment", header: "Bank / Instrument" },
-  { key: "vehicle", header: "Vehicle" },
   { key: "narration", header: "Narration" },
   { key: "adjustments", header: "Adjustments", kind: "adjustments" as const },
   { key: "debit", header: "Debit", kind: "money" as const },
