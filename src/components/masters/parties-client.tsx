@@ -136,6 +136,15 @@ export function PartiesClient({
           type: "select",
           options: GROUPS.map((g) => ({ value: g, label: groupLabel(g) })),
         },
+        // for owners/brokers the trade name belongs right under the name
+        {
+          name: "transportName",
+          label: "Transport Name (owners / brokers)",
+          type: "text",
+          uppercase: true,
+          visibleIf: (f: FormState) => f.ledgerGroup === "OWNER_BROKER",
+          span2: true,
+        },
         { name: "alias", label: "Alias / Short Name", type: "text" },
         { name: "vendorCode", label: "Vendor Code", type: "text" },
         { name: "address1", label: "Address 1", type: "text", span2: true },
@@ -148,14 +157,6 @@ export function PartiesClient({
         { name: "phone", label: "Phone", type: "text" },
         { name: "email", label: "Email", type: "text" },
         { name: "ownerName", label: "Owner / Contact Person", type: "text" },
-        {
-          name: "transportName",
-          label: "Transport Name (owners / brokers)",
-          type: "text",
-          uppercase: true,
-          visibleIf: (f: FormState) => f.ledgerGroup === "OWNER_BROKER",
-          span2: true,
-        },
         { name: "openingBalance", label: "Opening Balance", type: "number" },
         {
           name: "openingSide",
