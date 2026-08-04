@@ -14,6 +14,14 @@ export const dynamic = "force-dynamic";
  * to pay: chalan freight (vehicle owner / broker), broker slip owner side, and
  * unpaid staff salaries. Payment-voucher allocations against a document count
  * as paid/adjusted, as do settlement round-off and shortage write-offs.
+ *
+ * FREIGHT payables (chalan / broker slip) appear only for MARKET/BROKER
+ * vehicles. A company-owned vehicle has no payee, and a relative vehicle's
+ * position (freight, diesel, EMI, salary, shortage...) is managed through the
+ * relative owner's ledger and settlement — showing either here would invite a
+ * second, wrong payment path. Display-only rule: accounting, ledgers and
+ * settlements are untouched. Supplier-style bills (office, vehicle expense,
+ * AdBlue, salary) are unaffected.
  */
 export async function OutstandingPayableTab({
   searchParams,
@@ -41,10 +49,24 @@ export async function OutstandingPayableTab({
       : undefined;
 
   const { rows, parties } = await withTenant(session.tenantId, async (tx) => {
+    // freight on OWNER (company) and RELATIVE vehicles never belongs in this
+    // register — those settle through their own workflows; only market/broker
+    // vehicle freight is a standard payable
+    const ownRelativeIds = (
+      await tx.vehicle.findMany({
+        where: { ownershipType: { in: ["OWNER", "RELATIVE"] } },
+        select: { id: true },
+      })
+    ).map((v) => v.id);
+    const brokerVehicleOnly = ownRelativeIds.length
+      ? { vehicleId: { notIn: ownRelativeIds } }
+      : {};
+
     const chalanWhere: Prisma.ChalanWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
       deletedAt: null,
+      ...brokerVehicleOnly,
     };
     if (searchParams.party) chalanWhere.brokerId = searchParams.party;
     if (dateWhere) chalanWhere.chalanDate = dateWhere;
@@ -54,6 +76,7 @@ export async function OutstandingPayableTab({
       fyId: session.fyId,
       deletedAt: null,
       ownerId: searchParams.party ? searchParams.party : { not: null },
+      ...brokerVehicleOnly,
     };
     if (dateWhere) slipWhere.slipDate = dateWhere;
 
