@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -54,17 +54,35 @@ const sum = (rows: ChalanRegisterRow[], k: keyof ChalanRegisterRow) =>
 
 export function ChalanRegisterClient({
   rows,
+  mode,
   brokers,
   vehicles,
   canDelete,
 }: {
   rows: ChalanRegisterRow[];
+  /** MARKET = payable workflow (default); OWNREL = own + relative, no payment actions */
+  mode: "MARKET" | "OWNREL";
   brokers: { value: string; label: string }[];
   vehicles: { value: string; label: string }[];
   canDelete: boolean;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { toast } = useToast();
+  const isMarket = mode === "MARKET";
+  // switch tabs keeping every other filter intact
+  const tabHref = (type: "MARKET" | "OWNREL") => {
+    const p = new URLSearchParams(searchParams.toString());
+    if (type === "OWNREL") p.set("type", "OWNREL");
+    else p.delete("type");
+    // a vehicle/ownership picked in one tab means nothing in the other
+    p.delete("vehicle");
+    p.delete("ownership");
+    p.delete("payment");
+    const qs = p.toString();
+    return `${pathname}${qs ? `?${qs}` : ""}`;
+  };
   // complete chalan lifecycle dialog
   const [status, setStatus] = React.useState<ChalanStatusData | null>(null);
   const [statusLoading, setStatusLoading] = React.useState(false);
@@ -193,16 +211,21 @@ export function ChalanRegisterClient({
           : "",
       meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "roundOff") },
     },
-    {
-      accessorKey: "paymentStatus",
-      header: "Balance Payment",
-      cell: ({ row }) =>
-        row.original.paymentStatus === "PAID" ? (
-          <Badge>Paid {formatMoney(row.original.balPaidAmount)}</Badge>
-        ) : (
-          <Badge variant="destructive">Pending Balance</Badge>
-        ),
-    },
+    // payment status is a MARKET concept — own/relative hisab lives in the ledger
+    ...(isMarket
+      ? [
+          {
+            accessorKey: "paymentStatus",
+            header: "Balance Payment",
+            cell: ({ row }) =>
+              row.original.paymentStatus === "PAID" ? (
+                <Badge>Paid {formatMoney(row.original.balPaidAmount)}</Badge>
+              ) : (
+                <Badge variant="destructive">Pending Balance</Badge>
+              ),
+          } as ColumnDef<ChalanRegisterRow>,
+        ]
+      : []),
     {
       accessorKey: "billStatus",
       header: "Bill Status",
@@ -224,7 +247,8 @@ export function ChalanRegisterClient({
           <Button asChild variant="ghost" size="sm" className="h-7 px-2">
             <Link href={`/chalan?id=${row.original.id}`}>Edit</Link>
           </Button>
-          {row.original.isFinal &&
+          {isMarket &&
+            row.original.isFinal &&
             row.original.paymentStatus !== "PAID" &&
             row.original.lrCount > 0 &&
             row.original.podDone >= row.original.lrCount && (
@@ -274,7 +298,28 @@ export function ChalanRegisterClient({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Chalan Register</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">Chalan Register</h1>
+          {/* two registers, one screen: payment work vs ledger-side record */}
+          <div className="flex rounded-md border p-0.5">
+            <Button
+              asChild
+              size="sm"
+              variant={isMarket ? "default" : "ghost"}
+              className="h-7 px-3"
+            >
+              <Link href={tabHref("MARKET")}>Market / Broker</Link>
+            </Button>
+            <Button
+              asChild
+              size="sm"
+              variant={!isMarket ? "default" : "ghost"}
+              className="h-7 px-3"
+            >
+              <Link href={tabHref("OWNREL")}>Own / Relative</Link>
+            </Button>
+          </div>
+        </div>
         <div className="flex flex-wrap gap-2">
           <ExportButton
             rows={rows}
@@ -312,16 +357,21 @@ export function ChalanRegisterClient({
           { type: "daterange", key: "date", label: "Date" },
           { type: "combobox", key: "broker", label: "Owner / Broker / Relative", options: brokers },
           { type: "combobox", key: "vehicle", label: "Vehicle", options: vehicles },
-          {
-            type: "select",
-            key: "ownership",
-            label: "Ownership",
-            options: [
-              { value: "OWNER", label: "Owner" },
-              { value: "BROKER", label: "Broker" },
-              { value: "RELATIVE", label: "Relative" },
-            ],
-          },
+          // the tab already fixes the ownership universe; on Own/Relative the
+          // filter narrows between the two, on Market it is not needed
+          ...(!isMarket
+            ? [
+                {
+                  type: "select" as const,
+                  key: "ownership",
+                  label: "Ownership",
+                  options: [
+                    { value: "OWNER", label: "Own" },
+                    { value: "RELATIVE", label: "Relative" },
+                  ],
+                },
+              ]
+            : []),
           {
             type: "select",
             key: "status",
@@ -331,15 +381,20 @@ export function ChalanRegisterClient({
               { value: "draft", label: "Draft" },
             ],
           },
-          {
-            type: "select",
-            key: "payment",
-            label: "Balance Payment",
-            options: [
-              { value: "paid", label: "Paid" },
-              { value: "pending", label: "Pending" },
-            ],
-          },
+          // balance payment is a market-vehicle workflow only
+          ...(isMarket
+            ? [
+                {
+                  type: "select" as const,
+                  key: "payment",
+                  label: "Balance Payment",
+                  options: [
+                    { value: "paid", label: "Paid" },
+                    { value: "pending", label: "Pending" },
+                  ],
+                },
+              ]
+            : []),
           {
             type: "select",
             key: "shortage",

@@ -733,6 +733,19 @@ export async function saveBalancePayment(
       if (!chalan.isFinal) {
         return { ok: false as const, error: "Finalize the chalan before settling its balance." };
       }
+      // balance payment is a MARKET-vehicle concept: an own vehicle has no
+      // payee, and a relative vehicle settles through the owner's ledger —
+      // paying here would double the hisab
+      const chalanVehicle = await tx.vehicle.findFirst({
+        where: { id: chalan.vehicleId },
+        select: { ownershipType: true, number: true },
+      });
+      if (chalanVehicle && chalanVehicle.ownershipType !== "BROKER") {
+        return {
+          ok: false as const,
+          error: `${chalanVehicle.number} is a${chalanVehicle.ownershipType === "OWNER" ? "n OWN" : " RELATIVE"} vehicle — balance payment does not apply; its hisab flows through the ${chalanVehicle.ownershipType === "OWNER" ? "vehicle P&L" : "relative owner's ledger"}.`,
+        };
+      }
       // all attached LRs must have a confirmed POD before balance can be paid
       const links = await tx.chalanLr.findMany({
         where: { chalanId: chalan.id },

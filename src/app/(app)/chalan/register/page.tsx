@@ -14,15 +14,22 @@ export default async function ChalanRegisterPage({
   const session = requireSession();
   const { date_from, date_to, q, broker, vehicle, status, payment, ownership, shortage } =
     searchParams;
+  // two registers in one screen: MARKET (payable workflow, the default) and
+  // OWNREL (own + relative vehicles — no payment actions, hisab via ledger)
+  const tab = searchParams.type === "OWNREL" ? ("OWNREL" as const) : ("MARKET" as const);
 
   const [rows, brokers, vehicles, billStatusByChalan, payable] = await withTenant(
     session.tenantId,
     async (tx) => {
     // ownership resolves to a vehicle-id list (it also covers vehicle type)
     const allVehicles = await tx.vehicle.findMany({ orderBy: { number: "asc" } });
-    const vehicleIdFilter = ownership
-      ? allVehicles.filter((v) => v.ownershipType === ownership).map((v) => v.id)
-      : null;
+    // the tab decides the ownership universe; the ownership filter can only
+    // narrow WITHIN it (Own vs Relative on the OWNREL tab)
+    const allowed = tab === "MARKET" ? ["BROKER"] : ["OWNER", "RELATIVE"];
+    const effective = ownership && allowed.includes(ownership) ? [ownership] : allowed;
+    const vehicleIdFilter = allVehicles
+      .filter((v) => effective.includes(v.ownershipType))
+      .map((v) => v.id);
 
     const chalans = await tx.chalan.findMany({
       where: {
@@ -39,8 +46,9 @@ export default async function ChalanRegisterPage({
           : {}),
         ...(q ? { chalanNo: { contains: q, mode: "insensitive" } } : {}),
         ...(broker ? { brokerId: broker } : {}),
-        ...(vehicle ? { vehicleId: vehicle } : {}),
-        ...(vehicleIdFilter ? { vehicleId: { in: vehicleIdFilter } } : {}),
+        // a picked vehicle must still belong to the active tab's universe
+        vehicleId:
+          vehicle && vehicleIdFilter.includes(vehicle) ? vehicle : { in: vehicleIdFilter },
         ...(status === "final" ? { isFinal: true } : status === "draft" ? { isFinal: false } : {}),
         // the payment filter is applied after settlement is computed, since a
         // voucher can settle a chalan whose stored status still says PENDING
@@ -156,6 +164,7 @@ export default async function ChalanRegisterPage({
   return (
     <ChalanRegisterClient
       rows={data}
+      mode={tab}
       brokers={brokers.map((b) => ({ value: b.id, label: b.name }))}
       vehicles={vehicles.map((v) => ({ value: v.id, label: v.number }))}
       canDelete={session.role === "ADMIN" || session.role === "OWNER"}
