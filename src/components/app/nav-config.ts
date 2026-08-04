@@ -127,6 +127,7 @@ export const NAV: NavGroup[] = [
       { label: "Vouchers", href: "/accounts/vouchers" },
       { label: "Bank / Cash / Card Book", href: "/accounts/bank-book" },
       { label: "Company Operational P&L", href: "/accounts/operational-pnl" },
+      { label: "Vehicle Operational P&L", href: "/accounts/vehicle-operational-pnl" },
       { label: "Ledger Summary", href: "/accounts/ledger" },
       // receivable and payable are tabs of one screen
       { label: "Outstanding Register", href: "/accounts/outstanding" },
