@@ -145,6 +145,12 @@ export async function loadSettlementTab(filters: DriverFilters) {
       if (filters.driver) where.driverId = filters.driver;
       if (filters.status === "PENDING" || filters.status === "SETTLED") {
         where.status = filters.status;
+      } else {
+        // default view: only settlements where money ACTUALLY moved — a real
+        // payment/receipt voucher exists. Pending trip balances stay reachable
+        // via the Status filter (that is where Pay/Receive lives).
+        where.status = "SETTLED";
+        where.voucherId = { not: null };
       }
       const range = dateRange(filters);
       if (range) where.date = range;

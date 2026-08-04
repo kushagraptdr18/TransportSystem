@@ -45,6 +45,14 @@ export async function saveDriverAdvance(
     return await withTenant(session.tenantId, async (tx) => {
       const driver = await tx.driver.findFirst({ where: { id: d.driverId, deletedAt: null } });
       if (!driver) return { ok: false as const, error: "Driver not found" };
+      // an advance that cannot post to the ledger must not save at all — a
+      // silent skip here left cash advances invisible to the accounts
+      if (!driver.partyId) {
+        return {
+          ok: false as const,
+          error: `${driver.name} has no linked ledger party — open Driver Master and link/create one, then record the advance.`,
+        };
+      }
 
       const values = {
         date: new Date(`${d.date}T00:00:00`),
@@ -57,6 +65,25 @@ export async function saveDriverAdvance(
         voucherRef: d.voucherRef?.trim() || null,
         remarks: d.remarks || null,
       };
+
+      // resolve the money-side ledger BEFORE saving, so a missing cash/bank
+      // account blocks the save instead of producing an unposted advance
+      let creditPartyId = values.bankPartyId;
+      if (!creditPartyId) {
+        const cash = await tx.party.findFirst({
+          where: { ledgerGroup: "CASH", isActive: true },
+          orderBy: { name: "asc" },
+          select: { id: true },
+        });
+        creditPartyId = cash?.id ?? null;
+      }
+      if (!creditPartyId) {
+        return {
+          ok: false as const,
+          error:
+            "No Cash account exists — create one in Masters → Accounts (Bank / Cash / Card), or pick a bank account, so the advance can post to the ledger.",
+        };
+      }
 
       let id: string;
       if (d.id) {
@@ -84,20 +111,9 @@ export async function saveDriverAdvance(
         await audit(tx, session, { entity: "DriverAdvance", entityId: id, action: "CREATE", after: created });
       }
 
-      // Ledger: the driver owes the advance, and money leaves cash/bank. This
-      // used to post only when a bank account was named, so every cash advance
-      // was invisible to the ledger; a CASH-mode advance now falls back to the
-      // firm's cash party so it is always accounted for.
-      let creditPartyId = values.bankPartyId;
-      if (!creditPartyId) {
-        const cash = await tx.party.findFirst({
-          where: { ledgerGroup: "CASH", isActive: true },
-          orderBy: { name: "asc" },
-          select: { id: true },
-        });
-        creditPartyId = cash?.id ?? null;
-      }
-      if (driver.partyId && creditPartyId) {
+      // Ledger: the driver owes the advance, and money leaves cash/bank —
+      // ALWAYS posted (both ledgers were validated above).
+      {
         const common = {
           date: values.date,
           refType: "DRIVER_ADVANCE",
