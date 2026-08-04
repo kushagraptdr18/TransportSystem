@@ -44,11 +44,11 @@ export async function downloadVehicleExpenseTemplate(): Promise<
           }),
           tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
           tx.party.findMany({
-            where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+            where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
             orderBy: { name: "asc" },
           }),
           tx.party.findMany({
-            where: { isActive: true, ledgerGroup: { notIn: ["BANK", "CASH"] } },
+            where: { isActive: true, ledgerGroup: { notIn: ["BANK", "CASH", "CARD"] } },
             orderBy: { name: "asc" },
             take: 500,
           }),
@@ -176,8 +176,8 @@ export async function importVehicleExpenses(fd: FormData): Promise<ImportSummary
       const [heads, vehicles, banks, suppliers, existing] = await Promise.all([
         tx.accountHead.findMany({ where: { kind: { in: ["INCOME", "EXPENSE"] } } }),
         tx.vehicle.findMany(),
-        tx.party.findMany({ where: { ledgerGroup: { in: ["BANK", "CASH"] } } }),
-        tx.party.findMany({ where: { ledgerGroup: { notIn: ["BANK", "CASH"] } } }),
+        tx.party.findMany({ where: { ledgerGroup: { in: ["BANK", "CASH", "CARD"] } } }),
+        tx.party.findMany({ where: { ledgerGroup: { notIn: ["BANK", "CASH", "CARD"] } } }),
         tx.vehicleExpenseVoucher.findMany({
           where: { firmId: session.firmId, fyId: session.fyId, deletedAt: null },
           include: { items: true },

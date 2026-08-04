@@ -8,7 +8,7 @@ import { saveParty, deleteParty, importParties } from "@/app/(app)/masters/parti
 export interface BankCashHeadRow {
   id: string;
   name: string;
-  ledgerGroup: string; // BANK | CASH
+  ledgerGroup: string; // BANK | CASH | CARD
   alias: string | null; // used as description
   bankName: string | null;
   bankAccount: string | null;
@@ -22,7 +22,15 @@ const columns: ColumnDef<BankCashHeadRow, unknown>[] = [
     accessorKey: "ledgerGroup",
     header: "Type",
     cell: ({ row }) => (
-      <Badge variant={row.original.ledgerGroup === "BANK" ? "default" : "secondary"}>
+      <Badge
+        variant={
+          row.original.ledgerGroup === "BANK"
+            ? "default"
+            : row.original.ledgerGroup === "CARD"
+              ? "outline"
+              : "secondary"
+        }
+      >
         {row.original.ledgerGroup}
       </Badge>
     ),
@@ -39,8 +47,10 @@ const columns: ColumnDef<BankCashHeadRow, unknown>[] = [
 ];
 
 /**
- * Bank & Cash Head master — these heads back the bank/cash pickers in
- * chalan advances, vouchers, billing and the cash/bank books.
+ * Accounts master (Bank / Cash / Card) — these heads back the money-account
+ * pickers in chalan advances, vouchers, billing and the books. A CARD (fuel /
+ * fleet card) behaves exactly like a bank account: pay from it in a Payment
+ * Voucher, recharge it with a Contra Voucher.
  */
 export function BankCashHeadsClient({
   rows,
@@ -51,8 +61,8 @@ export function BankCashHeadsClient({
 }) {
   return (
     <SimpleMaster
-      title="Bank & Cash Head"
-      newLabel="New Head"
+      title="Accounts (Bank / Cash / Card)"
+      newLabel="New Account"
       rows={rows}
       columns={columns}
       exportColumns={[
@@ -74,6 +84,7 @@ export function BankCashHeadsClient({
           options: [
             { value: "BANK", label: "Bank" },
             { value: "CASH", label: "Cash" },
+            { value: "CARD", label: "Card" },
           ],
         },
       ]}
@@ -86,6 +97,7 @@ export function BankCashHeadsClient({
           options: [
             { value: "BANK", label: "Bank" },
             { value: "CASH", label: "Cash" },
+            { value: "CARD", label: "Card (fuel / fleet)" },
           ],
         },
         { name: "alias", label: "Description", type: "text", span2: true },

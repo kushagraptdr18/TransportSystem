@@ -63,11 +63,11 @@ export async function VehicleExpensesTab({
           orderBy: { name: "asc" },
         }),
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { notIn: ["BANK", "CASH"] } },
+          where: { isActive: true, ledgerGroup: { notIn: ["BANK", "CASH", "CARD"] } },
           orderBy: { name: "asc" },
         }),
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
           orderBy: { name: "asc" },
         }),
       ]);

@@ -20,7 +20,7 @@ export async function StaffPayrollTab() {
         tx.staffLoan.findMany({ where: scope }),
         tx.staffSalary.findMany({ where: scope }),
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
           orderBy: { name: "asc" },
         }),
       ]);

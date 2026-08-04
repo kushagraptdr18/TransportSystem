@@ -115,7 +115,7 @@ export function VoucherEntry({
   // ---- header state ----
   const [voucherNo, setVoucherNo] = React.useState(peekNumbers[type] ?? "1");
   const [dateText, setDateText] = React.useState(formatDate(new Date()));
-  const [mode, setMode] = React.useState<"CASH" | "BANK">("CASH");
+  const [mode, setMode] = React.useState<"CASH" | "BANK" | "CARD">("CASH");
   const [bankPartyId, setBankPartyId] = React.useState<string | null>(null);
   // Bank & Cash master, narrowed to the selected mode (meta = ledger group)
   const modeAccounts = React.useMemo(
@@ -413,24 +413,27 @@ export function VoucherEntry({
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">Mode</Label>
-                <Select value={mode} onValueChange={(v) => { setMode(v as "CASH" | "BANK"); setBankPartyId(null); }}>
+                <Select value={mode} onValueChange={(v) => { setMode(v as "CASH" | "BANK" | "CARD"); setBankPartyId(null); }}>
                   <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="CASH">Cash</SelectItem>
                     <SelectItem value="BANK">Bank</SelectItem>
+                    <SelectItem value="CARD">Card</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">{mode === "CASH" ? "Cash Account *" : "Bank Account *"}</Label>
+                <Label className="text-xs">
+                  {mode === "CASH" ? "Cash Account *" : mode === "CARD" ? "Card Account *" : "Bank Account *"}
+                </Label>
                 <MasterCombobox
                   options={modeAccounts}
                   value={bankPartyId}
                   onChange={setBankPartyId}
                   placeholder={
                     modeAccounts.length
-                      ? `Select ${mode === "CASH" ? "cash" : "bank"} account...`
-                      : `No ${mode === "CASH" ? "cash" : "bank"} head in master`
+                      ? `Select ${mode.toLowerCase()} account...`
+                      : `No ${mode.toLowerCase()} head in master`
                   }
                 />
               </div>

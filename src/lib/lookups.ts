@@ -28,7 +28,7 @@ export async function getPartyOptions(groups?: LedgerGroup[]): Promise<Option[]>
         // unless a caller (getBankOptions) asks for those groups explicitly.
         ...(groups?.length
           ? { ledgerGroup: { in: groups } }
-          : { ledgerGroup: { notIn: ["BANK", "CASH"] } }),
+          : { ledgerGroup: { notIn: ["BANK", "CASH", "CARD"] } }),
       },
       orderBy: { name: "asc" },
     })
@@ -74,7 +74,7 @@ export async function getBankOptions(): Promise<Option[]> {
   const s = requireSession();
   const heads = await withTenant(s.tenantId, (tx) =>
     tx.party.findMany({
-      where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+      where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
       orderBy: { name: "asc" },
     })
   );

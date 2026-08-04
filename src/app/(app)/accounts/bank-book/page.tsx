@@ -1,3 +1,4 @@
+import type { LedgerGroup } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
@@ -6,17 +7,26 @@ import { BOOK_COLUMNS, ledgerBookRows } from "../_lib/book";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Bank / Cash / Card Book — one register for every money account. A CARD
+ * (fuel / fleet card) is just another account: payments draw it down, a
+ * contra voucher from a bank recharges it.
+ */
 export default async function BankBookPage({
   searchParams,
 }: {
-  searchParams: { date_from?: string; date_to?: string; party?: string };
+  searchParams: { date_from?: string; date_to?: string; party?: string; type?: string };
 }) {
   const session = requireSession();
   await authorize(session, "reports", "view");
 
+  const type = ["BANK", "CASH", "CARD"].includes(searchParams.type ?? "")
+    ? (searchParams.type as LedgerGroup)
+    : undefined;
+
   const { rows, parties } = await ledgerBookRows({
     session,
-    groups: ["BANK"],
+    groups: type ? [type] : ["BANK", "CASH", "CARD"],
     partyId: searchParams.party,
     dateFrom: searchParams.date_from,
     dateTo: searchParams.date_to,
@@ -25,23 +35,37 @@ export default async function BankBookPage({
   const filters: FilterDef[] = [
     { type: "daterange", key: "date", label: "Date" },
     {
+      type: "select",
+      key: "type",
+      label: "Account Type",
+      options: [
+        { value: "BANK", label: "Bank" },
+        { value: "CASH", label: "Cash" },
+        { value: "CARD", label: "Card" },
+      ],
+    },
+    {
       type: "combobox",
       key: "party",
-      label: "Bank Account",
-      options: parties.map((p) => ({ value: p.id, label: p.name })),
+      label: "Account",
+      options: parties.map((p) => ({ value: p.id, label: `${p.name} (${p.ledgerGroup})` })),
     },
   ];
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="page-title">Bank Book</h1>
+      <h1 className="page-title">Bank / Cash / Card Book</h1>
       <FilterBar filters={filters} />
       <SimpleReport
-        title={searchParams.party ? "Running balance shown for selected account" : "Select a bank account to see running balance"}
+        title={
+          searchParams.party
+            ? "Running balance shown for selected account"
+            : "Select an account to see running balance"
+        }
         columns={BOOK_COLUMNS}
         rows={rows}
-        fileName="bank-book"
-        emptyMessage="No bank entries in this period."
+        fileName="bank-cash-card-book"
+        emptyMessage="No entries in this period."
       />
     </div>
   );

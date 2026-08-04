@@ -49,7 +49,7 @@ export default async function BrokerSlipPage({
           tx.product.findMany({ include: { group: true }, orderBy: { name: "asc" } }),
           tx.accountHead.findMany({ orderBy: { name: "asc" } }),
           tx.party.findMany({
-            where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+            where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
             orderBy: { name: "asc" },
           }),
           searchParams.id

@@ -31,7 +31,7 @@ const dateRange = (f: DriverFilters) =>
 
 const bankWhere: Prisma.PartyWhereInput = {
   isActive: true,
-  ledgerGroup: { in: ["BANK", "CASH"] },
+  ledgerGroup: { in: ["BANK", "CASH", "CARD"] },
 };
 
 export async function loadSalaryTab(filters: DriverFilters) {

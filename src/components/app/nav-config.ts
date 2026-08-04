@@ -39,7 +39,7 @@ export const NAV: NavGroup[] = [
     icon: Database,
     items: [
       { label: "Ledger / Parties", href: "/masters/parties" },
-      { label: "Bank & Cash Heads", href: "/masters/bank-cash-heads" },
+      { label: "Accounts (Bank / Cash / Card)", href: "/masters/bank-cash-heads" },
       { label: "Income-Expense Heads", href: "/masters/account-heads" },
       // groups, products and units are tabs of one screen
       { label: "Product Master", href: "/masters/products" },
@@ -126,7 +126,7 @@ export const NAV: NavGroup[] = [
       // entry types and the register are tabs of one screen
       { label: "Vouchers", href: "/accounts/vouchers" },
       { label: "Cash Book", href: "/accounts/cash-book" },
-      { label: "Bank Book", href: "/accounts/bank-book" },
+      { label: "Bank / Cash / Card Book", href: "/accounts/bank-book" },
       { label: "Ledger Summary", href: "/accounts/ledger" },
       // receivable and payable are tabs of one screen
       { label: "Outstanding Register", href: "/accounts/outstanding" },

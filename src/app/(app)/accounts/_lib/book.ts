@@ -62,7 +62,7 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     // of the party ledger unless a book explicitly asks for those groups.
     const partyWhere: Prisma.PartyWhereInput = params.groups
       ? { ledgerGroup: { in: params.groups } }
-      : { ledgerGroup: { notIn: ["BANK", "CASH"] } };
+      : { ledgerGroup: { notIn: ["BANK", "CASH", "CARD"] } };
     const [parties, allParties, heads, vehicles, refTypeGroups] = await Promise.all([
       tx.party.findMany({
         where: { ...partyWhere, isActive: true },

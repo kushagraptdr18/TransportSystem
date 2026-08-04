@@ -29,7 +29,7 @@ export async function TripSheetsTab({
         }),
         tx.driverAssignment.findMany({ where: { toDate: null } }),
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
           orderBy: { name: "asc" },
         }),
         peekDocNumber(tx, { firmId: session.firmId, fyId: session.fyId, docType: "TRIP" }),

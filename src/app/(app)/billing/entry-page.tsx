@@ -47,7 +47,7 @@ export async function InvoiceEntryPage({
           orderBy: { name: "asc" },
         }),
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
           orderBy: { name: "asc" },
         }),
         tx.invoice.findFirst({

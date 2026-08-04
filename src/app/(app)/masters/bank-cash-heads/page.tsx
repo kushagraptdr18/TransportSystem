@@ -19,9 +19,9 @@ export default async function BankCashHeadsPage({
 
   const rows = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.PartyWhereInput = {
-      ledgerGroup: searchParams.type === "BANK" || searchParams.type === "CASH"
-        ? searchParams.type
-        : { in: ["BANK", "CASH"] },
+      ledgerGroup: ["BANK", "CASH", "CARD"].includes(searchParams.type ?? "")
+        ? (searchParams.type as "BANK" | "CASH" | "CARD")
+        : { in: ["BANK", "CASH", "CARD"] },
     };
     if (searchParams.q) where.name = { contains: searchParams.q, mode: "insensitive" };
     return tx.party.findMany({ where, orderBy: [{ ledgerGroup: "asc" }, { name: "asc" }] });

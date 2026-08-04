@@ -49,7 +49,7 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
         }),
         tx.product.findMany({ include: { group: true }, orderBy: { name: "asc" } }),
         tx.party.findMany({
-          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+          where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
           orderBy: { name: "asc" },
         }),
         nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId }),

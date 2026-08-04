@@ -30,7 +30,7 @@ export default async function ChalanPage({
         orderBy: { number: "asc" },
       });
       const banks = await tx.party.findMany({
-        where: { ledgerGroup: { in: ["BANK", "CASH"] }, isActive: true },
+        where: { ledgerGroup: { in: ["BANK", "CASH", "CARD"] }, isActive: true },
         orderBy: { name: "asc" },
       });
       const accountHeads = await tx.accountHead.findMany({ orderBy: { name: "asc" } });

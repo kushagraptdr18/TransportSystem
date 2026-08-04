@@ -15,7 +15,7 @@ export default async function FirmSettingsPage() {
     const [firm, banks, states, cities] = await Promise.all([
       tx.firm.findUnique({ where: { id: session.firmId } }),
       tx.party.findMany({
-        where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH"] } },
+        where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
         orderBy: { name: "asc" },
       }),
       tx.state.findMany({ orderBy: { name: "asc" } }),

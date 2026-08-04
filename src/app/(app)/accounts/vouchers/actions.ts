@@ -86,7 +86,7 @@ const voucherSchema = z.object({
   type: z.enum(["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL"]),
   voucherNo: z.string().trim().min(1, "Voucher number is required"),
   voucherDate: z.string().min(1, "Date is required"), // ISO yyyy-mm-dd
-  entryType: z.enum(["CASH", "BANK", "CONTRA"]).default("CASH"),
+  entryType: z.enum(["CASH", "BANK", "CARD", "CONTRA"]).default("CASH"),
   moduleLink: z
     .enum([
       "BILLING",
