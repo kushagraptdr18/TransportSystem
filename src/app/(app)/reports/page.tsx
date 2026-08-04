@@ -4,7 +4,6 @@ import {
   BookOpen,
   ClipboardCheck,
   FileText,
-  HandCoins,
   Landmark,
   ReceiptText,
   Scale,
@@ -38,12 +37,11 @@ const SECTIONS: { title: string; links: { label: string; href: string; icon: typ
   {
     title: "Accounts",
     links: [
-      { label: "Cash Book", href: "/accounts/cash-book", icon: HandCoins, desc: "Cash accounts day book" },
-      { label: "Bank Book", href: "/accounts/bank-book", icon: Landmark, desc: "Bank accounts day book" },
+      { label: "Bank / Cash / Card Book", href: "/accounts/bank-book", icon: Landmark, desc: "All money accounts day book" },
       { label: "Ledger Summary", href: "/accounts/ledger", icon: BookOpen, desc: "Party ledger with running balance" },
       { label: "Common Ledgers", href: "/accounts/common-ledger", icon: Scale, desc: "Shortage, round off, commission, mamool, detention — net position" },
       { label: "TDS Report", href: "/accounts/tds", icon: Scale, desc: "TDS deducted across documents" },
-      { label: "Profit & Loss", href: "/accounts/pnl", icon: BarChart3, desc: "Income vs expense summary" },
+      { label: "Company Operational P&L", href: "/accounts/operational-pnl", icon: BarChart3, desc: "Operational income vs expense" },
     ],
   },
   {

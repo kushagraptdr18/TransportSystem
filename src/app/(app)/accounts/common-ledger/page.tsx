@@ -41,8 +41,13 @@ export default async function CommonLedgerPage({
 
   const rows = await withTenant(session.tenantId, async (tx) => {
     const heads = await tx.accountHead.findMany({ select: { id: true, name: true, kind: true } });
+    // TDS Payable / Receivable are statutory asset & liability ledgers, not
+    // operating concepts — they stay out of this report and are reached
+    // directly through the Ledger Summary when needed
     const wanted = new Map(
-      COMMON_HEADS.map((h) => [h.name.toUpperCase(), h] as const)
+      COMMON_HEADS.filter(
+        (h) => h.name !== "TDS Payable" && h.name !== "TDS Receivable"
+      ).map((h) => [h.name.toUpperCase(), h] as const)
     );
     const mine = heads.filter((h) => wanted.has(h.name.toUpperCase()));
     if (!mine.length) return [] as ReportRow[];
