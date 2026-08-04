@@ -225,12 +225,22 @@ export default async function OperationalPnlPage({
     const net = Math.abs(balance);
     if (isIncome) ledgerIncome = r2(ledgerIncome + net);
     else ledgerExpense = r2(ledgerExpense + net);
+    // drill-down: the head's full ledger for the same period — every voucher,
+    // reference, party, running balance and module source, with click-through
+    // to the original documents
+    const range = [
+      searchParams.date_from ? `date_from=${searchParams.date_from}` : "",
+      searchParams.date_to ? `date_to=${searchParams.date_to}` : "",
+    ]
+      .filter(Boolean)
+      .join("&");
     headRows.push({
       head: head.name,
       kind: isIncome ? "INCOME" : "EXPENSE",
       debit: sums.debit,
       credit: sums.credit,
       net,
+      link: `accounts/ledger?party=${encodeURIComponent(`head:${headId}`)}${range ? `&${range}` : ""}`,
     });
   }
   headRows.sort((a, b) =>
@@ -242,12 +252,24 @@ export default async function OperationalPnlPage({
   const filters: FilterDef[] = [{ type: "daterange", key: "date", label: "Period" }];
 
   const money = (v: number) => formatMoney(v);
-  const line = (label: string, value: number, strong = false, negative = false) => (
+  const line = (label: string, value: number, strong = false, negative = false, link?: string) => (
     <div
       key={label}
       className={`flex justify-between py-0.5 ${strong ? "border-t pt-1 font-semibold" : ""}`}
     >
-      <span>{label}</span>
+      {link ? (
+        <a
+          href={`/${link}`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-primary underline-offset-2 hover:underline"
+          title="Open this ledger head's complete book (new tab)"
+        >
+          {label}
+        </a>
+      ) : (
+        <span>{label}</span>
+      )}
       <span className="tabular-nums">
         {negative ? "− " : ""}
         {money(Math.abs(value))}
@@ -315,7 +337,7 @@ export default async function OperationalPnlPage({
               </div>
               {headRows
                 .filter((rw) => rw.kind === "INCOME")
-                .map((rw) => line(String(rw.head), Number(rw.net)))}
+                .map((rw) => line(String(rw.head), Number(rw.net), false, false, String(rw.link)))}
               {line("Total Ledger Income", ledgerIncome, true)}
             </div>
           </CardContent>
@@ -340,7 +362,7 @@ export default async function OperationalPnlPage({
               </div>
               {headRows
                 .filter((rw) => rw.kind === "EXPENSE")
-                .map((rw) => line(String(rw.head), Number(rw.net)))}
+                .map((rw) => line(String(rw.head), Number(rw.net), false, false, String(rw.link)))}
               {line("Total Ledger Expenses", ledgerExpense, true)}
             </div>
           </CardContent>
@@ -370,7 +392,8 @@ export default async function OperationalPnlPage({
       <SimpleReport
         title="Operational ledger heads (vehicle-module, chalan/broker-slip and vehicle-finance entries excluded)"
         columns={[
-          { key: "head", header: "Ledger Head" },
+          // clicking a head opens its complete ledger book for the period
+          { key: "head", header: "Ledger Head", linkBase: "/", linkParamKey: "link" },
           { key: "kind", header: "Kind", kind: "badge" },
           { key: "debit", header: "Debit", kind: "money" },
           { key: "credit", header: "Credit", kind: "money" },
