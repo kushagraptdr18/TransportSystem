@@ -589,23 +589,23 @@ export async function getPendingTripDocs(input: {
   excludeTripId?: string | null;
 }): Promise<PendingTripDoc[]> {
   const session = requireSession();
-  // Inclusive, timezone-safe boundaries: documents may have been stored at
-  // LOCAL midnight or UTC midnight depending on how the date reached the
-  // server, so take the earlier of the two day-starts and the later of the
-  // two day-ends. A chalan dated exactly on From/To always matches.
-  const dayStart = (s: string) => {
-    const local = new Date(`${s}T00:00:00`);
-    const utc = new Date(`${s}T00:00:00Z`);
-    return local < utc ? local : utc;
-  };
-  const dayEnd = (s: string) => {
-    const local = new Date(`${s}T23:59:59.999`);
-    const utc = new Date(`${s}T23:59:59.999Z`);
-    return local > utc ? local : utc;
-  };
+  // Documents are stored at MIDNIGHT OF WHATEVER TIMEZONE the saving machine
+  // was in — a chalan dated 3/8 entered on an IST machine is 2/8 18:30 UTC,
+  // the same chalan entered on a UTC server is 3/8 00:00 UTC. Comparing raw
+  // timestamps against boundaries built on THIS machine therefore drops
+  // documents dated exactly on the range edge whenever the two machines
+  // disagree. So: fetch a day wide on both ends, then filter by the intended
+  // CALENDAR date — timestamp + 12h in UTC recovers the calendar day for any
+  // storage timezone within ±12 hours of UTC.
   const range = {
-    gte: dayStart(input.dateFrom),
-    lte: dayEnd(input.dateTo),
+    gte: new Date(new Date(`${input.dateFrom}T00:00:00Z`).getTime() - 24 * 3600 * 1000),
+    lte: new Date(new Date(`${input.dateTo}T23:59:59.999Z`).getTime() + 24 * 3600 * 1000),
+  };
+  const calendarDate = (d: Date) =>
+    new Date(d.getTime() + 12 * 3600 * 1000).toISOString().slice(0, 10);
+  const inRange = (d: Date) => {
+    const c = calendarDate(d);
+    return c >= input.dateFrom && c <= input.dateTo;
   };
   return withTenant(session.tenantId, async (tx) => {
     const linked = await tx.tripDoc.findMany({
@@ -645,6 +645,7 @@ export async function getPendingTripDocs(input: {
     const out: PendingTripDoc[] = [];
     for (const c of chalans) {
       if (linkedSet.has(`CHALAN:${c.id}`)) continue;
+      if (!inRange(c.chalanDate)) continue;
       const firstLr = c.lrs[0]?.lr;
       const totals = chalanTotals(c);
       out.push({
@@ -666,6 +667,7 @@ export async function getPendingTripDocs(input: {
     }
     for (const s of slips) {
       if (linkedSet.has(`BROKER_SLIP:${s.id}`)) continue;
+      if (!inRange(s.slipDate)) continue;
       const totals = slipTotals(s);
       out.push({
         refType: "BROKER_SLIP",
