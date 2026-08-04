@@ -10,7 +10,7 @@ import {
 export async function TripSheetsTab({
   searchParams,
 }: {
-  searchParams: { id?: string; new?: string };
+  searchParams: { id?: string; new?: string; view?: string };
 }) {
   // The register is a peer tab now, so this no longer redirects — doing so
   // navigated away from the whole tabbed screen, which is why Trip Expenses
@@ -109,7 +109,10 @@ export async function TripSheetsTab({
   return (
     <div className="space-y-4">
       {initial && (
-        <div className="text-sm font-medium">Editing trip sheet {initial.tripNo}</div>
+        <div className="text-sm font-medium">
+          {searchParams.view ? "Viewing" : "Editing"} trip sheet {initial.tripNo}
+          {searchParams.view ? " (read-only)" : ""}
+        </div>
       )}
       <TripSettlementForm
         vehicles={vehicles}
@@ -118,6 +121,7 @@ export async function TripSheetsTab({
         bankOptions={banks}
         nextTripNo={nextNo ?? "1"}
         initial={initial}
+        readOnly={!!searchParams.view && !!initial}
       />
     </div>
   );

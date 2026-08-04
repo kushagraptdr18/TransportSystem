@@ -101,8 +101,8 @@ export function TripRegisterClient({
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            title="View / Edit trip sheet"
-            onClick={() => router.push(`/trips?id=${row.original.id}`)}
+            title="View trip sheet (read-only)"
+            onClick={() => router.push(`/trips?id=${row.original.id}&view=1`)}
           >
             <Eye className="h-4 w-4" />
           </Button>

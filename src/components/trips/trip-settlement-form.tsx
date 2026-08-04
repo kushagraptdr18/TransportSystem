@@ -111,6 +111,7 @@ export function TripSettlementForm({
   bankOptions,
   nextTripNo,
   initial,
+  readOnly = false,
 }: {
   vehicles: MasterOption[];
   drivers: MasterOption[];
@@ -118,6 +119,8 @@ export function TripSettlementForm({
   bankOptions: MasterOption[];
   nextTripNo: string;
   initial?: TripSettlementInitial | null;
+  /** View mode from the register: everything visible (detail popups included), no Save/Update */
+  readOnly?: boolean;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -1032,19 +1035,16 @@ export function TripSettlementForm({
       )}
 
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {/* a SETTLED sheet is final: its balance already created a voucher, so
-            editing it would desync the sheet from the money that moved */}
-        {initial?.id && settleInfo.current?.status === "SETTLED" && (
+        {readOnly && (
           <span className="text-xs font-medium text-muted-foreground">
-            Finalized — settled via voucher {settleInfo.current.voucherNo}; this sheet is
-            view-only. Delete the settlement from the +/- Register first if it truly must
-            change.
+            View only — nothing on this screen will be saved. Use Edit from the register to
+            change the sheet.
           </span>
         )}
         <Button variant="outline" onClick={() => router.push("/trips?tab=register")} disabled={busy}>
-          {initial?.id && settleInfo.current?.status === "SETTLED" ? "Close" : "Cancel"}
+          {readOnly ? "Close" : "Cancel"}
         </Button>
-        {!(initial?.id && settleInfo.current?.status === "SETTLED") && (
+        {!readOnly && (
           <Button onClick={submit} disabled={busy || !vehicleId}>
             {busy ? "Saving..." : initial?.id ? "Update Trip Sheet" : "Save Trip Sheet"}
           </Button>
