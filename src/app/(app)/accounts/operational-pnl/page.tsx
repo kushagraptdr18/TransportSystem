@@ -19,11 +19,15 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * slips. Expenses: the owner side of chalans and broker slips (lorry hire),
  * plus every operational ledger head.
  *
- * Ledger sections INCLUDE: Office Management entries and non-vehicle loan
- * interest from Finance. NOTHING from chalans (FleetOps) or broker slips
- * (either side) enters the ledger sections — those are vehicle-operation
- * documents, and the Lorry Hire section already carries them at GROSS
- * freight (before any deduction).
+ * Ledger sections INCLUDE: the CHARGE heads of chalans (FleetOps) and
+ * broker slips — Detention, ODC, Fine Slip, LD, Shortage, Other,
+ * Commission, Mamool, Courier, Payment Charge — plus the Round Off and
+ * Shortage posted at balance-payment time, Office Management entries and
+ * non-vehicle loan interest from Finance. The FREIGHT legs post to parties,
+ * never heads, so they cannot leak in — freight lives only in the Lorry
+ * Hire section at GROSS (before any deduction), which is exactly why the
+ * charge heads must appear here: gross hire + charge effects = net truth.
+ * ADVANCE legs of chalans / broker slips stay out entirely.
  *
  * Excluded on purpose:
  *  - Vehicle-module entries (vehicle expenses, allocations, AdBlue, trip
@@ -52,20 +56,17 @@ const EXCLUDED_REF_TYPES = [
   "DRIVER_SALARY",
   "DRIVER_SALARY_PAY",
   "DRIVER_SHORTAGE",
-  // FleetOps (chalan) & broker slip — BOTH sides: vehicle-operation
-  // documents, already carried gross in the Lorry Hire section; none of
-  // their ledger legs (advances included) belong in the head sections
-  "CHALAN",
-  "CHALAN_ADVANCE",
-  "CHALAN_BALANCE",
-  "CHALAN_BALANCE_ADJ",
-  "FREIGHT_CHALLAN",
-  "BROKER_SLIP",
-  "BROKER_SLIP_ADVANCE",
+  // relative-vehicle expense transfer: its debit side is a vehicle-module
+  // entry (excluded above), so counting only the credit would inflate income
   "BROKER_SLIP_EXP_TRANSFER",
-  "BROKER_ENTRY",
+  // chalan / broker-slip ADVANCES never enter the head sections
+  "CHALAN_ADVANCE",
+  "BROKER_SLIP_ADVANCE",
 ];
-// Office-module entries stay included.
+// Chalan / broker-slip refTypes stay IN: only their CHARGE legs carry
+// account heads (Detention, ODC, Fine Slip, LD, Shortage, Commission,
+// Mamool, Courier, Payment Charge, Round Off at balance time) — the freight
+// legs hit parties, not heads. Office-module entries stay included.
 
 // TDS Payable / Receivable are liability & asset ledgers, never operational
 // income or expense; Vehicle EMI Expense is financing; Freight Income IS the
