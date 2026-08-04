@@ -66,7 +66,7 @@ export async function VehicleFinanceTab() {
         </Button>
       </div>
       <SimpleReport
-        title="Every loan linked to a vehicle. EMI interest reaches that vehicle's P&L on the date it is paid; on a relative-owned vehicle the instalment transfers to the owner's ledger."
+        title="Every loan linked to a vehicle. The FULL EMI posts to Vehicle EMI Expense and reaches that vehicle's P&L on the date it is paid; on a relative-owned vehicle the instalment transfers to the owner's ledger."
         columns={COLUMNS}
         rows={rows}
         fileName="vehicle-finance"

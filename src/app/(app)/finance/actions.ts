@@ -255,10 +255,17 @@ const emiSchema = z.object({
  * Record one instalment (or the closing settlement) and post it.
  *
  * Creates a real Payment/Receipt Voucher so the instalment shows up in the
- * Voucher Register and every ledger report alongside everything else. On a
- * vehicle loan the interest is booked against the vehicle so it reaches vehicle
- * P&L; if that vehicle belongs to a relative owner, the cost transfers to the
- * owner's ledger under the existing relative-vehicle rule.
+ * Voucher Register and every ledger report alongside everything else.
+ *
+ * VEHICLE loans post the WHOLE instalment (principal + interest + penalty +
+ * charges) to one "Vehicle EMI Expense" head, stamped with the vehicle — this
+ * ERP keeps no fixed assets, depreciation or loan-liability accounting, so
+ * splitting the EMI buys nothing and the full amount is simply the cost of
+ * operating the vehicle. The loan module still tracks principal/interest for
+ * outstanding, reminders and TDS (TDS stays limited to the interest).
+ * Non-vehicle loans keep the standard split: principal settles the loan
+ * party, interest/penalty/charges post to their own heads. On a relative
+ * vehicle the whole instalment transfers to the owner's ledger as before.
  */
 export async function payLoanEmi(
   input: unknown
@@ -383,35 +390,49 @@ export async function payLoanEmi(
           narration: `TDS on interest — loan ${loan.loanNo}`,
         });
       }
-      // principal settles the loan account itself
-      if (d.principal > 0) {
-        entries.push({
-          ...common,
-          partyId: loan.partyId,
-          side: taken ? "DEBIT" : "CREDIT",
-          amount: d.principal,
-          narration: `Principal repaid — loan ${loan.loanNo}`,
-        });
-      }
-      // interest, penalty and charges are the actual cost (or income)
-      const costLines: [string, number][] = [
-        [taken ? "Interest Expense" : "Interest Income", d.interest],
-        ["Penalty", d.penalty],
-        ["Other Charges", d.otherAmt],
-      ];
-      for (const [headName, amount] of costLines) {
-        if (amount <= 0) continue;
-        const headId = await ensureAccountHead(tx, session, headName, taken ? "EXPENSE" : "INCOME");
+      // A VEHICLE loan's whole instalment is one operating cost: no fixed
+      // assets or loan-liability ledgers exist in this ERP, so the full EMI
+      // debits "Vehicle EMI Expense" (vehicle-stamped) and nothing splits.
+      const vehicleEmiRule = !!loan.vehicleId && taken;
+      if (vehicleEmiRule) {
+        const headId = await ensureAccountHead(tx, session, "Vehicle EMI Expense", "EXPENSE");
         entries.push({
           ...common,
           accountHeadId: headId,
-          // a vehicle loan books its cost against the vehicle, so vehicle P&L
-          // shows the EMI on the date it was paid
           vehicleId: loan.vehicleId,
-          side: taken ? "DEBIT" : "CREDIT",
-          amount,
-          narration: `${headName} — loan ${loan.loanNo} ${label}`,
+          side: "DEBIT",
+          amount: total,
+          narration: `Vehicle EMI — loan ${loan.loanNo} ${label}`,
         });
+      } else {
+        // principal settles the loan account itself
+        if (d.principal > 0) {
+          entries.push({
+            ...common,
+            partyId: loan.partyId,
+            side: taken ? "DEBIT" : "CREDIT",
+            amount: d.principal,
+            narration: `Principal repaid — loan ${loan.loanNo}`,
+          });
+        }
+        // interest, penalty and charges are the actual cost (or income)
+        const costLines: [string, number][] = [
+          [taken ? "Interest Expense" : "Interest Income", d.interest],
+          ["Penalty", d.penalty],
+          ["Other Charges", d.otherAmt],
+        ];
+        for (const [headName, amount] of costLines) {
+          if (amount <= 0) continue;
+          const headId = await ensureAccountHead(tx, session, headName, taken ? "EXPENSE" : "INCOME");
+          entries.push({
+            ...common,
+            accountHeadId: headId,
+            vehicleId: loan.vehicleId,
+            side: taken ? "DEBIT" : "CREDIT",
+            amount,
+            narration: `${headName} — loan ${loan.loanNo} ${label}`,
+          });
+        }
       }
 
       // Relative vehicle: the company paid an EMI on a vehicle it does not own,
@@ -420,7 +441,8 @@ export async function payLoanEmi(
       if (loan.vehicleId && taken) {
         const vehicle = await tx.vehicle.findFirst({ where: { id: loan.vehicleId } });
         if (vehicle?.ownershipType === "RELATIVE" && vehicle.ownerId) {
-          const headId = await ensureAccountHead(tx, session, "Interest Expense", "EXPENSE");
+          // credit the same head the EMI debited, so the transfer nets it out
+          const headId = await ensureAccountHead(tx, session, "Vehicle EMI Expense", "EXPENSE");
           entries.push(
             {
               ...common,

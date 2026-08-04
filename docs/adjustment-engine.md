@@ -254,13 +254,16 @@ pay each EMI, close it.
   so a fixed EMI can never overpay the loan.
 - **Vehicle loans:** since 4 Aug 2026 the **full instalment** (principal +
   interest + penalty + charges) appears in Vehicle P&L as its own "EMI
-  Expenses" row on the PAYMENT date — a profitability-analysis decision: the
-  whole EMI is the financing cost of running that vehicle. This is analysis
-  only; the LEDGER is unchanged (principal still settles the loan liability,
-  interest/penalty/charges post to their heads, and Trial Balance / company
-  P&L are untouched). The Vehicle Cost Summary mirrors the same figure so the
-  two reports can never disagree. EMIs come only from Finance & Loans — no
-  manual entry in the report.
+  Expenses" row on the PAYMENT date, and (later the same day) the LEDGER
+  follows the same rule: the whole EMI debits one **"Vehicle EMI Expense"**
+  head (vehicle-stamped) with bank/TDS on the credit side — no principal leg
+  to the loan party, no Interest Expense split. This ERP keeps no fixed
+  assets, depreciation or loan-liability ledgers, so the split bought
+  nothing. The loan register still tracks principal/interest for outstanding
+  and TDS-on-interest. NON-vehicle loans keep the standard split. A relative
+  vehicle's transfer credits the same Vehicle EMI Expense head, netting it
+  out. The Vehicle Cost Summary mirrors the P&L figure so the two reports can
+  never disagree. EMIs come only from Finance & Loans — no manual entry.
 - **Relative vehicles** reuse the existing rule: the whole instalment transfers
   to the relative owner's ledger, exactly as diesel and every expense head do.
 - Deleting an instalment removes its voucher and postings and reopens the loan;
