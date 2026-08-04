@@ -33,6 +33,8 @@ const KEEP = [
   "User",
   "UserFirm",
   "UserPermission",
+  // role -> permission matrix is configuration, not operational data
+  "RolePermission",
   // document numbering: kept so a fresh LR does not reuse a number that was
   // already printed and handed to a customer before the wipe
   "DocumentSequence",
