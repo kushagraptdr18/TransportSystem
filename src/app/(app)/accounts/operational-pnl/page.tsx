@@ -19,14 +19,18 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * slips. Expenses: the owner side of chalans and broker slips (lorry hire),
  * plus every operational ledger head.
  *
+ * Ledger sections INCLUDE: chalan / broker-slip operational charge heads
+ * (Detention, ODC, Fine Slip, LD, Shortage, Commission, Mamool, Courier,
+ * Round Off, Other), everything from Office Management, and non-vehicle
+ * loan interest from Finance.
+ *
  * Excluded on purpose:
  *  - Vehicle-module entries (vehicle expenses, allocations, AdBlue, trip
  *    urea, driver salary/advance/FNF/shortage) — costed in Vehicle P&L.
- *  - EVERY Finance-module entry: loan disbursements, every EMI voucher,
- *    every Other Receipt/Payment voucher, and the "Vehicle EMI Expense"
- *    head — financing is never operational.
- *  - Chalan / broker-slip ledger legs — those documents are already counted
- *    at document value, so their ledger echoes would double-count.
+ *  - VEHICLE loans (disbursement, EMI, interest, charges — by loan id and
+ *    EMI voucher id) and the "Vehicle EMI Expense" head.
+ *  - Other Receipts/Payments (FinanceTxn vouchers) — never operational.
+ *  - TDS Payable / TDS Receivable heads — liability/asset, not P&L.
  *  - The "Freight Income" head — that is the billed revenue itself; invoice
  *    ADDITIONAL charge heads stay in ledger income, per their own heads.
  *
@@ -47,21 +51,25 @@ const EXCLUDED_REF_TYPES = [
   "DRIVER_SALARY",
   "DRIVER_SALARY_PAY",
   "DRIVER_SHORTAGE",
-  // finance module
-  "LOAN",
-  // documents already counted at document value above
-  "CHALAN",
-  "CHALAN_ADVANCE",
-  "CHALAN_BALANCE",
-  "CHALAN_BALANCE_ADJ",
-  "FREIGHT_CHALLAN",
-  "BROKER_SLIP",
-  "BROKER_SLIP_ADVANCE",
+  // relative-vehicle expense transfer: its debit side is a vehicle-module
+  // entry (excluded above), so counting only the credit would inflate income
   "BROKER_SLIP_EXP_TRANSFER",
-  "BROKER_ENTRY",
 ];
+// NOTE: chalan / broker-slip refTypes are deliberately INCLUDED — their head
+// legs are exactly the operational charges (Detention, ODC, Fine Slip, LD,
+// Shortage, Commission, Mamool, Courier, Round Off, Other) that belong in
+// the ledger sections; the freight legs hit parties, not heads, so they
+// never enter this aggregation. Office-module entries are included too.
 
-const EXCLUDED_HEADS = ["Vehicle EMI Expense", "Freight Income"];
+// TDS Payable / Receivable are liability & asset ledgers, never operational
+// income or expense; Vehicle EMI Expense is financing; Freight Income IS the
+// billed revenue counted above.
+const EXCLUDED_HEADS = [
+  "Vehicle EMI Expense",
+  "Freight Income",
+  "TDS Payable",
+  "TDS Receivable",
+];
 
 export default async function OperationalPnlPage({
   searchParams,
@@ -82,21 +90,28 @@ export default async function OperationalPnlPage({
   const data = await withTenant(session.tenantId, async (tx) => {
     const scope = { firmId: session.firmId, fyId: session.fyId };
 
-    // finance postings ride the generic VOUCHER refType, so the module's
-    // vouchers (EMIs + other receipts/payments) are excluded by id
-    const [emiVouchers, financeTxns] = await Promise.all([
-      tx.loanEmi.findMany({
-        where: { ...scope, deletedAt: null, voucherId: { not: null } },
-        select: { voucherId: true },
+    // Finance is included EXCEPT vehicle loans and Other Receipts/Payments.
+    // Finance postings ride the generic VOUCHER refType, so the excluded
+    // vouchers are collected by id: every VEHICLE-loan EMI voucher plus every
+    // FinanceTxn (other receipt/payment) voucher. Non-vehicle loan EMIs stay
+    // in — their interest is operational finance cost/income.
+    const [vehicleLoans, financeTxns] = await Promise.all([
+      tx.loan.findMany({
+        where: { ...scope, loanType: "VEHICLE" },
+        select: { id: true, emis: { select: { voucherId: true } } },
       }),
       tx.financeTxn.findMany({
         where: { ...scope, voucherId: { not: null } },
         select: { voucherId: true },
       }),
     ]);
+    const vehicleLoanIds = vehicleLoans.map((l) => l.id);
     const financeVoucherIds = Array.from(
       new Set(
-        [...emiVouchers, ...financeTxns].map((v) => v.voucherId).filter(Boolean) as string[]
+        [
+          ...vehicleLoans.flatMap((l) => l.emis.map((e) => e.voucherId)),
+          ...financeTxns.map((t) => t.voucherId),
+        ].filter(Boolean) as string[]
       )
     );
 
@@ -138,11 +153,16 @@ export default async function OperationalPnlPage({
           ...scope,
           accountHeadId: { not: null },
           refType: { notIn: EXCLUDED_REF_TYPES },
-          // every voucher the Finance module created (EMI / other
-          // receipts & payments) is financial, never operational
-          ...(financeVoucherIds.length
-            ? { NOT: { refType: "VOUCHER", refId: { in: financeVoucherIds } } }
-            : {}),
+          // vehicle-loan vouchers + other receipts/payments are financial,
+          // never operational; vehicle-loan disbursements likewise
+          AND: [
+            ...(financeVoucherIds.length
+              ? [{ NOT: { refType: "VOUCHER", refId: { in: financeVoucherIds } } }]
+              : []),
+            ...(vehicleLoanIds.length
+              ? [{ NOT: { refType: "LOAN", refId: { in: vehicleLoanIds } } }]
+              : []),
+          ],
           ...(dateWhere ? { date: dateWhere } : {}),
         },
         _sum: { amount: true },
