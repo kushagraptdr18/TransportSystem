@@ -213,6 +213,36 @@ export function TripSettlementForm({
   });
   const [popup, setPopup] = React.useState<"DIESEL" | "ADVANCE" | "UREA" | "OPEX" | null>(null);
 
+  // Saved sheets are frozen: totals come from the snapshot and no live fetch
+  // runs, which used to leave every "click for detail" popup EMPTY. Opening a
+  // popup now lazily fetches the detail rows for the saved period — read-only,
+  // merged into `rows` only, so the frozen totals are never touched.
+  const detailFetched = React.useRef(false);
+  const openPopup = (p: "DIESEL" | "ADVANCE" | "UREA" | "OPEX") => {
+    setPopup(p);
+    if (liveMode || detailFetched.current || !vehicleId || !fromIso || !toIso) return;
+    detailFetched.current = true;
+    fetchVehicleExpensesForTrip({ vehicleId, dateFrom: fromIso, dateTo: toIso })
+      .then((r) => setExp((prev) => ({ ...prev, rows: r.rows })))
+      .catch(() => {});
+    fetchAdblueForTrip({ vehicleId, dateFrom: fromIso, dateTo: toIso })
+      .then((r) => setUrea((prev) => ({ ...prev, rows: r.rows })))
+      .catch(() => {});
+    fetchOperatingExpensesForTrip({ vehicleId, dateFrom: fromIso, dateTo: toIso })
+      .then((r) => setOpExp((prev) => ({ ...prev, rows: r.rows })))
+      .catch(() => {});
+    if (driverId)
+      fetchDriverAdvancesForTrip({
+        driverId,
+        vehicleId,
+        dateFrom: fromIso,
+        dateTo: toIso,
+        includeTripId: initial?.id ?? null,
+      })
+        .then((r) => setAdvances((prev) => ({ ...prev, rows: r.rows })))
+        .catch(() => {});
+  };
+
   React.useEffect(() => {
     if (!liveMode || !vehicleId || !fromIso || !toIso) return;
     let cancelled = false;
@@ -674,7 +704,7 @@ export function TripSettlementForm({
                 <button
                   type="button"
                   className="text-primary underline-offset-2 hover:underline"
-                  onClick={() => setPopup("DIESEL")}
+                  onClick={() => openPopup("DIESEL")}
                 >
                   Diesel (click for details)
                 </button>
@@ -684,7 +714,7 @@ export function TripSettlementForm({
                 <button
                   type="button"
                   className="text-primary underline-offset-2 hover:underline"
-                  onClick={() => setPopup("ADVANCE")}
+                  onClick={() => openPopup("ADVANCE")}
                 >
                   Driver Advance (click for details)
                 </button>
@@ -698,7 +728,7 @@ export function TripSettlementForm({
                 <button
                   type="button"
                   className="text-primary underline-offset-2 hover:underline"
-                  onClick={() => setPopup("UREA")}
+                  onClick={() => openPopup("UREA")}
                 >
                   Urea ({urea.totalQty.toLocaleString("en-IN")} L ×
                 </button>
@@ -711,7 +741,7 @@ export function TripSettlementForm({
                 <button
                   type="button"
                   className="text-primary underline-offset-2 hover:underline"
-                  onClick={() => setPopup("OPEX")}
+                  onClick={() => openPopup("OPEX")}
                 >
                   Auto Fetched Expenses ({opExp.rows.length}) — click for details
                 </button>
@@ -798,13 +828,13 @@ export function TripSettlementForm({
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               <div className="flex items-center justify-between">
-                <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => setPopup("DIESEL")}>
+                <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => openPopup("DIESEL")}>
                   Diesel (click for details)
                 </button>
                 <b className="tabular-nums">{formatMoney(exp.dieselTotal)}</b>
               </div>
               <div className="flex items-center justify-between">
-                <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => setPopup("ADVANCE")}>
+                <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => openPopup("ADVANCE")}>
                   Driver Advance (click for details)
                 </button>
                 <b className="tabular-nums">{formatMoney(advances.total)}</b>
@@ -825,7 +855,7 @@ export function TripSettlementForm({
                 </div>
               </div>
               <div className="flex items-center justify-between gap-2">
-                <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => setPopup("UREA")}>
+                <button type="button" className="text-primary underline-offset-2 hover:underline" onClick={() => openPopup("UREA")}>
                   Urea ({urea.totalQty.toLocaleString("en-IN")} L ×
                 </button>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1001,13 +1031,24 @@ export function TripSettlementForm({
         </Card>
       )}
 
-      <div className="flex flex-wrap justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {/* a SETTLED sheet is final: its balance already created a voucher, so
+            editing it would desync the sheet from the money that moved */}
+        {initial?.id && settleInfo.current?.status === "SETTLED" && (
+          <span className="text-xs font-medium text-muted-foreground">
+            Finalized — settled via voucher {settleInfo.current.voucherNo}; this sheet is
+            view-only. Delete the settlement from the +/- Register first if it truly must
+            change.
+          </span>
+        )}
         <Button variant="outline" onClick={() => router.push("/trips?tab=register")} disabled={busy}>
-          Cancel
+          {initial?.id && settleInfo.current?.status === "SETTLED" ? "Close" : "Cancel"}
         </Button>
-        <Button onClick={submit} disabled={busy || !vehicleId}>
-          {busy ? "Saving..." : initial?.id ? "Update Trip Sheet" : "Save Trip Sheet"}
-        </Button>
+        {!(initial?.id && settleInfo.current?.status === "SETTLED") && (
+          <Button onClick={submit} disabled={busy || !vehicleId}>
+            {busy ? "Saving..." : initial?.id ? "Update Trip Sheet" : "Save Trip Sheet"}
+          </Button>
+        )}
       </div>
 
       {/* -------- popups -------- */}

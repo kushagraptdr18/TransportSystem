@@ -282,6 +282,16 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
           include: { expenses: true },
         });
         if (before.deletedAt) throw new Error("Trip has been deleted");
+        // a SETTLED trip is final — its balance already created a voucher, so
+        // an edit would desync the sheet from the money that moved
+        const settled = await tx.driverSettlement.findFirst({
+          where: { tripId: data.id, deletedAt: null, status: "SETTLED" },
+        });
+        if (settled) {
+          throw new Error(
+            `Trip is finalized — settled via voucher ${settled.voucherNo ?? ""}. Delete the settlement from the +/- Register first if it must change.`
+          );
+        }
         await tx.tripExpense.deleteMany({ where: { tripId: data.id } });
         const updated = await tx.trip.update({
           where: { id: data.id },
