@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowLeftRight, Eye, LogOut, Plus, Trash2 } from "lucide-react";
-import { formatDate, parseDdMmYyyy } from "@/lib/utils";
+import { formatDate, formatMoney, parseDdMmYyyy } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
-import { DataTable } from "@/components/data/data-table";
+import { DataTable, type DataTableColumnMeta } from "@/components/data/data-table";
 import { DateInput } from "@/components/data/date-input";
 import { ExportButton } from "@/components/data/export-button";
 import { FileUploadField } from "@/components/data/file-upload-field";
@@ -42,6 +42,13 @@ export interface DriverRow {
   id: string;
   driverCode: string;
   name: string;
+  /** derived from the assigned vehicle's ownership: COMPANY | RELATIVE | BROKER | "" */
+  driverType: string;
+  /** lifetime totals for the expense summary (drill down via the other tabs) */
+  advancePaid: number;
+  outstandingAdvance: number;
+  settlementPaid: number;
+  totalExpense: number;
   /** linked DRIVER-group ledger */
   partyId: string | null;
   partyName: string;
@@ -203,6 +210,83 @@ export function DriverClient({
       header: "Current Vehicle",
       cell: ({ row }) =>
         row.original.currentVehicle || <span className="text-muted-foreground">—</span>,
+    },
+    {
+      accessorKey: "driverType",
+      header: "Type",
+      cell: ({ row }) =>
+        row.original.driverType ? (
+          <Badge
+            variant={
+              row.original.driverType === "COMPANY"
+                ? "default"
+                : row.original.driverType === "RELATIVE"
+                  ? "secondary"
+                  : "outline"
+            }
+            title="Derived from the assigned vehicle's ownership"
+          >
+            {row.original.driverType}
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+    {
+      accessorKey: "advancePaid",
+      header: "Advance Paid",
+      cell: ({ row }) => (
+        <a
+          href={`/vehicle/driver-management?tab=advance&driver=${row.original.id}`}
+          className="tabular-nums text-primary underline-offset-2 hover:underline"
+          onClick={(e) => e.stopPropagation()}
+          title="Open this driver's advances"
+        >
+          {formatMoney(row.original.advancePaid)}
+        </a>
+      ),
+      meta: { numeric: true } satisfies DataTableColumnMeta<DriverRow>,
+    },
+    {
+      accessorKey: "settlementPaid",
+      header: "Settlement Paid",
+      cell: ({ row }) => (
+        <a
+          href={`/vehicle/driver-management?tab=settlement&driver=${row.original.id}&status=SETTLED`}
+          className="tabular-nums text-primary underline-offset-2 hover:underline"
+          onClick={(e) => e.stopPropagation()}
+          title="Open this driver's settled payments"
+        >
+          {formatMoney(row.original.settlementPaid)}
+        </a>
+      ),
+      meta: { numeric: true } satisfies DataTableColumnMeta<DriverRow>,
+    },
+    {
+      accessorKey: "totalExpense",
+      header: "Total Driver Expense",
+      cell: ({ row }) => (
+        <span className="font-medium tabular-nums">{formatMoney(row.original.totalExpense)}</span>
+      ),
+      meta: { numeric: true } satisfies DataTableColumnMeta<DriverRow>,
+    },
+    {
+      accessorKey: "outstandingAdvance",
+      header: "Outstanding Adv",
+      cell: ({ row }) =>
+        row.original.outstandingAdvance > 0 ? (
+          <a
+            href={`/vehicle/driver-management?tab=advance&driver=${row.original.id}`}
+            className="tabular-nums text-destructive underline-offset-2 hover:underline"
+            onClick={(e) => e.stopPropagation()}
+            title="Pending (unadjusted) advances"
+          >
+            {formatMoney(row.original.outstandingAdvance)}
+          </a>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+      meta: { numeric: true } satisfies DataTableColumnMeta<DriverRow>,
     },
     {
       accessorKey: "joinDate",

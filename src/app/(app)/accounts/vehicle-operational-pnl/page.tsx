@@ -59,7 +59,8 @@ export default async function VehicleOperationalPnlPage({
       await tx.vehicle.findMany({ where: { ownershipType: "OWNER" }, select: { id: true } })
     ).map((v) => v.id);
 
-    const [chalans, slips, heads, headSums, emis] = await Promise.all([
+    const [chalans, slips, heads, headSums, advances, settlements, assignments, emis] =
+      await Promise.all([
       tx.chalan.aggregate({
         where: {
           ...scope,
@@ -112,6 +113,28 @@ export default async function VehicleOperationalPnlPage({
         },
         _sum: { amount: true },
       }),
+      // company-driver payments: advances given and settlements actually
+      // paid/received — a driver counts as a COMPANY driver when the vehicle
+      // on the transaction (or his assignment on that date) is OWN
+      tx.driverAdvance.findMany({
+        where: {
+          ...scope,
+          deletedAt: null,
+          ...(dateWhere ? { date: dateWhere } : {}),
+        },
+        select: { driverId: true, vehicleId: true, date: true, amount: true },
+      }),
+      tx.driverSettlement.findMany({
+        where: {
+          ...scope,
+          deletedAt: null,
+          status: "SETTLED",
+          voucherId: { not: null },
+          ...(dateWhere ? { settledDate: dateWhere } : {}),
+        },
+        select: { driverId: true, vehicleId: true, settledDate: true, date: true, amount: true },
+      }),
+      tx.driverAssignment.findMany(),
       // full EMI of vehicle loans on own vehicles, on payment date — the same
       // figure the Vehicle P&L and the Vehicle EMI Expense ledger carry
       tx.loanEmi.findMany({
@@ -128,10 +151,22 @@ export default async function VehicleOperationalPnlPage({
         select: { total: true },
       }),
     ]);
-    return { ownCount: ownIds.length, chalans, slips, heads, headSums, emis };
+    return {
+      ownIds,
+      ownCount: ownIds.length,
+      chalans,
+      slips,
+      heads,
+      headSums,
+      advances,
+      settlements,
+      assignments,
+      emis,
+    };
   });
 
-  const { ownCount, chalans, slips, heads, headSums, emis } = data;
+  const { ownIds, ownCount, chalans, slips, heads, headSums, advances, settlements, assignments, emis } =
+    data;
   const n = (v: unknown) => r2(toNum(String(v ?? 0)));
 
   // ---- FleetOps income (own vehicles) ----
@@ -211,10 +246,41 @@ export default async function VehicleOperationalPnlPage({
     String(a.kind).localeCompare(String(b.kind)) || String(a.head).localeCompare(String(b.head))
   );
 
+  // ---- company-driver payments (advances + settled payments, net of
+  // settlement receipts). A driver is a COMPANY driver when the vehicle on
+  // the transaction — or his assignment on that date — is OWN; relative and
+  // broker driver payments never enter this report.
+  const ownSet = new Set(ownIds);
+  const vehicleAt = (driverId: string, at: Date): string | null => {
+    const a = assignments.find(
+      (x) => x.driverId === driverId && x.fromDate <= at && (!x.toDate || x.toDate >= at)
+    );
+    return a?.vehicleId ?? null;
+  };
+  const isCompanyDriverTxn = (t: { driverId: string; vehicleId: string | null; at: Date }) =>
+    t.vehicleId ? ownSet.has(t.vehicleId) : ownSet.has(vehicleAt(t.driverId, t.at) ?? "");
+  const advancePaid = r2(
+    advances
+      .filter((a) => isCompanyDriverTxn({ driverId: a.driverId, vehicleId: a.vehicleId, at: a.date }))
+      .reduce((s, a) => s + toNum(String(a.amount)), 0)
+  );
+  let settlementPaid = 0;
+  let settlementReceived = 0;
+  for (const st of settlements) {
+    const at = st.settledDate ?? st.date;
+    if (!isCompanyDriverTxn({ driverId: st.driverId, vehicleId: st.vehicleId, at })) continue;
+    const amt = toNum(String(st.amount));
+    if (amt > 0) settlementPaid = r2(settlementPaid + amt);
+    else settlementReceived = r2(settlementReceived + Math.abs(amt));
+  }
+  const driverPayments = r2(advancePaid + settlementPaid - settlementReceived);
+
   // ---- vehicle loan EMIs (full instalment) ----
   const loanExpense = r2(emis.reduce((sum, e) => sum + toNum(String(e.total)), 0));
 
-  const profit = r2(totalVehicleIncome + moduleIncome - moduleExpense - loanExpense);
+  const profit = r2(
+    totalVehicleIncome + moduleIncome - moduleExpense - driverPayments - loanExpense
+  );
 
   const filters: FilterDef[] = [{ type: "daterange", key: "date", label: "Period" }];
   const money = (v: number) => formatMoney(v);
@@ -268,7 +334,7 @@ export default async function VehicleOperationalPnlPage({
             <CardTitle className="text-sm text-muted-foreground">Total Vehicle Expenses</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold tabular-nums">
-            {money(r2(moduleExpense + loanExpense))}
+            {money(r2(moduleExpense + driverPayments + loanExpense))}
           </CardContent>
         </Card>
         <Card>
@@ -350,6 +416,15 @@ export default async function VehicleOperationalPnlPage({
             </div>
             <div>
               <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                Driver Payments (Company Drivers)
+              </div>
+              {line("Driver Advances Paid", advancePaid)}
+              {line("Driver Settlement Payments", settlementPaid)}
+              {line("Less: Settlement Receipts (driver returned)", settlementReceived, { less: true })}
+              {line("Total Driver Payments", driverPayments, { strong: true })}
+            </div>
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
                 Vehicle Loan Expenses
               </div>
               {line(`Vehicle Loan EMIs (${emis.length} instalments, full EMI)`, loanExpense)}
@@ -368,6 +443,7 @@ export default async function VehicleOperationalPnlPage({
           {line("Broker Owner Side Grand Total Freight", slipTotal)}
           {line("Vehicle Module Income (CR)", moduleIncome)}
           {line("Vehicle Module Expenses (DR)", moduleExpense, { less: true })}
+          {line("Driver Payments (Company Drivers)", driverPayments, { less: true })}
           {line("Vehicle Loan Expenses", loanExpense, { less: true })}
           <div
             className={`mt-1 flex justify-between border-t pt-1 text-base font-bold ${profit >= 0 ? "text-emerald-600" : "text-destructive"}`}
