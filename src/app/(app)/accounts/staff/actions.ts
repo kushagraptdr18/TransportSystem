@@ -489,12 +489,12 @@ export async function payStaffSalary(input: {
 
 /**
  * Balanced salary posting:
- *   DEBIT  SALARY EXPENSE          gross
+ *   DEBIT  Salary Expense          gross
  *   CREDIT staff party             net + advanceRecovery + loanRecovery
  *          (net stays payable until paid; recoveries clear the advance/loan
  *           debits already sitting on the party)
- *   CREDIT PENALTY                 penalties
- *   CREDIT SALARY DEDUCTIONS       attendance + leave + other deductions
+ *   CREDIT Penalty                 penalties
+ *   CREDIT Salary Deductions (Staff)  attendance + leave + other deductions
  * and when PAID:
  *   CREDIT bank/cash               net,  DEBIT staff party net
  */
@@ -521,7 +521,7 @@ async function postSalaryLedger(
   );
 
   const entries: LedgerPostEntry[] = [];
-  const expenseHead = await salaryHead(tx, session.tenantId, "SALARY EXPENSE", "EXPENSE");
+  const expenseHead = await salaryHead(tx, session.tenantId, "Salary Expense", "EXPENSE");
   entries.push({
     ...common,
     accountHeadId: expenseHead,
@@ -537,11 +537,11 @@ async function postSalaryLedger(
     narration: `Salary ${monthLabel}${advRec ? ` (advance recovery ${advRec})` : ""}${loanRec ? ` (loan recovery ${loanRec})` : ""}`,
   });
   if (penalties > 0) {
-    const h = await salaryHead(tx, session.tenantId, "PENALTY", "ADJUSTMENT");
+    const h = await salaryHead(tx, session.tenantId, "Penalty", "EXPENSE");
     entries.push({ ...common, accountHeadId: h, side: "CREDIT", amount: penalties, narration: `Penalty — salary ${monthLabel}` });
   }
   if (otherDed > 0) {
-    const h = await salaryHead(tx, session.tenantId, "SALARY DEDUCTIONS", "ADJUSTMENT");
+    const h = await salaryHead(tx, session.tenantId, "Salary Deductions (Staff)", "INCOME");
     entries.push({ ...common, accountHeadId: h, side: "CREDIT", amount: otherDed, narration: `Deductions — salary ${monthLabel}` });
   }
   if (s.paymentStatus === "PAID" && s.paymentHeadId && net > 0) {
