@@ -109,7 +109,7 @@ export function ChalanRegisterClient({
     { accessorKey: "vehicle", header: "Vehicle" },
     {
       accessorKey: "lrCount",
-      header: "LRs",
+      header: "Total LRs",
       meta: { numeric: true, total: (r: ChalanRegisterRow[]) => r.reduce((s, x) => s + x.lrCount, 0) },
     },
     {
@@ -129,6 +129,18 @@ export function ChalanRegisterClient({
       header: "Commission",
       cell: ({ row }) => formatMoney(row.original.commissionAmt),
       meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "commissionAmt") },
+    },
+    {
+      accessorKey: "mamool",
+      header: "Mamul",
+      cell: ({ row }) => (row.original.mamool ? formatMoney(row.original.mamool) : ""),
+      meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "mamool") },
+    },
+    {
+      accessorKey: "courierCharge",
+      header: "Courier",
+      cell: ({ row }) => (row.original.courierCharge ? formatMoney(row.original.courierCharge) : ""),
+      meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "courierCharge") },
     },
     {
       accessorKey: "advanceTotal",
@@ -170,18 +182,6 @@ export function ChalanRegisterClient({
           </Link>
         );
       },
-    },
-    {
-      accessorKey: "mamool",
-      header: "Mamul",
-      cell: ({ row }) => (row.original.mamool ? formatMoney(row.original.mamool) : ""),
-      meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "mamool") },
-    },
-    {
-      accessorKey: "courierCharge",
-      header: "Courier",
-      cell: ({ row }) => (row.original.courierCharge ? formatMoney(row.original.courierCharge) : ""),
-      meta: { numeric: true, total: (r: ChalanRegisterRow[]) => sum(r, "courierCharge") },
     },
     {
       accessorKey: "shortageWt",
@@ -325,25 +325,26 @@ export function ChalanRegisterClient({
             rows={rows}
             fileName="chalan-register"
             columns={[
+              // same 19-column sequence as the grid
               { header: "Chalan No", key: "chalanNo" },
               { header: "Date", accessor: (r) => formatDate(r.chalanDate) },
               { header: "Broker", key: "broker" },
               { header: "Vehicle", key: "vehicle" },
-              { header: "LRs", key: "lrCount", numeric: true },
+              { header: "Total LRs", key: "lrCount", numeric: true },
               { header: "Freight", key: "freight", numeric: true },
               { header: "TDS", key: "tdsAmt", numeric: true },
               { header: "Commission", key: "commissionAmt", numeric: true },
+              { header: "Mamool", key: "mamool", numeric: true },
+              { header: "Courier Charges", key: "courierCharge", numeric: true },
               { header: "Advance", key: "advanceTotal", numeric: true },
               { header: "Balance", key: "balance", numeric: true },
-              { header: "Mamul", key: "mamool", numeric: true },
-              { header: "Courier", key: "courierCharge", numeric: true },
-              { header: "Shortage Wt", key: "shortageWt", numeric: true },
+              { header: "Status", accessor: (r) => (r.isFinal ? "FINAL" : "DRAFT") },
+              { header: "POD Status", accessor: (r) => (r.lrCount ? `${r.podDone}/${r.lrCount}` : "") },
+              { header: "Shortage Weight", key: "shortageWt", numeric: true },
               { header: "Shortage Paid", key: "shortage", numeric: true },
               { header: "Round Off", key: "roundOff", numeric: true },
-              { header: "Status", accessor: (r) => (r.isFinal ? "FINAL" : "DRAFT") },
               { header: "Balance Payment", accessor: (r) => (r.paymentStatus === "PAID" ? "PAID" : "PENDING") },
               { header: "Bill Status", key: "billStatus" },
-              { header: "Shortage", accessor: (r) => (r.shortageWt > 0 ? "YES" : "NO") },
             ]}
           />
           <Button asChild size="sm">

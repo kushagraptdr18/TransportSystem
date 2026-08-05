@@ -319,10 +319,18 @@ function Brand() {
   );
 }
 
+const SEARCH_TARGETS = [
+  { value: "LR", label: "LR", href: "/lr/register" },
+  { value: "CHALAN", label: "Chalan", href: "/chalan/register" },
+  { value: "BILL", label: "Bill", href: "/billing/register" },
+  { value: "SLIP", label: "Broker Slip", href: "/broker/register" },
+];
+
 export function TopNav({ firmName, fyLabel, userName, role }: TopNavProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [q, setQ] = React.useState("");
+  const [searchType, setSearchType] = React.useState("LR");
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   return (
@@ -359,19 +367,34 @@ export function TopNav({ firmName, fyLabel, userName, role }: TopNavProps) {
           </Badge>
         </Link>
 
+        {/* universal search: each document type searches its own register */}
         <form
-          className="ml-auto hidden w-full max-w-xs items-center md:flex"
+          className="ml-auto hidden w-full max-w-md items-center gap-1 md:flex"
           onSubmit={(e) => {
             e.preventDefault();
-            if (q.trim()) router.push(`/lr/register?q=${encodeURIComponent(q.trim())}`);
+            if (!q.trim()) return;
+            const target = SEARCH_TARGETS.find((t) => t.value === searchType) ?? SEARCH_TARGETS[0];
+            router.push(`${target.href}?q=${encodeURIComponent(q.trim())}`);
           }}
         >
+          <select
+            value={searchType}
+            onChange={(e) => setSearchType(e.target.value)}
+            className="h-9 shrink-0 rounded-full border border-muted bg-background px-2 text-xs focus:outline-none"
+            aria-label="Search document type"
+          >
+            {SEARCH_TARGETS.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
           <div className="relative w-full">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search LR number..."
+              placeholder={`Search ${(SEARCH_TARGETS.find((t) => t.value === searchType) ?? SEARCH_TARGETS[0]).label} number...`}
               className="h-9 rounded-full border-muted bg-background pl-9"
             />
           </div>
