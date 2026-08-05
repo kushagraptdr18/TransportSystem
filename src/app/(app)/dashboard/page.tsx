@@ -1,4 +1,4 @@
-import { ClipboardCheck, FileCheck2, IndianRupee } from "lucide-react";
+import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,8 +20,10 @@ export default async function DashboardPage() {
   const base = new Date(`${todayCal}T00:00:00Z`).getTime();
   const window = [-2, -1, 0, 1, 2].map((off) => new Date(base + off * dayMs).toISOString().slice(0, 10));
 
-  const { expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, emiActive, emiDue } =
-    await withTenant(session.tenantId, async (tx) => {
+  const {
+    expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, emiActive, emiDue,
+    laneAlive, laneCooling, laneSleeping,
+  } = await withTenant(session.tenantId, async (tx) => {
       const lrs = await tx.lr.findMany({
         where: {
           firmId: session.firmId,
@@ -78,7 +80,47 @@ export default async function DashboardPage() {
         const due = nextDueDate(l.emiStartDate, l.emiFrequency, l.emis.length);
         if (due && due <= now) emiDue++;
       }
-      return { expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, emiActive, emiDue };
+      // route heartbeat: same rules as the /routes page (>=3 trips counted;
+      // sleeping > 20 days, cooling 8-20)
+      const [lrRoutes, slipRoutes] = await Promise.all([
+        tx.lr.findMany({
+          where: {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            deletedAt: null,
+            lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
+          },
+          select: { sourceCityId: true, destCityId: true, lrDate: true },
+        }),
+        tx.brokerSlip.findMany({
+          where: { firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+          select: { loadStationId: true, destCityId: true, slipDate: true },
+        }),
+      ]);
+      const lanes = new Map<string, { count: number; last: Date }>();
+      const addLane = (a: string | null, b: string | null, d: Date) => {
+        if (!a || !b) return;
+        const k = `${a}|${b}`;
+        const cur = lanes.get(k);
+        lanes.set(k, { count: (cur?.count ?? 0) + 1, last: !cur || d > cur.last ? d : cur.last });
+      };
+      lrRoutes.forEach((l) => addLane(l.sourceCityId, l.destCityId, l.lrDate));
+      slipRoutes.forEach((s) => addLane(s.loadStationId, s.destCityId, s.slipDate));
+      let laneAlive = 0;
+      let laneCooling = 0;
+      let laneSleeping = 0;
+      for (const v of Array.from(lanes.values())) {
+        if (v.count < 3) continue;
+        const days = Math.floor((now.getTime() - v.last.getTime()) / 86400000);
+        if (days <= 7) laneAlive++;
+        else if (days <= 20) laneCooling++;
+        else laneSleeping++;
+      }
+
+      return {
+        expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, emiActive, emiDue,
+        laneAlive, laneCooling, laneSleeping,
+      };
     });
 
   return (
@@ -171,6 +213,39 @@ export default async function DashboardPage() {
                       Due now: {emiDue}
                     </span>
                   )}
+                </span>
+              </span>
+            </CardContent>
+          </Card>
+        </a>
+
+        <a href="/routes" target="_blank" rel="noreferrer" className="group">
+          <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
+            <CardContent className="flex items-start gap-3 p-5">
+              <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <MapIcon className="h-6 w-6" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-lg font-semibold group-hover:text-primary">
+                  Route Heartbeat
+                </span>
+                <span className="block text-sm text-muted-foreground">
+                  Kaun sa lane zinda hai, kaun sota — parties ko time par jagao
+                </span>
+                <span className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
+                  {laneSleeping > 0 && (
+                    <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                      🔴 Sote: {laneSleeping}
+                    </span>
+                  )}
+                  {laneCooling > 0 && (
+                    <span className="rounded bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-500">
+                      🟠 Thande: {laneCooling}
+                    </span>
+                  )}
+                  <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-emerald-600">
+                    🟢 Zinda: {laneAlive}
+                  </span>
                 </span>
               </span>
             </CardContent>
