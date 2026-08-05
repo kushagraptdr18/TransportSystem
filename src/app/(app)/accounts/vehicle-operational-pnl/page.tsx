@@ -18,10 +18,12 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * freight + detention + ODC + fine slip + other − LD − commission − mamool
  * − courier / payment charge. Relative and broker vehicles never appear.
  *
- * Expenses: every ledger the Vehicle Module posts (diesel, tyres, repairs,
- * driver costs, AdBlue, trip urea, allocations...) classified automatically
- * by DR/CR, restricted to own vehicles; plus the full EMI of VEHICLE-type
- * loans on own vehicles (from the Finance module, on payment date).
+ * Expenses: every ledger head the Vehicle Module posts to (diesel, tyres,
+ * repairs, driver costs, AdBlue, trip urea...), each taken at its FULL ledger
+ * net balance (Dr − Cr across every refType and vehicle stamp) — recoveries
+ * and relative/broker transfers credit the same head, so the net that remains
+ * is the own fleet's real cost. Plus the full EMI of VEHICLE-type loans on own
+ * vehicles (from the Finance module, on payment date).
  */
 
 /** every refType the vehicle module writes to the ledger */
@@ -58,6 +60,24 @@ export default async function VehicleOperationalPnlPage({
     const ownIds = (
       await tx.vehicle.findMany({ where: { ownershipType: "OWNER" }, select: { id: true } })
     ).map((v) => v.id);
+
+    // the heads the vehicle module posts to — the report then takes each
+    // head's FULL ledger net (every refType, every vehicle stamp), because the
+    // transfers do the separation themselves: a relative vehicle's expense is
+    // debited and transferred out (credit) in the same head, netting zero, and
+    // urea/diesel taken by a broker vehicle credits the head via its chalan
+    // advance. What remains net IS the own fleet's cost.
+    const vehicleHeadIds = Array.from(
+      new Set(
+        (
+          await tx.ledgerEntry.findMany({
+            where: { ...scope, refType: { in: VEHICLE_REF_TYPES }, accountHeadId: { not: null } },
+            distinct: ["accountHeadId"],
+            select: { accountHeadId: true },
+          })
+        ).map((e) => e.accountHeadId as string)
+      )
+    );
 
     const [chalans, slips, heads, headSums, advances, settlements, assignments, emis] =
       await Promise.all([
@@ -107,9 +127,7 @@ export default async function VehicleOperationalPnlPage({
         by: ["accountHeadId", "side"],
         where: {
           ...scope,
-          accountHeadId: { not: null },
-          refType: { in: VEHICLE_REF_TYPES },
-          OR: [{ vehicleId: null }, { vehicleId: { in: ownIds } }],
+          accountHeadId: { in: vehicleHeadIds },
           ...(dateWhere ? { date: dateWhere } : {}),
         },
         _sum: { amount: true },
