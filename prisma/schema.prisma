@@ -1471,6 +1471,26 @@ model VoucherAllocation {
   @@index([tenantId, refType, refId])
 }
 
+// E-Way Bill monitoring: one row per LR that has been checked or extended.
+// prevExpiries keeps every earlier expiry date so a past tab can say
+// "Extended Till <new date>" instead of "Expired".
+model EwayMonitor {
+  id           String    @id @default(cuid())
+  tenantId     String
+  firmId       String
+  fyId         String
+  lrId         String    @unique
+  checkedAt    DateTime?
+  checkedById  String?
+  checkedBy    String? // display name, so the grid shows who verified
+  prevExpiries Json? // string[] of yyyy-mm-dd calendar dates
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, firmId, fyId])
+}
+
 // Extra Work Information (Vehicle module) — pure tracking, no accounting.
 // Status is DERIVED: completeDate set => COMPLETED, blank => PENDING.
 model VehicleWork {
