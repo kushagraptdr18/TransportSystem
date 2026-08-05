@@ -93,7 +93,7 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
   });
 
   if (!data) notFound();
-  const { lr, firm, sourceCity, destCity, destState, consignor, consignee, billTo, vehicle, driver } = data;
+  const { lr, firm, destCity, destState, consignor, consignee, billTo, vehicle, driver } = data;
   const logoUrl = firmImageUrl(firm, "logo");
   const showAmounts = lr.printFreight;
 
