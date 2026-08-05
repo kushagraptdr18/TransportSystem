@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { DateInput } from "@/components/data/date-input";
+import { ExportButton } from "@/components/data/export-button";
 import { FileUploadField } from "@/components/data/file-upload-field";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import {
@@ -202,12 +203,32 @@ export function DocStatusClient({
 
   return (
     <div className="space-y-3 p-4">
-      <div>
-        <h1 className="page-title">Document Registration Status</h1>
-        <p className="text-sm text-muted-foreground">
-          Renewal workflow — tick rows for a bulk status, or Edit a single document&apos;s
-          details. Problem status always needs the reason.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="page-title">Document Registration Status</h1>
+          <p className="text-sm text-muted-foreground">
+            Renewal workflow — tick rows for a bulk status, or Edit a single document&apos;s
+            details. Problem status always needs the reason.
+          </p>
+        </div>
+        {/* exports the FILTERED list, exactly what is on screen */}
+        <ExportButton
+          rows={list}
+          fileName="document-status"
+          sheetName="Document Status"
+          columns={[
+            { header: "Vehicle No", key: "vehicleNumber" },
+            { header: "Document", key: "docTypeName" },
+            { header: "Doc No", key: "docNo" },
+            { header: "Company", key: "companyName" },
+            { header: "Entry Date", key: "entryDate" },
+            { header: "Effective Date", key: "effectiveDate" },
+            { header: "Expiry Date", key: "expiryDate" },
+            { header: "Expired", accessor: (r) => (r.expiredNow ? "YES" : "NO") },
+            { header: "Status", key: "status" },
+            { header: "Remarks", key: "remarks", width: 32 },
+          ]}
+        />
       </div>
 
       {/* status chips + filters */}
