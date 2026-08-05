@@ -195,32 +195,7 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                 </div>
 
                 {/* the single wide consignor | consignee box */}
-                <div className="flex flex-1 border border-black">
-                  <div className="flex-1 border-r border-black">
-                    <BoxTitle>Consignor</BoxTitle>
-                    <div className="p-1.5 text-[11.5px]">
-                      <div className="text-[13px] font-black uppercase" style={{ color: RED }}>
-                        {consignor?.name}
-                      </div>
-                      <div className="font-bold">{addr(consignor)}</div>
-                      {consignor?.mobile && <div className="font-bold">Mob. : {consignor.mobile}</div>}
-                      {consignor?.gstin && <div className="font-bold">GSTIN : {consignor.gstin}</div>}
-                    </div>
-                  </div>
-                  <div className="flex-1">
-                    <BoxTitle>Consignee</BoxTitle>
-                    <div className="p-1.5 text-[11.5px]">
-                      <div className="text-[13px] font-black uppercase" style={{ color: RED }}>
-                        {consignee?.name}
-                      </div>
-                      <div className="font-bold">{addr(consignee)}</div>
-                      {consignee?.mobile && <div className="font-bold">Mob. : {consignee.mobile}</div>}
-                      {consignee?.gstin && <div className="font-bold">GSTIN : {consignee.gstin}</div>}
-                    </div>
-                  </div>
-                </div>
-
-                {/* insurance + consignee bank */}
+                {/* insurance + consignee bank (above, per request) */}
                 <div className="flex border border-black">
                   <div className="border-r border-black" style={{ flex: 1.2 }}>
                     <BoxTitle>
@@ -252,6 +227,32 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                       <Rule label="Bank Name & Address :" />
                       <Rule label="" />
                       <Rule label="Code Number :" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* consignor | consignee (below, per request) */}
+                <div className="flex flex-1 border border-black">
+                  <div className="flex-1 border-r border-black">
+                    <BoxTitle>Consignor</BoxTitle>
+                    <div className="p-1.5 text-[11.5px]">
+                      <div className="text-[13px] font-black uppercase" style={{ color: RED }}>
+                        {consignor?.name}
+                      </div>
+                      <div className="font-bold">{addr(consignor)}</div>
+                      {consignor?.mobile && <div className="font-bold">Mob. : {consignor.mobile}</div>}
+                      {consignor?.gstin && <div className="font-bold">GSTIN : {consignor.gstin}</div>}
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <BoxTitle>Consignee</BoxTitle>
+                    <div className="p-1.5 text-[11.5px]">
+                      <div className="text-[13px] font-black uppercase" style={{ color: RED }}>
+                        {consignee?.name}
+                      </div>
+                      <div className="font-bold">{addr(consignee)}</div>
+                      {consignee?.mobile && <div className="font-bold">Mob. : {consignee.mobile}</div>}
+                      {consignee?.gstin && <div className="font-bold">GSTIN : {consignee.gstin}</div>}
                     </div>
                   </div>
                 </div>
