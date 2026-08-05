@@ -15,7 +15,9 @@ const schema = z.object({
   vehicleId: z.string().min(1, "Vehicle is required"),
   docNo: optStr,
   companyName: optStr,
-  status: z.enum(["DONE", "PENDING"]).default("DONE"),
+  // renewal workflow: PENDING (not started) -> PROCESSING (with RTO/agent)
+  // -> DONE; PROBLEM flags an issue and demands remarks
+  status: z.enum(["DONE", "PENDING", "PROCESSING", "PROBLEM"]).default("DONE"),
   entryDate: z.string().min(1, "Entry date is required"),
   effectiveDate: optStr,
   expiryDate: optStr,
@@ -30,6 +32,9 @@ export async function saveVehicleDocument(input: unknown): Promise<ActionResult>
   if (!parsed.success) return zodError(parsed.error);
   const data = parsed.data;
   await authorize(session, "masters", data.id ? "edit" : "create");
+  if (data.status === "PROBLEM" && !data.remarks?.trim()) {
+    return { ok: false, error: "Remarks are required when the status is Problem — state the issue (e.g. Fitness Failed, RTO Query Pending)." };
+  }
   const entryDate = parseDateInput(data.entryDate);
   if (!entryDate) return { ok: false, error: "Invalid entry date" };
   try {
@@ -63,6 +68,45 @@ export async function saveVehicleDocument(input: unknown): Promise<ActionResult>
     });
     revalidatePath("/masters/vehicle-documents");
     return { ok: true, id };
+  } catch (e) {
+    return actionError(e);
+  }
+}
+
+/**
+ * Bulk renewal-status update: every selected registration moves to the given
+ * status in one click. PROBLEM demands remarks; the remarks land on each row
+ * (individual edits can refine them later).
+ */
+export async function bulkSetVehicleDocStatus(input: {
+  ids: string[];
+  status: "PENDING" | "PROCESSING" | "PROBLEM" | "DONE";
+  remarks?: string | null;
+}): Promise<ActionResult> {
+  const session = requireSession();
+  await authorize(session, "masters", "edit");
+  if (!input.ids?.length) return { ok: false, error: "Select at least one registration" };
+  if (input.status === "PROBLEM" && !input.remarks?.trim()) {
+    return { ok: false, error: "Remarks are required when the status is Problem." };
+  }
+  try {
+    await withTenant(session.tenantId, async (tx) => {
+      await tx.vehicleDocument.updateMany({
+        where: { id: { in: input.ids } },
+        data: {
+          status: input.status,
+          ...(input.remarks?.trim() ? { remarks: input.remarks.trim() } : {}),
+        },
+      });
+      await audit(tx, session, {
+        entity: "VehicleDocument",
+        entityId: input.ids.join(","),
+        action: "UPDATE",
+        after: { bulkStatus: input.status, count: input.ids.length },
+      });
+    });
+    revalidatePath("/masters/vehicle-documents");
+    return { ok: true, id: input.ids[0] };
   } catch (e) {
     return actionError(e);
   }

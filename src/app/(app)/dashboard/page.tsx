@@ -1,4 +1,4 @@
-import { FileCheck2 } from "lucide-react";
+import { ClipboardCheck, FileCheck2 } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,9 +20,8 @@ export default async function DashboardPage() {
   const base = new Date(`${todayCal}T00:00:00Z`).getTime();
   const window = [-2, -1, 0, 1, 2].map((off) => new Date(base + off * dayMs).toISOString().slice(0, 10));
 
-  const { expiredCount, todayCount, upcomingCount } = await withTenant(
-    session.tenantId,
-    async (tx) => {
+  const { expiredCount, todayCount, upcomingCount, docPending, docProcessing, docProblem } =
+    await withTenant(session.tenantId, async (tx) => {
       const lrs = await tx.lr.findMany({
         where: {
           firmId: session.firmId,
@@ -43,9 +42,13 @@ export default async function DashboardPage() {
         else if (c === todayCal) todayCount++;
         else upcomingCount++;
       }
-      return { expiredCount, todayCount, upcomingCount };
-    }
-  );
+      const [docPending, docProcessing, docProblem] = await Promise.all([
+        tx.vehicleDocument.count({ where: { status: "PENDING" } }),
+        tx.vehicleDocument.count({ where: { status: "PROCESSING" } }),
+        tx.vehicleDocument.count({ where: { status: "PROBLEM" } }),
+      ]);
+      return { expiredCount, todayCount, upcomingCount, docPending, docProcessing, docProblem };
+    });
 
   return (
     <div className="space-y-4 p-4">
@@ -74,6 +77,35 @@ export default async function DashboardPage() {
                   </span>
                   <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-emerald-600">
                     Next 2 days: {upcomingCount}
+                  </span>
+                </span>
+              </span>
+            </CardContent>
+          </Card>
+        </a>
+
+        <a href="/masters/document-master?tab=registration" className="group">
+          <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
+            <CardContent className="flex items-start gap-3 p-5">
+              <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <ClipboardCheck className="h-6 w-6" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-lg font-semibold group-hover:text-primary">
+                  Document Registration
+                </span>
+                <span className="block text-sm text-muted-foreground">
+                  Renewal workflow — bulk / individual status
+                </span>
+                <span className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
+                  <span className="rounded bg-neutral-500/10 px-2 py-0.5 text-neutral-600 dark:text-neutral-300">
+                    Pending: {docPending}
+                  </span>
+                  <span className="rounded bg-blue-500/10 px-2 py-0.5 text-blue-600">
+                    Processing: {docProcessing}
+                  </span>
+                  <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                    Problem: {docProblem}
                   </span>
                 </span>
               </span>

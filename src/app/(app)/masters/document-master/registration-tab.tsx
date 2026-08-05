@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function DocumentRegistrationTab({
   searchParams,
 }: {
-  searchParams: { vehicle?: string; docType?: string; due?: string };
+  searchParams: { vehicle?: string; docType?: string; due?: string; status?: string };
 }) {
   const session = requireSession();
   await authorize(session, "masters", "view");
@@ -26,6 +26,7 @@ export async function DocumentRegistrationTab({
       in30.setDate(in30.getDate() + 30);
       where.expiryDate = { not: null, gte: today, lte: in30 };
     }
+    if (searchParams.status) where.status = searchParams.status;
     const [rows, docTypes, vehicles] = await Promise.all([
       tx.vehicleDocument.findMany({
         where,
