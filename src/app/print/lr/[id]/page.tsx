@@ -136,8 +136,11 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
             style={{ color: "#111" }}
           >
             {/* ---- top band ---- */}
-            <div className="pb-0.5 text-center text-[12px] font-black">
+            <div className="relative pb-0.5 text-center text-[12px] font-black">
               All Subject to {firm.jurisdiction || "Local"} Jurisdiction
+              <span className="absolute right-0 top-0 text-[8.5px] font-semibold italic">
+                This is a system generated lorry receipt, please treat it as the Original
+              </span>
             </div>
 
             {/* ---- masthead ---- */}
