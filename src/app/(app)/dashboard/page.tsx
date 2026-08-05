@@ -1,4 +1,4 @@
-import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon } from "lucide-react";
+import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon, Truck, UserSearch } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
@@ -246,6 +246,38 @@ export default async function DashboardPage() {
                   <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-emerald-600">
                     🟢 Zinda: {laneAlive}
                   </span>
+                </span>
+              </span>
+            </CardContent>
+          </Card>
+        </a>
+
+        <a href="/party-360" target="_blank" rel="noreferrer" className="group">
+          <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
+            <CardContent className="flex items-start gap-3 p-5">
+              <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <UserSearch className="h-6 w-6" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-lg font-semibold group-hover:text-primary">Party 360°</span>
+                <span className="block text-sm text-muted-foreground">
+                  Party ka phone aaya? Poora chittha ek screen par — position, bills, bhav
+                </span>
+              </span>
+            </CardContent>
+          </Card>
+        </a>
+
+        <a href="/vehicle-360" target="_blank" rel="noreferrer" className="group">
+          <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
+            <CardContent className="flex items-start gap-3 p-5">
+              <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Truck className="h-6 w-6" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-lg font-semibold group-hover:text-primary">Vehicle 360°</span>
+                <span className="block text-sm text-muted-foreground">
+                  Gaadi ki poori kahani — kamai, kharcha, EMI, documents, driver
                 </span>
               </span>
             </CardContent>
