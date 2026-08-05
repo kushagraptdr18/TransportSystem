@@ -9,8 +9,10 @@ import { PrintToolbar } from "@/components/lr/print-toolbar";
 export const dynamic = "force-dynamic";
 
 /**
- * Lorry Receipt in the classic bilty format (SSBRL style): red-accent boxed
- * layout on landscape A4, one copy per sheet, five sheets in separation order.
+ * Lorry Receipt printed to match the firm's traditional pre-printed bilty
+ * form exactly (box for box): landscape A4, one copy per sheet, five sheets.
+ * Fields the software knows are filled in; the rest stay as blank rules the
+ * way the paper form leaves them for hand-filling.
  */
 const COPIES = [
   "CONSIGNOR COPY",
@@ -22,32 +24,14 @@ const COPIES = [
 
 const RED = "#9f1218";
 
-function Box({
-  title,
-  children,
-  className = "",
-}: {
-  title?: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
+/** label with a fill-in rule; value sits on the rule when known */
+function Rule({ label, value, className = "" }: { label: string; value?: React.ReactNode; className?: string }) {
   return (
-    <div className={`border border-black ${className}`}>
-      {title && (
-        <div className="border-b border-black px-1.5 py-0.5 text-[8.5px] font-bold uppercase tracking-wide">
-          {title}
-        </div>
-      )}
-      {children}
-    </div>
-  );
-}
-
-function Line({ label, value }: { label: string; value?: React.ReactNode }) {
-  return (
-    <div className="flex gap-1 border-b border-dotted border-neutral-400 py-[1.5px] last:border-0">
-      <span className="shrink-0 font-bold">{label}</span>
-      <span className="min-w-0 flex-1">{value ?? ""}</span>
+    <div className={`flex items-end gap-1 py-[2px] ${className}`}>
+      <span className="shrink-0">{label}</span>
+      <span className="min-w-0 flex-1 border-b border-neutral-500 px-1 font-bold leading-tight">
+        {value ?? " "}
+      </span>
     </div>
   );
 }
@@ -61,39 +45,21 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
       include: { items: true },
     });
     if (!lr) return null;
-    const [firm, sourceCity, destCity, consignor, consignee, billTo, vehicle] = await Promise.all([
+    const [firm, destCity, consignor, consignee, vehicle] = await Promise.all([
       tx.firm.findUniqueOrThrow({ where: { id: session.firmId } }),
-      tx.city.findUnique({ where: { id: lr.sourceCityId } }),
       tx.city.findUnique({ where: { id: lr.destCityId } }),
       tx.party.findUnique({ where: { id: lr.consignorId } }),
       tx.party.findUnique({ where: { id: lr.consigneeId } }),
-      lr.billToId ? tx.party.findUnique({ where: { id: lr.billToId } }) : Promise.resolve(null),
       lr.vehicleId ? tx.vehicle.findUnique({ where: { id: lr.vehicleId } }) : Promise.resolve(null),
     ]);
-    // driver assigned to the vehicle on the LR date, for the truck box
-    let driver: { name: string; mobile: string | null } | null = null;
-    if (lr.vehicleId) {
-      const assignment = await tx.driverAssignment.findFirst({
-        where: {
-          vehicleId: lr.vehicleId,
-          fromDate: { lte: lr.lrDate },
-          OR: [{ toDate: null }, { toDate: { gte: lr.lrDate } }],
-        },
-        orderBy: { fromDate: "desc" },
-      });
-      if (assignment) {
-        const d = await tx.driver.findFirst({ where: { id: assignment.driverId } });
-        if (d) driver = { name: d.name, mobile: d.mobile };
-      }
-    }
     const destState = destCity?.stateId
       ? await tx.state.findUnique({ where: { id: destCity.stateId } })
       : null;
-    return { lr, firm, sourceCity, destCity, destState, consignor, consignee, billTo, vehicle, driver };
+    return { lr, firm, destCity, destState, consignor, consignee, vehicle };
   });
 
   if (!data) notFound();
-  const { lr, firm, destCity, destState, consignor, consignee, billTo, vehicle, driver } = data;
+  const { lr, firm, destCity, destState, consignor, consignee, vehicle } = data;
   const logoUrl = firmImageUrl(firm, "logo");
   const showAmounts = lr.printFreight;
 
@@ -104,20 +70,18 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
   const totalActual = lr.items.reduce((s, i) => s + Number(i.actualWt), 0);
   const totalCharge = lr.items.reduce((s, i) => s + Number(i.chargeWt), 0);
   const mainRate = lr.items.length ? Math.max(...lr.items.map((i) => Number(i.rate))) : 0;
+  const riskCharges =
+    Number(lr.biltyCharge) + Number(lr.collCharge) + Number(lr.cpc) + Number(lr.preBhada);
 
-  const charges: [string, number, number | null][] = [
-    ["Freight", Number(lr.freight), mainRate],
-    ["Hamali / Mazdoor Charge", Number(lr.hamali), null],
-    ["Pre Bhada", Number(lr.preBhada), null],
-    ["Bilty Charge", Number(lr.biltyCharge), null],
-    ["Collection Charge", Number(lr.collCharge), null],
-    ["CPC", Number(lr.cpc), null],
-    ["Any Other Charges", Number(lr.otherCharge), null],
-  ];
-  const gstRows: [string, number][] = [
-    [`CGST${Number(lr.cgstAmt) > 0 ? "" : ""}`, Number(lr.cgstAmt)],
-    ["SGST", Number(lr.sgstAmt)],
-    ["IGST", Number(lr.igstAmt)],
+  // exact charge rows of the printed form, in its order
+  const chargeRows: { label: string; rate?: number; amount: number | null }[] = [
+    { label: "Frieght", rate: mainRate || undefined, amount: Number(lr.freight) },
+    { label: "Mazdoor Char.", amount: Number(lr.hamali) },
+    { label: "Risk Charges", amount: riskCharges },
+    { label: "SGST", amount: Number(lr.sgstAmt) },
+    { label: "CGST", amount: Number(lr.cgstAmt) },
+    { label: "IGST", amount: Number(lr.igstAmt) },
+    { label: "Any Other Char.", amount: Number(lr.otherCharge) },
   ];
 
   const liable =
@@ -135,7 +99,7 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
               .lr-copy { page-break-after: always; box-shadow: none !important; margin: 0 !important; }
               .lr-copy:last-child { page-break-after: auto; }
             }
-            @page { size: A4 landscape; margin: 6mm; }
+            @page { size: A4 landscape; margin: 5mm; }
           `,
         }}
       />
@@ -143,173 +107,216 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
         note={`Prints ${COPIES.length} copies: ${COPIES.map((c) => c.replace(" COPY", "")).join(", ")}`}
       />
 
-      <div className="mx-auto max-w-[285mm] space-y-6 p-4">
+      <div className="mx-auto max-w-[287mm] space-y-6 p-4">
         {COPIES.map((copyLabel) => (
           <div
             key={copyLabel}
-            className="lr-copy border-2 border-black bg-white p-1 text-[9.5px] leading-tight shadow-lg"
+            className="lr-copy border-2 border-black bg-white p-1 text-[9px] leading-tight shadow-lg"
             style={{ color: "#111" }}
           >
-            {/* ================= HEADER ================= */}
-            <div className="flex items-stretch border-2 border-black">
-              {/* logo */}
-              <div
-                className="flex w-[120px] shrink-0 flex-col items-center justify-center border-r-2 border-black p-1"
-                style={{ color: RED }}
-              >
-                {logoUrl ? (
-                  <img src={logoUrl} alt="" className="max-h-[70px] object-contain" />
-                ) : (
-                  <div className="border-4 px-2 py-1 text-[20px] font-black" style={{ borderColor: RED }}>
-                    {firm.name
-                      .split(/\s+/)
-                      .map((w) => w[0])
-                      .join("")
-                      .slice(0, 5)
-                      .toUpperCase()}
-                  </div>
-                )}
-              </div>
-              {/* firm name */}
-              <div className="min-w-0 flex-1 px-2 py-1">
-                <div className="text-[24px] font-black uppercase leading-none tracking-tight" style={{ color: RED }}>
-                  {firm.name}
-                </div>
-                <div className="text-[9.5px] font-bold">
-                  Specialist Heavy &amp; O.D.C. Consignment (Fleet Owners &amp; Transport Solution)
-                </div>
-                <div className="text-[9.5px]">{[firm.address1, firm.address2].filter(Boolean).join(", ")}</div>
-                <div className="text-[9.5px]">
-                  {firm.mobile && <>Mob.: {firm.mobile} </>}
-                  {firm.phone && <>Ph.: {firm.phone}</>}
-                </div>
-                <div className="text-[9.5px]">{firm.email && <>E-mail: {firm.email}</>}</div>
-              </div>
-              {/* PAN */}
-              <div className="flex w-[150px] shrink-0 flex-col justify-center border-l border-black px-2">
-                {firm.pan && (
-                  <div className="text-[10px] font-black" style={{ color: RED }}>
-                    PAN No.: {firm.pan}
-                  </div>
-                )}
-                {firm.gstin && (
-                  <div className="mt-1 text-[9px] font-bold">GSTIN: {firm.gstin}</div>
-                )}
-                <div className="print-fill mt-1 self-start px-1.5 py-0.5 text-[8px] font-black text-white" style={{ background: RED }}>
-                  {copyLabel}
-                </div>
-              </div>
-              {/* LR no / date */}
-              <div className="w-[105px] shrink-0 border-l-2 border-black text-center">
-                <div className="border-b border-black px-1 py-0.5 text-[9px] font-bold">LR No.:</div>
-                <div className="py-1 text-[20px] font-black" style={{ color: RED }}>
-                  {lr.lrNo}
-                </div>
-              </div>
-              <div className="w-[105px] shrink-0 border-l border-black text-center">
-                <div className="border-b border-black px-1 py-0.5 text-[9px] font-bold">LR Date:</div>
-                <div className="py-2 text-[11px] font-black">{formatDate(lr.lrDate)}</div>
-              </div>
-            </div>
-            <div className="border-x-2 border-b-2 border-black px-2 py-0.5 text-right text-[9.5px] font-black">
+            {/* ---- top band ---- */}
+            <div className="pb-0.5 text-center text-[9.5px] font-black">
               All Subject to {firm.jurisdiction || "Local"} Jurisdiction
             </div>
 
+            {/* ---- masthead ---- */}
+            <div className="flex items-stretch gap-2 border-2 border-black p-1">
+              <div className="flex w-[110px] shrink-0 flex-col items-center justify-center" style={{ color: RED }}>
+                {logoUrl ? (
+                  <img src={logoUrl} alt="" className="max-h-[62px] object-contain" />
+                ) : (
+                  <div className="border-4 px-1.5 py-0.5 text-[16px] font-black tracking-tight" style={{ borderColor: RED }}>
+                    {firm.name
+                      .split(/\s+/)
+                      .map((w) => w[0])
+                      .join(".")
+                      .toUpperCase()}
+                  </div>
+                )}
+                {firm.pan && (
+                  <div className="mt-1 text-[9px] font-black">PAN No. : {firm.pan}</div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1 text-center">
+                <div className="text-[26px] font-black uppercase leading-none tracking-tight" style={{ color: RED }}>
+                  {firm.name}
+                </div>
+                <div className="text-[10px] font-bold italic">
+                  Specialist Heavy &amp; O D C Consignment (Fleet Owners &amp; Total Transport Solution)
+                </div>
+                <div className="text-[9.5px]">{[firm.address1, firm.address2].filter(Boolean).join(", ")}</div>
+                <div className="text-[9.5px]">
+                  {firm.mobile && <>Mob. : {firm.mobile}</>}
+                  {firm.phone && <>, {firm.phone}</>}
+                  {firm.email && <>, E-mail : {firm.email}</>}
+                </div>
+              </div>
+              <div className="w-[135px] shrink-0 border-l border-black pl-1.5 text-[8.5px]">
+                <div className="font-bold">Address of Issuing Office or Name and Address of Agent</div>
+                <div className="mt-0.5 uppercase">{firm.name}</div>
+                <div>{[firm.address1, firm.address2].filter(Boolean).join(", ")}</div>
+                <div>{firm.mobile && `Mob. : ${firm.mobile}`}</div>
+              </div>
+            </div>
+
             {(lr.lrType === "CANCELLED" || lr.lrType === "PAPER_CHANGE") && (
-              <div className="print-fill mt-1 py-0.5 text-center text-[12px] font-black tracking-[0.3em] text-white" style={{ background: RED }}>
+              <div className="print-fill my-0.5 py-0.5 text-center text-[11px] font-black tracking-[0.3em] text-white" style={{ background: RED }}>
                 {lr.lrType === "CANCELLED" ? "CANCELLED LR" : "PAPER CHANGE LR"}
               </div>
             )}
 
-            {/* ================= ROW 2: demurrage / terms / parties / insurance / consignment note ================= */}
+            {/* ---- main body: four columns exactly like the form ---- */}
             <div className="mt-1 flex items-stretch gap-1">
-              <Box title="Schedule of Demurrage Charges" className="w-[170px] shrink-0">
-                <div className="space-y-2 p-1.5 text-[8.5px]">
-                  <div>Demurrage Charges after ________</div>
-                  <div>days from Today @ Rs. ________</div>
-                  <div>Per Day per Call on weight charged.</div>
+              {/* ------ column 1: demurrage / notice / endorsement ------ */}
+              <div className="flex w-[172px] shrink-0 flex-col gap-1">
+                <div className="border border-black">
+                  <div className="border-b border-black px-1 py-0.5 text-center text-[8.5px] font-black">
+                    SCHEDULE OF DEMURRAGE CHARGES
+                  </div>
+                  <div className="space-y-1.5 p-1.5 text-[8.5px]">
+                    <div>Demurrage Chargeable after ________</div>
+                    <div>days from Today @ Rs. ____________</div>
+                    <div>Per Day per Qtl. on weight charged.</div>
+                  </div>
                 </div>
-              </Box>
-              <div
-                className="w-[190px] shrink-0 border p-1.5 text-[7.6px] leading-snug"
-                style={{ borderColor: RED, color: RED }}
-              >
-                The consignment covered by this Lorry receipt is accepted the subject to the
-                conditions overleaf of this receipt. Operator and his employees will not be
-                responsible for any loss or damage or delay to the consignment covered by this
-                receipt howsoever arising out of theft, pilferage, fire, accident, riots, strikes
-                or from inspection order and all other circumstances beyond their control. All
-                claims and/or disputes are subject to {firm.jurisdiction || "local"} Jurisdiction
-                only. Goods once booked will not be delivered to anyone without the endorsed
-                order, endorsed on the Consignee Copy.
+                <div className="flex-1 border p-1.5 text-[7.4px] leading-snug" style={{ borderColor: RED, color: RED }}>
+                  <div className="text-center text-[8.5px] font-black underline">NOTICE :</div>
+                  The consignment covered by this Lorry receipt shall be stored at the destination
+                  under the control of the Transport Operator and shall be delivered to or to the
+                  order of the Consignee Bank whose name is mentioned in the Lorry Receipt. It will
+                  under no circumstances be delivered to anyone without the written authority from
+                  the Consignee Bank or its order, endorsed on the Consignee Copy.
+                </div>
+                <div className="border border-black p-1.5 text-center text-[7.4px] leading-snug">
+                  <div className="text-[8px] font-black underline">ENDORSEMENT</div>
+                  It is intended to use the CONSIGNEE COPY of this set for the purpose of borrowing
+                  from the Consignee Bank.
+                </div>
               </div>
-              {/* consignor / consignee */}
-              <div className="min-w-0 flex-1 border border-black p-1.5">
-                <Line label="Consignor's Name and address :" value={consignor?.name} />
-                <Line label="" value={addr(consignor)} />
-                {consignor?.gstin && <Line label="GSTIN :" value={consignor.gstin} />}
-                <div className="h-1.5" />
-                <Line label="Consignee's Name and Address :" value={consignee?.name} />
-                <Line label="" value={addr(consignee)} />
-                {consignee?.gstin && <Line label="GSTIN :" value={consignee.gstin} />}
-              </div>
-              {/* insurance */}
-              <Box className="w-[185px] shrink-0">
-                <div className="p-1.5">
-                  <div className="text-center text-[10px] font-black underline">AT CARRIER RISK</div>
-                  <div className="text-center text-[9px] font-black underline" style={{ color: RED }}>
+
+              {/* ------ column 2: copy label / insurance / consignor / consignee bank ------ */}
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <div className="text-center text-[11px] font-black tracking-wide" style={{ color: RED }}>
+                  {copyLabel}
+                </div>
+                <div className="border border-black">
+                  <div className="border-b border-black py-0.5 text-center text-[9.5px] font-black">
+                    AT CARRIER RISK
+                  </div>
+                  <div className="py-0.5 text-center text-[9px] font-black underline" style={{ color: RED }}>
                     INSURANCE
                   </div>
-                  <div className="mt-1 font-bold">The Customer declared that :</div>
-                  <div>
-                    He has not insured Consignment OR Insured with{" "}
-                    {lr.insCompany ? <b>{lr.insCompany}</b> : "our Insurance Company"}
+                  <div className="px-1.5 pb-1.5 text-[8.5px]">
+                    <div>The Customer has stated that :</div>
+                    <div>
+                      He has not insured Consignment O/R he has insured Consignment Company
+                      {lr.insCompany ? <b> : {lr.insCompany}</b> : ""}
+                    </div>
+                    <div className="mt-1 flex gap-2">
+                      <Rule className="flex-1" label="Policy No. :" value={lr.insPolicyNo} />
+                      <Rule className="w-[90px]" label="Date:" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Rule
+                        className="flex-1"
+                        label="Amount :"
+                        value={lr.insAmount != null && showAmounts ? formatMoney(Number(lr.insAmount)) : undefined}
+                      />
+                      <Rule className="w-[90px]" label="Risk:" />
+                    </div>
+                    <Rule label="Code Number :" />
                   </div>
-                  <div className="mt-1.5">
-                    Policy No.: {lr.insPolicyNo || "__________"} &nbsp; Amount:{" "}
-                    {lr.insAmount != null ? formatMoney(Number(lr.insAmount)) : "________"}
+                </div>
+                <div className="flex-1 border border-black p-1.5 text-[9px]">
+                  <Rule label="Consignor's Name and address" value={consignor?.name} />
+                  <Rule label="" value={addr(consignor) || undefined} />
+                  <div className="h-2" />
+                  <Rule label="Consignee's Bank Name and Address" value={consignee?.name} />
+                  <Rule label="" value={addr(consignee) || undefined} />
+                </div>
+              </div>
+
+              {/* ------ column 3: caution / delivery office / consignment note / from-to ------ */}
+              <div className="flex w-[200px] shrink-0 flex-col gap-1">
+                <div className="border border-black p-1.5 text-[8px] leading-snug">
+                  <div className="text-center text-[8.5px] font-black">Caution :</div>
+                  This Consignment will not be detained, diverted, re-routed or re-booked without
+                  Consignee Bank&apos;s written permission. Will be Delivered at the destination :
+                </div>
+                <div className="border border-black p-1.5 text-[8.5px]">
+                  <Rule label="address of Delivery Office :" value={lr.deliveryAt || destCity?.name} />
+                  <div className="flex gap-2">
+                    <Rule className="flex-1" label="State :" value={destState?.name} />
+                    <Rule className="w-[70px]" label="Tel.:" />
                   </div>
-                  <div className="mt-1">Date : __________ &nbsp; Code Number : ________</div>
                 </div>
-              </Box>
-              {/* consignment note */}
-              <Box className="w-[185px] shrink-0">
-                <div className="border-b border-black px-1.5 py-0.5 text-center text-[9px] font-black">
-                  CONSIGNMENT NOTE
+                <div className="border border-black">
+                  <div className="border-b border-black py-0.5 text-center text-[9px] font-black">
+                    CONSIGNMENT NOTE :
+                  </div>
+                  <div className="p-1.5">
+                    <div className="flex items-center gap-1">
+                      <span className="text-[8.5px] font-bold">No. :</span>
+                      <span className="text-[16px] font-black tracking-wider" style={{ color: RED }}>
+                        {lr.lrNo}
+                      </span>
+                    </div>
+                    <Rule label="Date :" value={formatDate(lr.lrDate)} />
+                  </div>
                 </div>
-                <div className="p-1.5">
-                  <Line
-                    label="No. :"
-                    value={<span className="text-[13px] font-black" style={{ color: RED }}>{lr.lrNo}</span>}
-                  />
-                  <Line label="Date :" value={formatDate(lr.lrDate)} />
-                  <Line label="State :" value={destState?.name} />
-                  <Line label="Address of Delivery Office :" value={lr.deliveryAt || destCity?.name} />
-                  <Line label="Tel. :" value="" />
+                <div className="flex-1 border border-black p-1.5 text-[8.5px]">
+                  <Rule label="From :" value={consignor?.name} />
+                  <div className="h-1.5" />
+                  <Rule label="To :" value={consignee?.name} />
                 </div>
-              </Box>
+              </div>
+
+              {/* ------ column 4: truck / marks / invoice column ------ */}
+              <div className="flex w-[168px] shrink-0 flex-col gap-1">
+                <div className="border border-black p-1.5 text-[8.5px]">
+                  <Rule label="Truck No." value={<b>{vehicle?.number ?? lr.vehicleText}</b>} />
+                </div>
+                <div className="border border-black p-1.5 text-[8.5px]">
+                  <div className="font-black">Additional Information</div>
+                  <div className="min-h-[18px]">{lr.remarks || " "}</div>
+                  <div className="mt-1 font-black">Private Marks</div>
+                  <div className="min-h-[18px] font-semibold uppercase">{lr.privateMarka || " "}</div>
+                </div>
+                <div className="flex-1 border border-black p-1.5 text-[8.5px]">
+                  <Rule label="Invoice No.:" value={lr.invoiceNo} />
+                  <Rule label="Licence No. of Transport Operator" />
+                  <Rule label="GSTIN / UniqueID Reg. No. of" value={firm.gstin} />
+                  <div className="mt-0.5 font-bold">Person Laiable to Pay</div>
+                  {(["CONSIGNOR", "CONSIGNEE", "TRANSPORTER"] as const).map((who) => (
+                    <div key={who} className="flex items-center gap-1.5 py-[1px]">
+                      <span className="inline-flex h-[9px] w-[9px] items-center justify-center border border-black text-[7.5px] font-black leading-none">
+                        {liable === who ? "✓" : ""}
+                      </span>
+                      <span className="capitalize">{who.toLowerCase()} :</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            {/* ================= ROW 3: packages / charges / truck ================= */}
+            {/* ---- package + charges band ---- */}
             <div className="mt-1 flex items-stretch gap-1">
               {/* package table */}
               <div className="min-w-0 flex-1 border border-black">
-                <table className="w-full border-collapse text-[9px]">
+                <table className="w-full border-collapse text-[8.5px]">
                   <thead>
-                    <tr className="border-b border-black text-left">
-                      <th className="w-[70px] border-r border-black p-1 text-center">
-                        Package
-                        <div className="border-t border-black text-[8px] font-bold">NO. OF PKGS.</div>
+                    <tr className="text-center">
+                      <th className="w-[64px] border-b border-r border-black p-1">Package</th>
+                      <th className="border-b border-r border-black p-1">
+                        Description
+                        <br />
+                        (Said to Contain)
                       </th>
-                      <th className="border-r border-black p-1 text-center">
-                        Description (Said to Contain)
-                        <div className="border-t border-black text-[8px] font-bold">GOODS DESCRIPTION</div>
-                      </th>
-                      <th className="w-[120px] p-0 text-center">
+                      <th className="w-[110px] border-b border-black p-0">
                         <div className="border-b border-black p-0.5">Weight</div>
                         <div className="flex">
-                          <div className="flex-1 border-r border-black text-[8px] font-bold">Actual</div>
-                          <div className="flex-1 text-[8px] font-bold">Charged</div>
+                          <div className="flex-1 border-r border-black py-0.5">Actual</div>
+                          <div className="flex-1 py-0.5">Charged</div>
                         </div>
                       </th>
                     </tr>
@@ -336,31 +343,22 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                         </td>
                       </tr>
                     ))}
-                    <tr>
-                      <td className="border-r border-t border-black p-1 text-center font-black tabular-nums">
+                    <tr className="font-black">
+                      <td className="border-r border-t border-black p-1 text-center tabular-nums">
                         {totalQty.toFixed(0)}
                       </td>
                       <td className="relative border-r border-t border-black p-1">
-                        {/* rubber-stamp note */}
                         <div
-                          className="mx-auto my-1 w-fit rotate-[-6deg] text-center text-[8.5px] font-black leading-snug"
+                          className="mx-auto w-fit rotate-[-5deg] text-center text-[8px] font-black leading-snug"
                           style={{ color: RED }}
                         >
-                          * GOODS DESCRIBED
+                          * GOODS DESCRIBED AS ABOVE &amp; RECEIVED IN GOOD ORDER &amp; CONDITION
                           <br />
-                          AS ABOVE &amp; RECEIVED IN
-                          <br />
-                          GOOD ORDER &amp; CONDITION
-                          <br />
-                          CONTENTS NOT CHECKED
-                          <br />
-                          PLEASE TAKE DELIVERY
-                          <br />
-                          FROM THE RISK *
+                          CONTENTS NOT CHECKED · PLEASE TAKE DELIVERY FROM THE RISK *
                         </div>
                       </td>
                       <td className="border-t border-black p-0">
-                        <div className="flex font-black">
+                        <div className="flex">
                           <div className="flex-1 border-r border-black p-1 text-right tabular-nums">
                             {totalActual.toFixed(3)}
                           </div>
@@ -374,60 +372,52 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                 </table>
               </div>
 
-              {/* charges table */}
-              <div className="w-[240px] shrink-0 border border-black">
-                <table className="w-full border-collapse text-[9px]">
+              {/* charges table — exact rows of the form */}
+              <div className="w-[250px] shrink-0 border border-black">
+                <table className="w-full border-collapse text-[8.5px]">
                   <thead>
-                    <tr className="border-b border-black">
-                      <th className="border-r border-black p-1 text-left">Particulars</th>
-                      <th className="w-[42px] border-r border-black p-1 text-right">Rate</th>
-                      <th className="w-[72px] p-1 text-right">Amount (Rs.)</th>
+                    <tr className="text-center">
+                      <th className="border-b border-r border-black p-1 text-left" colSpan={1}></th>
+                      <th className="w-[40px] border-b border-r border-black p-1">Rate</th>
+                      <th className="w-[86px] border-b border-black p-1">
+                        Amount to Pay / Paid
+                        <div className="border-t border-black font-bold">Rs.</div>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {showAmounts ? (
-                      <>
-                        {charges
-                          .filter(([label, v]) => label === "Freight" || v > 0)
-                          .map(([label, v, rate]) => (
-                            <tr key={label} className="border-b border-dotted border-neutral-400">
-                              <td className="border-r border-black p-1">{label}</td>
-                              <td className="border-r border-black p-1 text-right tabular-nums">
-                                {rate ? rate.toFixed(2) : ""}
-                              </td>
-                              <td className="p-1 text-right tabular-nums">{formatMoney(v)}</td>
-                            </tr>
-                          ))}
-                        {lr.gstApplicable &&
-                          gstRows.map(([label, v]) => (
-                            <tr key={label} className="border-b border-dotted border-neutral-400">
-                              <td className="border-r border-black p-1">{label}</td>
-                              <td className="border-r border-black p-1" />
-                              <td className="p-1 text-right tabular-nums">{formatMoney(v)}</td>
-                            </tr>
-                          ))}
-                        {Number(lr.advance) > 0 && (
-                          <tr className="border-b border-dotted border-neutral-400">
-                            <td className="border-r border-black p-1">Less: Advance</td>
-                            <td className="border-r border-black p-1" />
-                            <td className="p-1 text-right tabular-nums">
-                              −{formatMoney(Number(lr.advance))}
-                            </td>
-                          </tr>
-                        )}
-                        <tr className="border-t-2 border-black font-black">
-                          <td className="border-r border-black p-1">TOTAL</td>
-                          <td className="border-r border-black p-1" />
-                          <td className="p-1 text-right tabular-nums">
-                            {formatMoney(Number(lr.grandTotal))}
-                          </td>
-                        </tr>
-                      </>
-                    ) : (
+                    {chargeRows.map((row) => (
+                      <tr key={row.label} className="border-b border-neutral-400">
+                        <td className="border-r border-black px-1 py-[2.5px]">{row.label}</td>
+                        <td className="border-r border-black px-1 py-[2.5px] text-right tabular-nums">
+                          {showAmounts && row.rate ? row.rate.toFixed(2) : ""}
+                        </td>
+                        <td className="px-1 py-[2.5px] text-right tabular-nums">
+                          {showAmounts && row.amount ? formatMoney(row.amount) : ""}
+                        </td>
+                      </tr>
+                    ))}
+                    {showAmounts && Number(lr.advance) > 0 && (
+                      <tr className="border-b border-neutral-400">
+                        <td className="border-r border-black px-1 py-[2.5px]">Less : Advance</td>
+                        <td className="border-r border-black px-1 py-[2.5px]" />
+                        <td className="px-1 py-[2.5px] text-right tabular-nums">
+                          −{formatMoney(Number(lr.advance))}
+                        </td>
+                      </tr>
+                    )}
+                    <tr className="border-t border-black font-black">
+                      <td className="border-r border-black px-1 py-1">TOTAL</td>
+                      <td className="border-r border-black px-1 py-1" />
+                      <td className="px-1 py-1 text-right tabular-nums">
+                        {showAmounts ? formatMoney(Number(lr.grandTotal)) : ""}
+                      </td>
+                    </tr>
+                    {!showAmounts && (
                       <tr>
-                        <td colSpan={3} className="p-4 text-center">
+                        <td colSpan={3} className="p-2 text-center">
                           <span
-                            className="inline-block rotate-[-8deg] border-2 px-3 py-1 text-[12px] font-black tracking-widest"
+                            className="inline-block rotate-[-6deg] border-2 px-2 py-0.5 text-[10px] font-black tracking-widest"
                             style={{ borderColor: RED, color: RED }}
                           >
                             TO BE BILLED
@@ -437,136 +427,34 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                     )}
                   </tbody>
                 </table>
-                <div className="flex border-t-2 border-black text-[10px] font-black">
-                  <div className="border-r border-black p-1.5">Amount to Pay / Paid</div>
-                  <div className="flex-1 p-1.5 text-right tabular-nums">
-                    {showAmounts ? `Rs. ${formatMoney(Number(lr.grandTotal))}` : ""}
-                  </div>
-                </div>
               </div>
 
-              {/* truck + issuing office */}
-              <div className="flex w-[215px] shrink-0 flex-col border border-black">
-                <div className="flex-1 p-1.5">
-                  <Line label="Truck No." value={<b>{vehicle?.number ?? lr.vehicleText}</b>} />
-                  <Line label="Driver's Name :" value={driver?.name} />
-                  <Line label="Driver's Mob. :" value={driver?.mobile} />
-                  <Line label="Place of Delivery :" value={lr.deliveryAt || destCity?.name} />
-                  <Line label="E-Way Bill No. :" value={lr.ewayBillNo} />
-                  <Line
-                    label="E-Way Bill Date :"
-                    value={lr.ewayExpiry ? formatDate(lr.ewayExpiry) : ""}
-                  />
-                  <Line label="Transporter ID :" value={firm.gstin} />
-                </div>
-                <div className="border-t border-black p-1.5">
-                  <div className="font-bold">Address of Issuing Office or Name and Address of Agent</div>
-                  <div className="uppercase">{firm.name}</div>
-                  <div>{[firm.address1, firm.address2].filter(Boolean).join(", ")}</div>
-                  <div>{firm.mobile && `Mob.: ${firm.mobile}`}</div>
-                </div>
-              </div>
-
-              {/* marks */}
-              <div className="flex w-[130px] shrink-0 flex-col border border-black">
-                <div className="flex-1 p-1.5">
-                  <div className="border-b border-black pb-0.5 text-[9px] font-black">Private Marks</div>
-                  <div className="py-1 font-semibold uppercase">{lr.privateMarka || "--"}</div>
-                  <div className="border-b border-t border-black py-0.5 text-[9px] font-black">
-                    Additional Information
-                  </div>
-                  <div className="py-1">{lr.remarks || "--"}</div>
-                  <div className="border-b border-t border-black py-0.5 text-[9px] font-black">
-                    Ref / OBD No.
-                  </div>
-                  <div className="py-1">{[lr.refNo, lr.obdNo].filter(Boolean).join(" / ") || "--"}</div>
+              {/* right: private marks strip like the form */}
+              <div className="flex w-[120px] shrink-0 flex-col border border-black p-1.5 text-[8.5px]">
+                <div className="font-black">Private Marks</div>
+                <div className="min-h-[24px] font-semibold uppercase">{lr.privateMarka || " "}</div>
+                <div className="mt-auto border-t border-black pt-1 text-[8px]">
+                  E-Way Bill : <b>{lr.ewayBillNo || " "}</b>
+                  {lr.ewayExpiry && <div>Dt: {formatDate(lr.ewayExpiry)}</div>}
                 </div>
               </div>
             </div>
 
-            {/* ================= ROW 4: to/from, invoice details, claim, signatory ================= */}
-            <div className="mt-1 flex items-stretch gap-1">
-              <div className="w-[190px] shrink-0 border border-black p-1.5">
-                <div className="font-black">To :</div>
-                <div className="font-bold uppercase" style={{ color: RED }}>
-                  {consignee?.name}
-                </div>
-                <div>{addr(consignee)}</div>
-                {consignee?.mobile && <div>Mob.: {consignee.mobile}</div>}
+            {/* ---- footer ---- */}
+            <div className="mt-1 flex items-end gap-2 border border-black p-1.5 text-[9.5px]">
+              <div className="flex items-end gap-1 font-black">
+                Value
+                <span className="inline-block w-[130px] border-b border-black px-1 text-right font-black tabular-nums">
+                  {lr.goodsValue != null && showAmounts ? formatMoney(Number(lr.goodsValue)) : " "}
+                </span>
               </div>
-              <div className="w-[190px] shrink-0 border border-black p-1.5">
-                <div className="font-black">From :</div>
-                <div className="font-bold uppercase" style={{ color: RED }}>
-                  {consignor?.name}
-                </div>
-                <div>{addr(consignor)}</div>
-                {consignor?.mobile && <div>Mob.: {consignor.mobile}</div>}
-              </div>
-              {/* invoice details */}
-              <div className="min-w-0 flex-1 border border-black">
-                <div className="border-b border-black py-0.5 text-center text-[9px] font-black">
-                  Invoice Details
-                </div>
-                <div className="flex">
-                  <div className="min-w-0 flex-1 border-r border-black p-1.5">
-                    <Line label="Invoice No. :" value={lr.invoiceNo} />
-                    <Line
-                      label="Date :"
-                      value={lr.invoiceDate ? formatDate(lr.invoiceDate) : ""}
-                    />
-                    <Line label="GSTIN / UIN :" value={billTo?.gstin ?? consignor?.gstin} />
-                    <Line label="Licence No. of Transport Operator :" value="" />
-                    <Line label="Person Liable to Pay :" value={<b>{liable}</b>} />
-                  </div>
-                  <div className="w-[110px] shrink-0 p-1.5">
-                    {(["CONSIGNOR", "CONSIGNEE", "TRANSPORTER", "DRIVER"] as const).map((who) => (
-                      <div key={who} className="flex items-center gap-1.5 py-0.5">
-                        <span className="inline-flex h-[10px] w-[10px] items-center justify-center border border-black text-[8px] font-black leading-none">
-                          {liable === who ? "✓" : ""}
-                        </span>
-                        <span className="text-[8.5px] capitalize">{who.toLowerCase()}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              {/* claim note */}
-              <div className="w-[180px] shrink-0 border border-black p-1.5 text-[8.5px] leading-snug">
-                <div>This Consignment Note has to be claimed within 7 days.</div>
-                <div className="mt-1.5">
-                  Covered re-routed or re-booked without written instructions will be at
-                  owner&apos;s risk
-                </div>
-                <div className="mt-1.5">Will be Delivered at the destination.</div>
-              </div>
-              {/* signatory */}
-              <div className="flex w-[190px] shrink-0 flex-col items-center justify-between border border-black p-1.5">
-                <div className="text-[9px] font-black">
-                  For <span style={{ color: RED }}>{firm.name.toUpperCase()}</span>
-                </div>
-                <div className="py-2" />
-                <div className="w-full border-t border-black pt-0.5 text-center text-[9px] font-black">
-                  Authorised Signatory
-                </div>
-              </div>
-            </div>
-
-            {/* ================= FOOTER ================= */}
-            <div className="mt-1 flex items-stretch border border-black text-[9.5px] font-black">
-              <div className="w-[190px] shrink-0 border-r border-black p-1.5">
-                <div className="text-[8.5px]">Value</div>
-                <div className="text-[12px] tabular-nums">
-                  ₹ {lr.goodsValue != null ? formatMoney(Number(lr.goodsValue)) : "____________"}
-                </div>
-              </div>
-              <div className="flex flex-1 items-end justify-center border-r border-black p-1.5 pt-6">
+              <div className="flex flex-1 items-end justify-center gap-1 font-black">
                 Signature of Transport Operator
+                <span className="inline-block w-[180px] border-b border-black">{" "}</span>
               </div>
-              <div className="flex flex-1 items-end justify-center border-r border-black p-1.5 pt-6">
-                Signature of Consignor
-              </div>
-              <div className="flex flex-1 items-end justify-center p-1.5 pt-6">
-                Signature of Consignee
+              <div className="pr-2 text-right text-[8px]">
+                For <b style={{ color: RED }}>{firm.name.toUpperCase()}</b>
+                <div className="mt-4 border-t border-black px-2 pt-0.5 font-bold">Authorised Signatory</div>
               </div>
             </div>
           </div>
