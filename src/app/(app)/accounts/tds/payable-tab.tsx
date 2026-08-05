@@ -80,7 +80,8 @@ export async function TdsPayableTab({
       // on tdsAmt > 0 hid the zero-TDS ones, so there was no way to tell a
       // deliberate nil deduction from one that had simply been missed.
       tx.chalan.findMany({
-        where: { ...scope, ...notOwnVehicle, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
+        // cancelled chalans owe nothing, so no TDS arises on them
+        where: { ...scope, cancelledAt: null, ...notOwnVehicle, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
       }),
       tx.brokerSlip.findMany({
         where: {

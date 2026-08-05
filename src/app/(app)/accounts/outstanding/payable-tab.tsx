@@ -66,6 +66,8 @@ export async function OutstandingPayableTab({
       firmId: session.firmId,
       fyId: session.fyId,
       deletedAt: null,
+      // cancelled chalans owe nothing
+      cancelledAt: null,
       ...brokerVehicleOnly,
     };
     if (searchParams.party) chalanWhere.brokerId = searchParams.party;

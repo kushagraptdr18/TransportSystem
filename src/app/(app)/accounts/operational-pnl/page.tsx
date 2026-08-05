@@ -155,7 +155,8 @@ export default async function OperationalPnlPage({
         _sum: { pChalanAmt: true, vChalanAmt: true },
       }),
       tx.chalan.aggregate({
-        where: { ...scope, deletedAt: null, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
+        // a cancelled chalan (accident / rejection) is no longer an expense
+        where: { ...scope, deletedAt: null, cancelledAt: null, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
         // gross chalan amount — before commission / TDS / other deductions
         _sum: { totalChalanAmt: true },
       }),

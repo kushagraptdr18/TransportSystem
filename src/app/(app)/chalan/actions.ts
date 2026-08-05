@@ -818,6 +818,118 @@ export async function cancelChalan(
   }
 }
 
+/**
+ * Undo a mistaken cancel (Admin/Owner). Possible only while the cancel-created
+ * advance is untouched. The accrual re-posts from the chalan's stored figures
+ * and the cancel advance is removed. LR links were released at cancel time and
+ * cannot be re-attached automatically — reload them from the chalan edit screen.
+ */
+export async function restoreChalan(
+  chalanId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "chalan", "delete");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const chalan = await tx.chalan.findFirst({ where: { id: chalanId, deletedAt: null } });
+      if (!chalan) return { ok: false as const, error: "Chalan not found" };
+      if (!chalan.cancelledAt) return { ok: false as const, error: "Chalan is not cancelled" };
+
+      const adv = await tx.partyAdvance.findFirst({
+        where: { source: "CHALAN_CANCEL", sourceRefId: chalanId, deletedAt: null },
+      });
+      if (adv && toNum(adv.consumedAmount) > 0.009) {
+        return {
+          ok: false as const,
+          error: `The cancel advance is already adjusted (${formatOpen(toNum(adv.consumedAmount))}) — it cannot be restored.`,
+        };
+      }
+      if (adv) {
+        await tx.partyAdvance.update({ where: { id: adv.id }, data: { deletedAt: new Date() } });
+      }
+
+      // re-post the accrual exactly as saveChalan does, from stored figures
+      const common = {
+        date: chalan.chalanDate,
+        refType: "CHALAN",
+        refId: chalanId,
+        refNo: chalan.chalanNo,
+      };
+      const entries: Parameters<typeof postLedger>[2] = [];
+      const tag = `chalan ${chalan.chalanNo}`;
+      const earning = async (label: string, amount: number, headName: string) => {
+        if (amount <= 0) return;
+        const headId = await ensureAccountHead(tx, session, headName, "EXPENSE");
+        entries.push(
+          { ...common, accountHeadId: headId, side: "DEBIT", amount, narration: `${label} — ${tag}` },
+          { ...common, partyId: chalan.brokerId, side: "CREDIT", amount, narration: `${label} payable — ${tag}` }
+        );
+      };
+      const deduction = async (label: string, amount: number, headName: string) => {
+        if (amount <= 0) return;
+        const headId = await ensureAccountHead(tx, session, headName, "INCOME");
+        entries.push(
+          { ...common, partyId: chalan.brokerId, side: "DEBIT", amount, narration: `${label} deducted — ${tag}` },
+          { ...common, accountHeadId: headId, side: "CREDIT", amount, narration: `${label} — ${tag}` }
+        );
+      };
+      await earning("Lorry hire", toNum(chalan.freight), "Lorry Hire Expense");
+      await earning("Detention", toNum(chalan.detention), "Detention Charges");
+      await earning("ODC", toNum(chalan.odcAmt), "ODC Charges");
+      await earning("Fine slip", toNum(chalan.fineSlip), "Fine Slip Charges");
+      await earning("Other charges", toNum(chalan.otherAmt), "Other Chalan Charges");
+      await deduction("LD charge", toNum(chalan.ldCharge), "LD Charge Recovered");
+      if (toNum(chalan.shortageAmt) > 0) {
+        entries.push({
+          ...common,
+          partyId: chalan.brokerId,
+          side: "DEBIT",
+          amount: toNum(chalan.shortageAmt),
+          narration: `Shortage deducted — ${tag}`,
+        });
+      }
+      await deduction("Commission", toNum(chalan.commissionAmt), "Commission Income");
+      await deduction("TDS", toNum(chalan.tdsAmt), "TDS Payable");
+      await deduction("Mamool", toNum(chalan.mamool), "Mamool Recovered");
+      await deduction("Courier", toNum(chalan.courierCharge), "Courier Recovered");
+      await postLedger(tx, session, entries);
+      if (toNum(chalan.shortageAmt) > 0) {
+        await recoverShortage(tx, session, {
+          date: chalan.chalanDate,
+          module: "CHALAN",
+          refId: chalanId,
+          refNo: chalan.chalanNo,
+          source: "OWNER",
+          partyId: chalan.brokerId,
+          partyKind: "OWNER",
+          amount: toNum(chalan.shortageAmt),
+          remarks: `Deducted from chalan ${chalan.chalanNo}`,
+        });
+      }
+
+      await tx.chalan.update({
+        where: { id: chalanId },
+        data: {
+          cancelledAt: null,
+          cancelReason: null,
+          balance: Math.round((toNum(chalan.grandTotal) - toNum(chalan.advanceTotal)) * 100) / 100,
+          paymentStatus: "PENDING",
+        },
+      });
+      await audit(tx, session, {
+        entity: "Chalan",
+        entityId: chalanId,
+        action: "UPDATE",
+        after: { restored: true },
+      });
+      revalidatePath("/chalan/register");
+      return { ok: true as const };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Restore failed" };
+  }
+}
+
 // ---------------------------------------------------------------- balance payment
 
 const balancePaymentSchema = z.object({

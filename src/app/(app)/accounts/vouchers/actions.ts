@@ -820,7 +820,8 @@ export async function getAllocationCandidates(input: {
       }
     } else if (moduleLink === "FREIGHT_CHALLAN") {
       const chalans = await tx.chalan.findMany({
-        where: { ...scope, isFinal: true, ...(partyId ? { brokerId: partyId } : {}) },
+        // a cancelled chalan owes nothing — it must never be offered to settle
+        where: { ...scope, isFinal: true, cancelledAt: null, ...(partyId ? { brokerId: partyId } : {}) },
         orderBy: { chalanDate: "asc" },
       });
       // a chalan settled on its own balance-payment screen must not reappear

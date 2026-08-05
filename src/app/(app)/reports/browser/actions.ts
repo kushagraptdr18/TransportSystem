@@ -437,7 +437,7 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         }
       } else {
         const [chalans, slips, hires] = await Promise.all([
-          tx.chalan.findMany({ where: { ...scope, deletedAt: null, isFinal: true } }),
+          tx.chalan.findMany({ where: { ...scope, deletedAt: null, cancelledAt: null, isFinal: true } }),
           tx.brokerSlip.findMany({ where: { ...scope, deletedAt: null } }),
           tx.hireSlip.findMany({ where: { ...scope, deletedAt: null } }),
         ]);

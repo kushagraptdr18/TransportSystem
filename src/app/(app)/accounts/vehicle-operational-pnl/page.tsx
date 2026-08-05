@@ -65,6 +65,7 @@ export default async function VehicleOperationalPnlPage({
         where: {
           ...scope,
           deletedAt: null,
+          cancelledAt: null,
           vehicleId: { in: ownIds },
           ...(dateWhere ? { chalanDate: dateWhere } : {}),
         },

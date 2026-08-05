@@ -19,7 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cancelChalan, deleteChalan, getChalanStatus, type ChalanStatusData } from "../actions";
+import { cancelChalan, deleteChalan, getChalanStatus, restoreChalan, type ChalanStatusData } from "../actions";
 import { Input } from "@/components/ui/input";
 
 export interface ChalanRegisterRow {
@@ -312,6 +312,24 @@ export function ChalanRegisterClient({
           >
             Status
           </Button>
+          {canDelete && row.original.cancelled && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2"
+              title="Undo the cancel: accrual re-posts, the cancel advance is removed (only while unadjusted). Re-attach LRs from Edit."
+              onClick={async () => {
+                if (!confirm(`Restore cancelled chalan ${row.original.chalanNo}? LRs must be re-attached from Edit.`)) return;
+                const res = await restoreChalan(row.original.id);
+                if (res.ok) {
+                  toast({ title: `Chalan ${row.original.chalanNo} restored` });
+                  router.refresh();
+                } else toast({ variant: "destructive", title: "Restore failed", description: res.error });
+              }}
+            >
+              Restore
+            </Button>
+          )}
           {canDelete && !row.original.cancelled && (
             <Button
               variant="outline"
