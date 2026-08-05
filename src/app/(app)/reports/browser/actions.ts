@@ -234,7 +234,7 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
               toNum(c.freight),
               toNum(c.advanceTotal),
               round2(out),
-              out <= 0.009 ? "PAID" : c.paymentStatus,
+              c.cancelledAt ? "CANCELLED" : out <= 0.009 ? "PAID" : c.paymentStatus,
             ],
           };
         }),

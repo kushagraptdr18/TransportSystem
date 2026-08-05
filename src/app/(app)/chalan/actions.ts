@@ -454,6 +454,9 @@ export async function saveChalanAdvances(
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({ where: { id: chalanId, deletedAt: null } });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
+      if (chalan.cancelledAt) {
+        return { ok: false as const, error: "This chalan is cancelled — advances cannot be edited." };
+      }
 
       // manual advance-voucher adjustments: every ADVANCE_ADJ row must name the
       // voucher it consumes, and the consumption is re-applied (restore first)
@@ -691,6 +694,130 @@ export async function deleteChalan(
   }
 }
 
+/**
+ * Cancel a chalan after an accident / goods rejection. Unlike delete, the
+ * record survives with a CANCELLED stamp, and the money story stays true:
+ *  - the accrual (hire payable, deductions) reverses — nothing is owed on it
+ *  - the advance legs (bank / cash / diesel-supplier adjustments) are KEPT,
+ *    because that value really left the firm
+ *  - the broker's debit therefore stands, and it is materialised as an open
+ *    PartyAdvance (source CHALAN_CANCEL): recover it by receipt voucher or
+ *    adjust it against his next chalan
+ *  - advance VOUCHERS adjusted into this chalan are released back to open
+ *  - LRs return to PENDING for a replacement vehicle (cancel them separately
+ *    if the goods are fully lost)
+ */
+export async function cancelChalan(
+  chalanId: string,
+  reason: string
+): Promise<{ ok: true; advanceCreated: number } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "chalan", "delete");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const chalan = await tx.chalan.findFirst({
+        where: { id: chalanId, deletedAt: null },
+        include: { lrs: { include: { lr: { include: { invoiceLrs: true } } } }, advances: true },
+      });
+      if (!chalan) return { ok: false as const, error: "Chalan not found" };
+      if (chalan.cancelledAt) return { ok: false as const, error: "Chalan is already cancelled" };
+
+      const billed = chalan.lrs.find(
+        (l) => l.lr.invoiceLrs.length > 0 || l.lr.status === "BILLED"
+      );
+      if (billed) {
+        return {
+          ok: false as const,
+          error: `LR ${billed.lr.lrNo} is already billed. Delete its bill before cancelling this chalan.`,
+        };
+      }
+      if (chalan.paymentStatus === "PAID" || toNum(chalan.balPaidAmount) > 0) {
+        return {
+          ok: false as const,
+          error: "Balance payment is already recorded on this chalan — delete the chalan instead, or reverse that payment first.",
+        };
+      }
+      const settled = await payableSettlement(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: "FREIGHT_CHALLAN",
+        docs: [{ id: chalan.id, balance: toNum(chalan.balance), ownPaid: 0, ownShortage: 0, ownRoundOff: 0 }],
+      });
+      if ((settled.get(chalan.id)?.voucherSettled ?? 0) > 0.009) {
+        return {
+          ok: false as const,
+          error: "A payment voucher already settles this chalan — delete that voucher first.",
+        };
+      }
+
+      // accrual gone: the broker is no longer owed the hire
+      await reverseLedger(tx, "CHALAN", chalanId);
+      await reverseLedger(tx, ADV_ADJ_REF, chalanId);
+      // release the advance VOUCHERS this chalan had consumed — they open again
+      await restoreAdvanceUses(tx, ADV_USE_ADVANCE, chalanId);
+      await releaseShortage(tx, "CHALAN", chalanId);
+      // NOTE: CHALAN_ADVANCE ledger entries are intentionally NOT reversed —
+      // cash/bank left, diesel burned; the broker's debit is the receivable.
+
+      // paid-out advances (cash / bank / diesel / on-behalf expenses) become
+      // one open advance on the broker; ADVANCE_ADJ rows are excluded — those
+      // vouchers were just released back above
+      const advanceCreated =
+        Math.round(
+          chalan.advances
+            .filter((a) => a.type !== "ADVANCE_ADJ")
+            .reduce((s, a) => s + toNum(a.amount), 0) * 100
+        ) / 100;
+      if (advanceCreated > 0) {
+        await tx.partyAdvance.create({
+          data: {
+            tenantId: session.tenantId,
+            firmId: session.firmId,
+            fyId: session.fyId,
+            partyId: chalan.brokerId,
+            kind: "PAID",
+            date: new Date(),
+            voucherNo: chalan.chalanNo,
+            source: "CHALAN_CANCEL",
+            sourceRefId: chalanId,
+            amount: advanceCreated,
+            remarks: `Chalan ${chalan.chalanNo} cancelled${reason ? ` — ${reason}` : ""}`,
+          },
+        });
+      }
+
+      const lrIds = chalan.lrs.map((l) => l.lrId);
+      await tx.pod.deleteMany({ where: { lrId: { in: lrIds } } });
+      await tx.chalanLr.deleteMany({ where: { chalanId } });
+      await tx.lr.updateMany({
+        where: { id: { in: lrIds }, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } },
+        data: { status: "PENDING" },
+      });
+
+      await tx.chalan.update({
+        where: { id: chalanId },
+        data: {
+          cancelledAt: new Date(),
+          cancelReason: reason || null,
+          balance: 0,
+          paymentStatus: "CANCELLED",
+        },
+      });
+      await audit(tx, session, {
+        entity: "Chalan",
+        entityId: chalanId,
+        action: "UPDATE",
+        before: chalan,
+        after: { cancelled: true, reason, advanceCreated },
+      });
+      revalidatePath("/chalan/register");
+      return { ok: true as const, advanceCreated };
+    });
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Cancel failed" };
+  }
+}
+
 // ---------------------------------------------------------------- balance payment
 
 const balancePaymentSchema = z.object({
@@ -730,6 +857,9 @@ export async function saveBalancePayment(
         where: { id: data.chalanId, firmId: session.firmId, deletedAt: null },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found." };
+      if (chalan.cancelledAt) {
+        return { ok: false as const, error: "This chalan is cancelled — nothing is payable on it." };
+      }
       if (!chalan.isFinal) {
         return { ok: false as const, error: "Finalize the chalan before settling its balance." };
       }

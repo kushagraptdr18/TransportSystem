@@ -19,7 +19,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { deleteChalan, getChalanStatus, type ChalanStatusData } from "../actions";
+import { cancelChalan, deleteChalan, getChalanStatus, type ChalanStatusData } from "../actions";
+import { Input } from "@/components/ui/input";
 
 export interface ChalanRegisterRow {
   id: string;
@@ -47,6 +48,9 @@ export interface ChalanRegisterRow {
   balPaidAmount: number;
   /** live bill settlement across this chalan's LRs: NOT BILLED | UNPAID | PARTLY PAID | PAID */
   billStatus: string;
+  /** accident / rejection cancel — record kept, accrual reversed */
+  cancelled: boolean;
+  cancelReason: string;
 }
 
 const sum = (rows: ChalanRegisterRow[], k: keyof ChalanRegisterRow) =>
@@ -86,6 +90,32 @@ export function ChalanRegisterClient({
   // complete chalan lifecycle dialog
   const [status, setStatus] = React.useState<ChalanStatusData | null>(null);
   const [statusLoading, setStatusLoading] = React.useState(false);
+  // accident / rejection cancel dialog
+  const [toCancel, setToCancel] = React.useState<ChalanRegisterRow | null>(null);
+  const [cancelReason, setCancelReason] = React.useState("");
+  const [cancelling, setCancelling] = React.useState(false);
+
+  const confirmCancel = async () => {
+    if (!toCancel) return;
+    setCancelling(true);
+    try {
+      const res = await cancelChalan(toCancel.id, cancelReason.trim());
+      if (res.ok) {
+        toast({
+          title: `Chalan ${toCancel.chalanNo} cancelled`,
+          description:
+            res.advanceCreated > 0
+              ? `${formatMoney(res.advanceCreated)} moved to the Chalan Cancel Advance Register — recover it or adjust it in the next chalan.`
+              : "No advances were on it; the payable has been reversed.",
+        });
+        setToCancel(null);
+        setCancelReason("");
+        router.refresh();
+      } else toast({ variant: "destructive", title: "Cancel failed", description: res.error });
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   const openStatus = async (id: string) => {
     setStatusLoading(true);
@@ -158,7 +188,15 @@ export function ChalanRegisterClient({
       accessorKey: "isFinal",
       header: "Status",
       cell: ({ row }) =>
-        row.original.isFinal ? <Badge>Final</Badge> : <Badge variant="secondary">Draft</Badge>,
+        row.original.cancelled ? (
+          <Badge variant="destructive" title={row.original.cancelReason || undefined}>
+            Cancelled
+          </Badge>
+        ) : row.original.isFinal ? (
+          <Badge>Final</Badge>
+        ) : (
+          <Badge variant="secondary">Draft</Badge>
+        ),
     },
     {
       id: "podStatus",
@@ -218,7 +256,9 @@ export function ChalanRegisterClient({
             accessorKey: "paymentStatus",
             header: "Balance Payment",
             cell: ({ row }) =>
-              row.original.paymentStatus === "PAID" ? (
+              row.original.cancelled ? (
+                <Badge variant="outline">—</Badge>
+              ) : row.original.paymentStatus === "PAID" ? (
                 <Badge>Paid {formatMoney(row.original.balPaidAmount)}</Badge>
               ) : (
                 <Badge variant="destructive">Pending Balance</Badge>
@@ -249,6 +289,7 @@ export function ChalanRegisterClient({
           </Button>
           {isMarket &&
             row.original.isFinal &&
+            !row.original.cancelled &&
             row.original.paymentStatus !== "PAID" &&
             row.original.lrCount > 0 &&
             row.original.podDone >= row.original.lrCount && (
@@ -271,6 +312,17 @@ export function ChalanRegisterClient({
           >
             Status
           </Button>
+          {canDelete && !row.original.cancelled && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-destructive"
+              title="Accident / rejection: keep the record, reverse the payable, advances become an open advance on the broker"
+              onClick={() => setToCancel(row.original)}
+            >
+              Cancel
+            </Button>
+          )}
           {canDelete && (
             <Button
               variant="ghost"
@@ -629,6 +681,38 @@ export function ChalanRegisterClient({
           <DialogFooter>
             <Button variant="outline" onClick={() => setStatus(null)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* accident / rejection cancel */}
+      <Dialog open={!!toCancel} onOpenChange={(o) => !o && setToCancel(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cancel Chalan {toCancel?.chalanNo}?</DialogTitle>
+            <DialogDescription>
+              The chalan stays on record as CANCELLED. The broker&apos;s payable is reversed,
+              LRs return to pending for a replacement vehicle, and any advances already given
+              (cash / bank / diesel) become an open advance on the broker — recover it by
+              receipt or adjust it against his next chalan.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1">
+            <label className="text-xs font-medium">Reason (Accident / Goods Rejected / ...)</label>
+            <Input
+              className="h-9"
+              placeholder="e.g. Accident near Dewas — material rejected"
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setToCancel(null)} disabled={cancelling}>
+              Back
+            </Button>
+            <Button variant="destructive" onClick={confirmCancel} disabled={cancelling}>
+              {cancelling ? "Cancelling..." : "Cancel Chalan"}
             </Button>
           </DialogFooter>
         </DialogContent>

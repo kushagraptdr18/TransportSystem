@@ -148,17 +148,23 @@ export default async function ChalanRegisterPage({
     shortage: Number(c.balShortage),
     roundOff: Number(c.balRoundOff),
     // payment status and paid amount span both settlement paths
-    paymentStatus:
-      (payable.get(c.id)?.outstanding ?? 0) <= 0.009 ? "PAID" : c.paymentStatus,
+    paymentStatus: c.cancelledAt
+      ? "CANCELLED"
+      : (payable.get(c.id)?.outstanding ?? 0) <= 0.009
+        ? "PAID"
+        : c.paymentStatus,
     balPaidAmount: payable.get(c.id)?.settled ?? Number(c.balPaidAmount),
     billStatus: billStatusByChalan.get(c.id) ?? "NOT BILLED",
+    cancelled: !!c.cancelledAt,
+    cancelReason: c.cancelReason ?? "",
   }));
 
   const data =
     payment === "paid"
       ? mapped.filter((r) => r.paymentStatus === "PAID")
       : payment === "pending"
-        ? mapped.filter((r) => r.paymentStatus !== "PAID")
+        ? // a cancelled chalan owes nothing, so it is neither paid nor pending
+          mapped.filter((r) => r.paymentStatus !== "PAID" && !r.cancelled)
         : mapped;
 
   return (

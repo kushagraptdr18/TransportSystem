@@ -25,6 +25,8 @@ export default async function AdvanceRegisterPage({
       firmId: session.firmId,
       fyId: session.fyId,
       deletedAt: null,
+      // cancel-created advances have their own register (Chalan Cancel Advances)
+      source: { not: "CHALAN_CANCEL" },
     };
     if (searchParams.party) where.partyId = searchParams.party;
     if (searchParams.date_from || searchParams.date_to) {

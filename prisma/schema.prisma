@@ -754,6 +754,11 @@ model Chalan {
   // total settled from advance vouchers in the balance-payment step
   balAdvanceAdjusted Decimal @default(0) @db.Decimal(14, 2)
 
+  // accident / rejection cancel: the record stays, the accrual is reversed and
+  // any advances become an open PartyAdvance on the broker
+  cancelledAt  DateTime?
+  cancelReason String?
+
   lrs      ChalanLr[]
   advances ChalanAdvance[]
 
@@ -2641,6 +2646,10 @@ model PartyAdvance {
   date           DateTime
   voucherId      String? // receipt/payment voucher that created it
   voucherNo      String?
+  // VOUCHER (default) | CHALAN_CANCEL — cancel-created advances live in their
+  // own register but stay adjustable everywhere like any other open advance
+  source         String   @default("VOUCHER")
+  sourceRefId    String? // cancelled chalan id
   amount         Decimal  @default(0) @db.Decimal(14, 2)
   consumedAmount Decimal  @default(0) @db.Decimal(14, 2)
   remarks        String?
