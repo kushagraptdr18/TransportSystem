@@ -26,6 +26,18 @@ export default async function AccountHeadsPage({
         create: { tenantId: session.tenantId, name: h.name, kind: h.kind },
       });
     }
+    // retired names of the staff-payroll head (now "Staff Salary Expense");
+    // safe to remove only while nothing has ever posted to them
+    const retired = await tx.accountHead.findMany({
+      where: {
+        tenantId: session.tenantId,
+        name: { in: ["Salary Expense", "SALARY EXPENSE", "SALARY DEDUCTIONS"] },
+      },
+    });
+    for (const h of retired) {
+      const used = await tx.ledgerEntry.count({ where: { accountHeadId: h.id } });
+      if (used === 0) await tx.accountHead.delete({ where: { id: h.id } });
+    }
     return tx.accountHead.findMany({
       where: {
         ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),

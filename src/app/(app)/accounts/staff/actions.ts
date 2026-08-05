@@ -489,7 +489,7 @@ export async function payStaffSalary(input: {
 
 /**
  * Balanced salary posting:
- *   DEBIT  Salary Expense          gross
+ *   DEBIT  Staff Salary Expense    gross
  *   CREDIT staff party             net + advanceRecovery + loanRecovery
  *          (net stays payable until paid; recoveries clear the advance/loan
  *           debits already sitting on the party)
@@ -521,7 +521,7 @@ async function postSalaryLedger(
   );
 
   const entries: LedgerPostEntry[] = [];
-  const expenseHead = await salaryHead(tx, session.tenantId, "Salary Expense", "EXPENSE");
+  const expenseHead = await salaryHead(tx, session.tenantId, "Staff Salary Expense", "EXPENSE");
   entries.push({
     ...common,
     accountHeadId: expenseHead,

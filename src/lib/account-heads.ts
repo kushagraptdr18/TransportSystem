@@ -168,7 +168,7 @@ export const MODULE_HEADS: { name: string; kind: "INCOME" | "EXPENSE" }[] = [
   { name: "Urea Expense", kind: "EXPENSE" }, // adblue + trip sheet
   { name: "Driver Salary Expense", kind: "EXPENSE" }, // driver salary + F&F
   { name: "Salary Deductions (Driver)", kind: "INCOME" },
-  { name: "Salary Expense", kind: "EXPENSE" }, // staff payroll
+  { name: "Staff Salary Expense", kind: "EXPENSE" }, // staff payroll
   { name: "Salary Deductions (Staff)", kind: "INCOME" },
   { name: "Driver Recovery (F&F)", kind: "INCOME" },
   { name: "Vehicle EMI Expense", kind: "EXPENSE" }, // vehicle loans
