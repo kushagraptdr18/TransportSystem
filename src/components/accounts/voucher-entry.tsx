@@ -147,6 +147,25 @@ export function VoucherEntry({
   const isHead = (v: string | null) => !!v && v.startsWith(HEAD_PREFIX);
   const headId = (v: string | null) => (isHead(v) ? v!.slice(HEAD_PREFIX.length) : null);
   const partyIdOf = (v: string | null) => (isHead(v) ? null : v);
+  const isBankAccount = React.useCallback(
+    (v: string | null) => !!v && bankOptions.some((b) => b.value === v),
+    [bankOptions]
+  );
+
+  // A journal against a real party (not a bank/cash account or a head) can
+  // settle that party's pending references, exactly like a receipt/payment:
+  // party on the CREDIT side reduces receivables (write-off / credit note),
+  // party on the DEBIT side reduces payables (debit note). When both sides
+  // are parties the target is ambiguous, so the grid stays hidden.
+  const jDebitParty =
+    type === "JOURNAL" && !isBankAccount(partyIdOf(partyId)) ? partyIdOf(partyId) : null;
+  const jCreditParty =
+    type === "JOURNAL" && !isBankAccount(partyIdOf(creditLedgerId))
+      ? partyIdOf(creditLedgerId)
+      : null;
+  const journalRefParty = jCreditParty && !jDebitParty ? jCreditParty : jDebitParty && !jCreditParty ? jDebitParty : null;
+  const journalRefDir: "RECEIPT" | "PAYMENT" | null =
+    jCreditParty && !jDebitParty ? "RECEIPT" : jDebitParty && !jCreditParty ? "PAYMENT" : null;
 
   const [rows, setRows] = React.useState<SettleRow[]>([]);
   const [advInfo, setAdvInfo] = React.useState<{ received: number; paid: number } | null>(null);
@@ -210,6 +229,46 @@ export function VoucherEntry({
     },
     [type, toast]
   );
+
+  // journal grid: reload pending references whenever the party side changes
+  React.useEffect(() => {
+    if (type !== "JOURNAL") return;
+    if (!journalRefParty || !journalRefDir) {
+      setRows([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingRefs(true);
+    getAllocationCandidates({
+      moduleLink: "ALL",
+      partyId: journalRefParty,
+      voucherType: journalRefDir,
+    })
+      .then((candidates) => {
+        if (cancelled) return;
+        setRows(
+          candidates.map((c) => ({
+            ...c,
+            selected: false,
+            tds: 0,
+            shortage: 0,
+            other: 0,
+            roundOff: 0,
+            receive: 0,
+            remarks: "",
+          }))
+        );
+      })
+      .catch(() => {
+        if (!cancelled) toast({ variant: "destructive", title: "Failed to load pending references" });
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRefs(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [type, journalRefParty, journalRefDir, toast]);
 
   const onParty = (pid: string | null) => {
     setPartyId(pid);
@@ -314,7 +373,7 @@ export function VoucherEntry({
               .filter((r) => r.use > 0)
               .map((r) => ({ advanceId: r.id, amount: r.use }))
           : [],
-        allocations: isMoney
+        allocations: isMoney || type === "JOURNAL"
           ? selected
               .filter((r) => Math.abs(r.receive + r.tds + r.shortage + r.other + r.roundOff) > 0)
               .map((r) => ({
@@ -362,7 +421,12 @@ export function VoucherEntry({
     (type === "CONTRA"
       ? money > 0 && !!partyId && !!bankPartyId && partyId !== bankPartyId
       : type === "JOURNAL"
-        ? money > 0 && !!partyId && !!creditLedgerId && partyId !== creditLedgerId
+        ? money > 0 &&
+          !!partyId &&
+          !!creditLedgerId &&
+          partyId !== creditLedgerId &&
+          !hasRowErrors &&
+          !overAllocated
         : // a receipt/payment may move no money at all when it purely adjusts
           // an open advance against pending references
           (money > 0 || advUsed > 0) &&
@@ -543,6 +607,9 @@ export function VoucherEntry({
           No cash or bank moves in a journal. <b>Debit</b> the ledger that should owe more or
           receives the value (debit note on a party, expense moved TO a head). <b>Credit</b> the
           ledger whose balance reduces (credit note to a party, write-off, amount moved FROM).
+          When one side is a party, their pending references appear below — adjust them so the
+          Outstanding Register settles along with the ledger (e.g. Bad Debts Dr / party Cr
+          against the unpaid bill).
         </p>
       )}
 
@@ -611,11 +678,11 @@ export function VoucherEntry({
       )}
 
       {/* ---------- settlement grid ---------- */}
-      {isMoneyType && partyId && (
+      {((isMoneyType && partyId) || (type === "JOURNAL" && journalRefParty)) && (
         <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-base">
-              Settle Pending References{" "}
+              {type === "JOURNAL" ? "Adjust Pending References (optional)" : "Settle Pending References"}{" "}
               {loadingRefs && <span className="text-xs font-normal">loading...</span>}
               {advInfo && (type === "RECEIPT" ? advInfo.received : advInfo.paid) > 0 && (
                 <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -654,12 +721,16 @@ export function VoucherEntry({
                     <TableHead>Date</TableHead>
                     <TableHead className="text-right">Bill Amt</TableHead>
                     <TableHead className="text-right">Outstanding</TableHead>
-                    <TableHead className="w-24 text-right">TDS</TableHead>
-                    <TableHead className="w-24 text-right">Shortage</TableHead>
-                    <TableHead className="w-24 text-right">Other Ded.</TableHead>
-                    <TableHead className="w-24 text-right">Round Off</TableHead>
+                    {isMoneyType && (
+                      <>
+                        <TableHead className="w-24 text-right">TDS</TableHead>
+                        <TableHead className="w-24 text-right">Shortage</TableHead>
+                        <TableHead className="w-24 text-right">Other Ded.</TableHead>
+                        <TableHead className="w-24 text-right">Round Off</TableHead>
+                      </>
+                    )}
                     <TableHead className="w-28 text-right">
-                      {type === "RECEIPT" ? "Receive" : "Pay"}
+                      {type === "RECEIPT" ? "Receive" : type === "PAYMENT" ? "Pay" : "Adjust"}
                     </TableHead>
                     <TableHead className="w-40">Remarks</TableHead>
                   </TableRow>
@@ -668,8 +739,11 @@ export function VoucherEntry({
                   {rows.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={12} className="h-16 text-center text-muted-foreground">
-                        No pending references — the full amount will be saved as a party{" "}
-                        {type === "RECEIPT" ? "advance (received)" : "advance (paid)"}.
+                        {type === "JOURNAL"
+                          ? "No pending references for this party — the journal will only adjust the two ledgers."
+                          : `No pending references — the full amount will be saved as a party advance (${
+                              type === "RECEIPT" ? "received" : "paid"
+                            }).`}
                       </TableCell>
                     </TableRow>
                   ) : (
@@ -700,13 +774,18 @@ export function VoucherEntry({
                             {formatMoney(r.outstanding)}
                           </TableCell>
                           {(
-                            [
-                              ["tds", r.tds],
-                              ["shortage", r.shortage],
-                              ["other", r.other],
-                              ["roundOff", r.roundOff],
-                              ["receive", r.receive],
-                            ] as const
+                            (isMoneyType
+                              ? [
+                                  ["tds", r.tds],
+                                  ["shortage", r.shortage],
+                                  ["other", r.other],
+                                  ["roundOff", r.roundOff],
+                                  ["receive", r.receive],
+                                ]
+                              : [["receive", r.receive]]) as [
+                              "tds" | "shortage" | "other" | "roundOff" | "receive",
+                              number,
+                            ][]
                           ).map(([key, val]) => (
                             <TableCell key={key}>
                               <Input
@@ -738,6 +817,23 @@ export function VoucherEntry({
             </div>
 
             {/* live totals */}
+            {type === "JOURNAL" && (
+              <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+                {(
+                  [
+                    ["Journal Amount", money, ""],
+                    ["Adjusted to references", allocated, overAllocated ? "text-destructive" : ""],
+                    ["Unadjusted (ledger only)", round2(money - allocated), ""],
+                  ] as [string, number, string][]
+                ).map(([l, v, cls]) => (
+                  <div key={l} className="rounded-md border p-2">
+                    <div className="text-[11px] text-muted-foreground">{l}</div>
+                    <div className={`font-semibold tabular-nums ${cls}`}>{formatMoney(v)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {isMoneyType && (
             <div className="mt-3 grid gap-2 text-sm sm:grid-cols-6">
               {(
                 [
@@ -762,9 +858,10 @@ export function VoucherEntry({
                 </div>
               ))}
             </div>
+            )}
             {overAllocated && (
               <p className="mt-1 text-xs font-medium text-destructive">
-                Allocated exceeds the amount {type === "RECEIPT" ? "received" : "paid"}
+                Allocated exceeds the {type === "JOURNAL" ? "journal amount" : `amount ${type === "RECEIPT" ? "received" : "paid"}`}
                 {advUsed > 0.009 ? " plus the advance adjusted" : ""} — reduce the allocation
                 or increase the amount.
               </p>
