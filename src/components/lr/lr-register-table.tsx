@@ -112,12 +112,6 @@ export function LrRegisterTable({
       { accessorKey: "invoiceNo", header: "Invoice No" },
       { accessorKey: "refNo", header: "Ref No" },
       {
-        accessorKey: "rate",
-        header: "Rate",
-        cell: ({ row }) => (row.original.rate ? formatMoney(row.original.rate) : ""),
-        meta: { numeric: true } as DataTableColumnMeta<LrRegisterRow>,
-      },
-      {
         accessorKey: "qty",
         header: "Qty",
         cell: ({ row }) => row.original.qty.toFixed(3),
@@ -134,6 +128,12 @@ export function LrRegisterTable({
         header: "Charge Wt",
         cell: ({ row }) => row.original.chargeWt.toFixed(3),
         meta: numMeta("chargeWt", 3),
+      },
+      {
+        accessorKey: "rate",
+        header: "Rate",
+        cell: ({ row }) => (row.original.rate ? formatMoney(row.original.rate) : ""),
+        meta: { numeric: true } as DataTableColumnMeta<LrRegisterRow>,
       },
       {
         accessorKey: "freight",
@@ -240,10 +240,10 @@ export function LrRegisterTable({
     { header: "OBD No", key: "obdNo" },
     { header: "Invoice No", key: "invoiceNo" },
     { header: "Ref No", key: "refNo" },
-    { header: "Rate", key: "rate", numeric: true },
     { header: "Qty", key: "qty", numeric: true },
     { header: "Actual Wt", key: "actualWt", numeric: true },
     { header: "Charge Wt", key: "chargeWt", numeric: true },
+    { header: "Rate", key: "rate", numeric: true },
     { header: "Freight", key: "freight", numeric: true },
     { header: "Grand Total", key: "grandTotal", numeric: true },
     { header: "Type", key: "lrType" },
@@ -268,10 +268,32 @@ export function LrRegisterTable({
     }
   };
 
+  const summary = [
+    { label: "Total LR", value: rows.length },
+    { label: "Total Actual Weight", value: `${sum(rows, "actualWt").toFixed(3)} MT` },
+    { label: "Total Charge Weight", value: `${sum(rows, "chargeWt").toFixed(3)} MT` },
+    { label: "Total Freight", value: formatMoney(sum(rows, "freight")) },
+  ];
+
   return (
     <div className="space-y-2">
-      <div className="flex justify-end">
-        <ExportButton rows={rows} columns={exportColumns} fileName="lr-register" sheetName="LR Register" />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* report totals of the filtered register, always in view */}
+        <div className="flex flex-wrap gap-2">
+          {summary.map((s) => (
+            <div key={s.label} className="rounded-md border bg-muted/40 px-2 py-1 text-xs">
+              <span className="text-muted-foreground">{s.label}: </span>
+              <b className="tabular-nums">{s.value}</b>
+            </div>
+          ))}
+        </div>
+        <ExportButton
+          rows={rows}
+          columns={exportColumns}
+          fileName="lr-register"
+          sheetName="LR Register"
+          summary={summary}
+        />
       </div>
       <DataTable columns={columns} data={rows} emptyMessage="No LRs found." />
 

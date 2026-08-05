@@ -20,6 +20,8 @@ interface ExportButtonProps<TRow> {
   fileName?: string;
   sheetName?: string;
   label?: string;
+  /** report totals written under the data as bold label/value rows */
+  summary?: { label: string; value: string | number }[];
 }
 
 export function ExportButton<TRow>({
@@ -28,6 +30,7 @@ export function ExportButton<TRow>({
   fileName = "export",
   sheetName = "Sheet1",
   label = "Export",
+  summary,
 }: ExportButtonProps<TRow>) {
   const [busy, setBusy] = React.useState(false);
   const { toast } = useToast();
@@ -65,6 +68,16 @@ export function ExportButton<TRow>({
           ws.getColumn(i + 1).numFmt = "#,##0.00";
         }
       });
+
+      if (summary?.length) {
+        ws.addRow([]);
+        for (const s of summary) {
+          const r = ws.addRow([s.label, s.value]);
+          r.font = { bold: true };
+          r.getCell(2).alignment = { horizontal: "left" };
+          r.getCell(2).numFmt = "General";
+        }
+      }
 
       const buffer = await wb.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
