@@ -144,7 +144,8 @@ export default async function BrokerSlipPrintPage({
           ["Less: Shortage", -toNum(slip.pShortageAmt)],
           ["Chalan Amount", toNum(slip.pChalanAmt)],
           ["Less: TDS", -toNum(slip.pTdsAmt)],
-          ["Less: Commission", -toNum(slip.pCommAmt)],
+          // on paper the commission reads as loading expense; the software keeps "Commission"
+          ["Less: Loading Exp", -toNum(slip.pCommAmt)],
           ["Less: Mamool", -toNum(slip.pMamool)],
           ["Less: Payment Charge", -toNum(slip.pPaymentCharge)],
           ["Net Amount", toNum(slip.pNetAmt)],
@@ -158,7 +159,7 @@ export default async function BrokerSlipPrintPage({
           ["Less: Shortage", -toNum(slip.vShortageAmt)],
           ["Chalan Amount", toNum(slip.vChalanAmt)],
           ["Less: TDS", -toNum(slip.vTdsAmt)],
-          ["Less: Commission", -toNum(slip.vCommAmt)],
+          ["Less: Loading Exp", -toNum(slip.vCommAmt)],
           ["Less: Mamool", -toNum(slip.vMamool)],
           ["Less: Payment Charge", -toNum(slip.vPaymentAmt)],
           ["Net Amount", toNum(slip.vNetAmt)],

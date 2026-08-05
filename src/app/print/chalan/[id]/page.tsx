@@ -177,7 +177,8 @@ export default async function ChalanPrintPage({
                 ["Less: LD Charge", -toNum(chalan.ldCharge)],
                 ["Less: Shortage", -toNum(chalan.shortageAmt)],
                 ["Total Chalan Amount", toNum(chalan.totalChalanAmt)],
-                ["Less: Commission", -toNum(chalan.commissionAmt)],
+                // on paper the commission reads as loading expense; the software keeps "Commission"
+                ["Less: Loading Exp", -toNum(chalan.commissionAmt)],
                 [`Less: TDS @ ${toNum(chalan.tdsPct)}%`, -toNum(chalan.tdsAmt)],
                 ["Less: Mamool", -toNum(chalan.mamool)],
                 ["Less: Courier", -toNum(chalan.courierCharge)],
