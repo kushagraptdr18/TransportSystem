@@ -23,6 +23,9 @@ import { DateInput } from "@/components/data/date-input";
 import { ExportButton } from "@/components/data/export-button";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import {
+  deleteStaffAdvance,
+  deleteStaffLoan,
+  deleteStaffSalary,
   getStaffDetails,
   payStaffSalary,
   processStaffSalary,
@@ -266,6 +269,62 @@ export function StaffPayrollClient({
     if (res.ok) setSalaryDetails(res.data);
   };
 
+  // edit a processed month from the details dialog: same form, prefilled —
+  // saving reverses and re-posts that month's ledger
+  const openSalaryEdit = (d: StaffDetails, s: StaffDetails["salaries"][number]) => {
+    const row = rows.find((r) => r.partyId === d.partyId);
+    if (!row) return;
+    setDetails(null);
+    setSalaryRow(row);
+    setSalaryDetails(d);
+    setSalary({
+      month: s.month,
+      basic: s.basic,
+      allowances: s.allowances,
+      overtime: s.overtime,
+      incentives: s.incentives,
+      bonus: s.bonus,
+      otherEarnings: s.otherEarnings,
+      attendanceAdj: s.attendanceAdj,
+      leaveDeduction: s.leaveDeduction,
+      penalties: s.penalties,
+      otherDeductions: s.otherDeductions,
+      advanceId: s.advanceId,
+      advanceRecovery: s.advanceRecovery,
+      loanId: s.loanId,
+      loanRecovery: s.loanRecovery,
+      remarks: s.remarks,
+      markPaid: s.paymentStatus === "PAID",
+      paymentDateText: s.paymentDate ? formatDate(s.paymentDate) : formatDate(new Date()),
+      paymentHeadId: s.paymentHeadId,
+    });
+  };
+
+  const removeRecord = async (
+    kind: "advance" | "loan" | "salary",
+    id: string,
+    label: string
+  ) => {
+    if (!details) return;
+    if (!window.confirm(`Delete ${label}? Its ledger entries will be reversed.`)) return;
+    setBusy(true);
+    try {
+      const res =
+        kind === "advance"
+          ? await deleteStaffAdvance(id)
+          : kind === "loan"
+            ? await deleteStaffLoan(id)
+            : await deleteStaffSalary(id);
+      if (res.ok) {
+        toast({ title: `${label} deleted` });
+        await openDetails(details.partyId);
+        router.refresh();
+      } else toast({ variant: "destructive", title: res.error });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const gross = round2(
     salary.basic + salary.allowances + salary.overtime + salary.incentives + salary.bonus + salary.otherEarnings
   );
@@ -398,7 +457,7 @@ export function StaffPayrollClient({
             Salary
           </Button>
           <Button variant="outline" size="sm" className="h-6 px-2 text-xs" onClick={() => void openDetails(row.original.partyId)}>
-            Details
+            Edit / History
           </Button>
         </div>
       ),
@@ -436,7 +495,8 @@ export function StaffPayrollClient({
       </div>
       <p className="text-sm text-muted-foreground">
         Staff are Party master records (group STAFF). Advances, loans and salaries post to the
-        ledger automatically — history is never edited; corrections are new transactions.
+        ledger automatically — open Edit / History to edit a salary month or delete a record
+        (its ledger entries are reversed).
       </p>
       <DataTable
         columns={columns}
@@ -582,7 +642,7 @@ export function StaffPayrollClient({
               <Label className="text-xs">Recover Advance</Label>
               <MasterCombobox
                 options={(salaryDetails?.advances ?? [])
-                  .filter((a) => a.balance > 0)
+                  .filter((a) => a.balance > 0 || a.id === salary.advanceId)
                   .map((a) => ({ value: a.id, label: a.advanceNo, meta: `Bal ${formatMoney(a.balance)}` }))}
                 value={salary.advanceId}
                 onChange={(v) => setSalary((s) => ({ ...s, advanceId: v }))}
@@ -594,7 +654,7 @@ export function StaffPayrollClient({
               <Label className="text-xs">Recover Loan</Label>
               <MasterCombobox
                 options={(salaryDetails?.loans ?? [])
-                  .filter((l) => l.outstanding > 0)
+                  .filter((l) => l.outstanding > 0 || l.id === salary.loanId)
                   .map((l) => ({ value: l.id, label: l.loanNo, meta: `Out ${formatMoney(l.outstanding)} · EMI ${formatMoney(l.emiAmount)}` }))}
                 value={salary.loanId}
                 onChange={(v) => {
@@ -722,6 +782,26 @@ export function StaffPayrollClient({
                         </Button>
                       </span>
                     )}
+                    <span className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={busy}
+                        onClick={() => openSalaryEdit(details, s)}
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={busy}
+                        onClick={() => void removeRecord("salary", s.id, `Salary ${s.month}`)}
+                      >
+                        Delete
+                      </Button>
+                    </span>
                   </div>
                 ))}
               </div>
@@ -743,10 +823,22 @@ export function StaffPayrollClient({
                         </span>
                         <span className="tabular-nums">{formatMoney(a.amount)}</span>
                       </div>
-                      <div className="flex justify-between text-muted-foreground">
+                      <div className="flex items-center justify-between text-muted-foreground">
                         <span>Adjusted {formatMoney(a.adjusted)}</span>
-                        <span className={a.balance > 0 ? "font-medium text-foreground" : ""}>
-                          Balance {formatMoney(a.balance)}
+                        <span className="flex items-center gap-1">
+                          <span className={a.balance > 0 ? "font-medium text-foreground" : ""}>
+                            Balance {formatMoney(a.balance)}
+                          </span>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="h-5 px-1.5 text-[10px]"
+                            disabled={busy || a.adjusted > 0}
+                            title={a.adjusted > 0 ? "Recovered through salary — edit those salaries first" : undefined}
+                            onClick={() => void removeRecord("advance", a.id, `Advance ${a.advanceNo}`)}
+                          >
+                            Delete
+                          </Button>
                         </span>
                       </div>
                     </div>
@@ -772,9 +864,19 @@ export function StaffPayrollClient({
                           Recovered {formatMoney(l.recovered)}
                           {l.emiAmount > 0 ? ` · EMI ${formatMoney(l.emiAmount)}` : ""}
                         </span>
-                        <span>
+                        <span className="flex items-center gap-1">
                           Outstanding {formatMoney(l.outstanding)}{" "}
                           {l.status === "CLOSED" ? <Badge variant="secondary">Closed</Badge> : <Badge>Open</Badge>}
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="h-5 px-1.5 text-[10px]"
+                            disabled={busy || l.recovered > 0}
+                            title={l.recovered > 0 ? "Recovered through salary — edit those salaries first" : undefined}
+                            onClick={() => void removeRecord("loan", l.id, `Loan ${l.loanNo}`)}
+                          >
+                            Delete
+                          </Button>
                         </span>
                       </div>
                     </div>

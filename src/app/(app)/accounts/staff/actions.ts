@@ -7,6 +7,7 @@ import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
+import { settledByRef } from "@/lib/settlement";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
 
@@ -574,6 +575,114 @@ async function syncLoanStatus(tx: Tx, loanId: string | null | undefined) {
   }
 }
 
+// ---------------------------------------------------------------- delete
+
+/**
+ * Deletes soft-delete the row and remove its ledger entries. A record that
+ * something else already depends on (a salary recovery, a voucher allocation)
+ * must be untangled first — the guard names what is blocking it.
+ */
+export async function deleteStaffAdvance(
+  id: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "vouchers", "delete");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const adv = await tx.staffAdvance.findFirst({ where: { id, deletedAt: null } });
+      if (!adv) return { ok: false as const, error: "Advance not found" };
+      const adjusted = await advanceAdjustedTotal(tx, id);
+      if (adjusted > 0) {
+        return {
+          ok: false as const,
+          error: `Advance ${adv.advanceNo} has ${adjusted.toFixed(2)} recovered through salary — delete or edit those salaries first`,
+        };
+      }
+      const settled = await settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["STAFF_ADVANCE"],
+        refIds: [id],
+      });
+      if ((settled.get(id) ?? 0) > 0) {
+        return {
+          ok: false as const,
+          error: `Advance ${adv.advanceNo} is settled by a receipt voucher — delete that voucher first`,
+        };
+      }
+      await tx.staffAdvance.update({ where: { id }, data: { deletedAt: new Date() } });
+      await reverseLedger(tx, "STAFF_ADVANCE", id);
+      await audit(tx, session, { entity: "StaffAdvance", entityId: id, action: "DELETE", before: adv });
+      revalidatePath(REVALIDATE);
+      return { ok: true as const };
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Delete failed" };
+  }
+}
+
+export async function deleteStaffLoan(
+  id: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "vouchers", "delete");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const loan = await tx.staffLoan.findFirst({ where: { id, deletedAt: null } });
+      if (!loan) return { ok: false as const, error: "Loan not found" };
+      const recovered = await loanRecoveredTotal(tx, id);
+      if (recovered > 0) {
+        return {
+          ok: false as const,
+          error: `Loan ${loan.loanNo} has ${recovered.toFixed(2)} recovered through salary — delete or edit those salaries first`,
+        };
+      }
+      await tx.staffLoan.update({ where: { id }, data: { deletedAt: new Date() } });
+      await reverseLedger(tx, "STAFF_LOAN", id);
+      await audit(tx, session, { entity: "StaffLoan", entityId: id, action: "DELETE", before: loan });
+      revalidatePath(REVALIDATE);
+      return { ok: true as const };
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Delete failed" };
+  }
+}
+
+/** Deletes the month's salary (paid or pending): ledger entries reversed, and
+ *  any advance / loan recovered in it opens back up automatically. */
+export async function deleteStaffSalary(
+  id: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "vouchers", "delete");
+  try {
+    return await withTenant(session.tenantId, async (tx) => {
+      const s = await tx.staffSalary.findFirst({ where: { id, deletedAt: null } });
+      if (!s) return { ok: false as const, error: "Salary not found" };
+      const settled = await settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["STAFF_PAYROLL"],
+        refIds: [id],
+      });
+      if ((settled.get(id) ?? 0) > 0) {
+        return {
+          ok: false as const,
+          error: `Salary ${s.month} is settled by a payment voucher — delete that voucher first`,
+        };
+      }
+      await tx.staffSalary.update({ where: { id }, data: { deletedAt: new Date() } });
+      await reverseLedger(tx, "STAFF_SALARY", id);
+      await syncLoanStatus(tx, s.loanId);
+      await audit(tx, session, { entity: "StaffSalary", entityId: id, action: "DELETE", before: s });
+      revalidatePath(REVALIDATE);
+      return { ok: true as const };
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Delete failed" };
+  }
+}
+
 // ---------------------------------------------------------------- details
 
 export interface StaffDetails {
@@ -610,6 +719,18 @@ export interface StaffDetails {
   salaries: {
     id: string;
     month: string;
+    basic: number;
+    allowances: number;
+    overtime: number;
+    incentives: number;
+    bonus: number;
+    otherEarnings: number;
+    attendanceAdj: number;
+    leaveDeduction: number;
+    penalties: number;
+    otherDeductions: number;
+    advanceId: string | null;
+    loanId: string | null;
     grossSalary: number;
     totalDeductions: number;
     advanceRecovery: number;
@@ -617,6 +738,7 @@ export interface StaffDetails {
     netSalary: number;
     paymentStatus: string;
     paymentDate: string | null;
+    paymentHeadId: string | null;
     remarks: string;
   }[];
   ledger: {
@@ -726,6 +848,18 @@ export async function getStaffDetails(
         salaries: salaries.map((s) => ({
           id: s.id,
           month: s.month,
+          basic: toNum(String(s.basic)),
+          allowances: toNum(String(s.allowances)),
+          overtime: toNum(String(s.overtime)),
+          incentives: toNum(String(s.incentives)),
+          bonus: toNum(String(s.bonus)),
+          otherEarnings: toNum(String(s.otherEarnings)),
+          attendanceAdj: toNum(String(s.attendanceAdj)),
+          leaveDeduction: toNum(String(s.leaveDeduction)),
+          penalties: toNum(String(s.penalties)),
+          otherDeductions: toNum(String(s.otherDeductions)),
+          advanceId: s.advanceId,
+          loanId: s.loanId,
           grossSalary: toNum(String(s.grossSalary)),
           totalDeductions: toNum(String(s.totalDeductions)),
           advanceRecovery: toNum(String(s.advanceRecovery)),
@@ -733,6 +867,7 @@ export async function getStaffDetails(
           netSalary: toNum(String(s.netSalary)),
           paymentStatus: s.paymentStatus,
           paymentDate: s.paymentDate ? s.paymentDate.toISOString() : null,
+          paymentHeadId: s.paymentHeadId,
           remarks: s.remarks ?? "",
         })),
         ledger,
