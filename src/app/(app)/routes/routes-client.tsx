@@ -23,8 +23,16 @@ export interface RouteRow {
   lastTripDate: string;
   daysSince: number;
   avgFreight: number;
+  /** avg per-MT rate the party pays (from LR items / slip party rate) */
+  avgPartyRate: number;
+  /** avg market gaadi cost per trip on this lane */
+  avgVehicleAmt: number;
+  /** avg party freight − avg gaadi cost; null when either side has no data */
+  marginPerTrip: number | null;
   status: "ALIVE" | "COOLING" | "SLEEPING" | "OCCASIONAL";
   topParties: { name: string; mobile: string | null; trips: number }[];
+  partyHistory: { date: string; refNo: string; party: string; rate: number; freight: number }[];
+  vehicleHistory: { date: string; refNo: string; broker: string; vehicle: string; amount: number }[];
 }
 
 const STATUS_META: Record<RouteRow["status"], { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
@@ -81,6 +89,9 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
             { header: "Last Trip", accessor: (r) => formatDate(r.lastTripDate) },
             { header: "Days Since", key: "daysSince", numeric: true },
             { header: "Avg Freight", key: "avgFreight", numeric: true },
+            { header: "Avg Party Rate", key: "avgPartyRate", numeric: true },
+            { header: "Avg Gaadi Bhav", key: "avgVehicleAmt", numeric: true },
+            { header: "Margin/Trip", accessor: (r) => r.marginPerTrip ?? "" , numeric: true },
           ]}
         />
       </div>
@@ -115,7 +126,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-muted/80 backdrop-blur">
             <tr>
-              {["Route", "Status", "This Month", "Last Month", "Trend", "Total", "Last Trip", "Avg Freight", "Parties"].map((h) => (
+              {["Route", "Status", "This Month", "Last Month", "Trend", "Total", "Last Trip", "Avg Freight", "Avg Gaadi Bhav", "Margin/Trip", "Bhav & Parties"].map((h) => (
                 <th key={h} className="whitespace-nowrap px-2 py-1.5 text-left text-xs font-medium text-muted-foreground">
                   {h}
                 </th>
@@ -125,7 +136,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
           <tbody>
             {list.length === 0 ? (
               <tr>
-                <td colSpan={9} className="h-20 text-center text-muted-foreground">
+                <td colSpan={11} className="h-20 text-center text-muted-foreground">
                   No routes yet — LR entries will build this automatically.
                 </td>
               </tr>
@@ -148,7 +159,24 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
                       ({r.daysSince} din)
                     </span>
                   </td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{formatMoney(r.avgFreight)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">
+                    {formatMoney(r.avgFreight)}
+                    {r.avgPartyRate > 0 && (
+                      <span className="block text-[10px] text-muted-foreground">@{r.avgPartyRate.toFixed(2)}/MT</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">
+                    {r.avgVehicleAmt > 0 ? formatMoney(r.avgVehicleAmt) : "—"}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">
+                    {r.marginPerTrip === null ? (
+                      "—"
+                    ) : (
+                      <b className={r.marginPerTrip >= 0 ? "text-emerald-600" : "text-red-600"}>
+                        {formatMoney(r.marginPerTrip)}
+                      </b>
+                    )}
+                  </td>
                   <td className="px-2 py-1.5">
                     <Button
                       variant="outline"
@@ -156,7 +184,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
                       className="h-7 px-2 text-xs"
                       onClick={() => setPartiesFor(r)}
                     >
-                      Kise Call Karein ({r.topParties.length})
+                      Bhav Memory
                     </Button>
                   </td>
                 </tr>
@@ -166,16 +194,76 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
         </table>
       </div>
 
-      {/* top parties of the lane, with call links */}
+      {/* Bhav Memory: rate history both sides + top parties with call links */}
       <Dialog open={!!partiesFor} onOpenChange={(o) => !o && setPartiesFor(null)}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle className="uppercase">{partiesFor?.route}</DialogTitle>
             <DialogDescription>
-              Is lane par sabse zyada maal dene wali parties — sota route jagane ke liye inhe
-              call karo.
+              Party phone kare &quot;kya loge?&quot; — dono side ka bhav yahin hai: party kya deti
+              rahi hai, gaadi kis bhav par milti rahi hai, aur beech ka margin.
             </DialogDescription>
           </DialogHeader>
+
+          {partiesFor && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {/* party side */}
+              <div className="rounded-md border p-2">
+                <div className="mb-1 text-xs font-black uppercase text-muted-foreground">
+                  Party Side — pichhle {partiesFor.partyHistory.length} LR/Slip
+                </div>
+                {partiesFor.partyHistory.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No bookings yet.</p>
+                )}
+                {partiesFor.partyHistory.map((h) => (
+                  <div key={`${h.refNo}-${h.date}`} className="flex items-center justify-between gap-2 border-b py-1 text-xs last:border-0">
+                    <span>
+                      {formatDate(h.date)} · <b>{h.party || h.refNo}</b>
+                      {h.rate > 0 && <span className="text-muted-foreground"> @{h.rate.toFixed(2)}/MT</span>}
+                    </span>
+                    <span className="font-medium tabular-nums">{formatMoney(h.freight)}</span>
+                  </div>
+                ))}
+                <div className="mt-1 text-xs font-bold">
+                  Avg: {formatMoney(partiesFor.avgFreight)}
+                  {partiesFor.avgPartyRate > 0 && ` (@${partiesFor.avgPartyRate.toFixed(2)}/MT)`}
+                </div>
+              </div>
+              {/* gaadi side */}
+              <div className="rounded-md border p-2">
+                <div className="mb-1 text-xs font-black uppercase text-muted-foreground">
+                  Gaadi Side — pichhli {partiesFor.vehicleHistory.length} market gaadi
+                </div>
+                {partiesFor.vehicleHistory.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No market vehicle on this lane yet.</p>
+                )}
+                {partiesFor.vehicleHistory.map((h) => (
+                  <div key={`${h.refNo}-${h.date}`} className="flex items-center justify-between gap-2 border-b py-1 text-xs last:border-0">
+                    <span>
+                      {formatDate(h.date)} · <b>{h.broker || h.refNo}</b>
+                      {h.vehicle && <span className="text-muted-foreground"> · {h.vehicle}</span>}
+                    </span>
+                    <span className="font-medium tabular-nums">{formatMoney(h.amount)}</span>
+                  </div>
+                ))}
+                {partiesFor.avgVehicleAmt > 0 && (
+                  <div className="mt-1 text-xs font-bold">Avg: {formatMoney(partiesFor.avgVehicleAmt)}</div>
+                )}
+              </div>
+            </div>
+          )}
+          {partiesFor?.marginPerTrip !== null && partiesFor && (
+            <div className="rounded-md border bg-muted/40 p-2 text-sm font-bold">
+              Average Margin/Trip:{" "}
+              <span className={partiesFor.marginPerTrip! >= 0 ? "text-emerald-600" : "text-red-600"}>
+                {formatMoney(partiesFor.marginPerTrip!)}
+              </span>
+            </div>
+          )}
+
+          <div className="text-xs font-black uppercase text-muted-foreground">
+            Kise Call Karein — is lane ki top parties
+          </div>
           <div className="space-y-1.5">
             {partiesFor?.topParties.length === 0 && (
               <p className="text-sm text-muted-foreground">No party data on this lane.</p>
