@@ -1,4 +1,4 @@
-import { ClipboardCheck, FileCheck2 } from "lucide-react";
+import { ClipboardCheck, FileCheck2, IndianRupee } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,7 +20,7 @@ export default async function DashboardPage() {
   const base = new Date(`${todayCal}T00:00:00Z`).getTime();
   const window = [-2, -1, 0, 1, 2].map((off) => new Date(base + off * dayMs).toISOString().slice(0, 10));
 
-  const { expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem } =
+  const { expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, emiActive, emiDue } =
     await withTenant(session.tenantId, async (tx) => {
       const lrs = await tx.lr.findMany({
         where: {
@@ -62,7 +62,23 @@ export default async function DashboardPage() {
       const docTypeCounts = Array.from(typeCounts.entries())
         .map(([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count);
-      return { expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem };
+
+      // EMI due: active EMI loans; due/overdue = next scheduled date has arrived
+      const loans = await tx.loan.findMany({
+        where: { firmId: session.firmId, fyId: session.fyId, deletedAt: null, status: "ACTIVE", emiApplicable: true },
+        include: { emis: { where: { deletedAt: null }, select: { principal: true } } },
+      });
+      const { nextDueDate } = await import("@/lib/loan");
+      let emiActive = 0;
+      let emiDue = 0;
+      for (const l of loans) {
+        const repaid = l.emis.reduce((s, e) => s + Number(e.principal), 0);
+        if (Number(l.amount) - repaid <= 0.009) continue;
+        emiActive++;
+        const due = nextDueDate(l.emiStartDate, l.emiFrequency, l.emis.length);
+        if (due && due <= now) emiDue++;
+      }
+      return { expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, emiActive, emiDue };
     });
 
   return (
@@ -127,6 +143,32 @@ export default async function DashboardPage() {
                   {docProblem > 0 && (
                     <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
                       Problem: {docProblem}
+                    </span>
+                  )}
+                </span>
+              </span>
+            </CardContent>
+          </Card>
+        </a>
+
+        <a href="/emi-due" target="_blank" rel="noreferrer" className="group">
+          <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
+            <CardContent className="flex items-start gap-3 p-5">
+              <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <IndianRupee className="h-6 w-6" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-lg font-semibold group-hover:text-primary">EMI Due</span>
+                <span className="block text-sm text-muted-foreground">
+                  Upcoming loan EMIs — pay from one list
+                </span>
+                <span className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
+                  <span className="rounded bg-blue-500/10 px-2 py-0.5 text-blue-600">
+                    Active EMI loans: {emiActive}
+                  </span>
+                  {emiDue > 0 && (
+                    <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                      Due now: {emiDue}
                     </span>
                   )}
                 </span>

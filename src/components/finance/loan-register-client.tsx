@@ -31,12 +31,8 @@ import { DataTable, type DataTableColumnMeta } from "@/components/data/data-tabl
 import { DateInput } from "@/components/data/date-input";
 import { ExportButton } from "@/components/data/export-button";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
-import {
-  deleteLoan,
-  getEmiSuggestion,
-  payLoanEmi,
-  saveLoan,
-} from "@/app/(app)/finance/actions";
+import { deleteLoan, saveLoan } from "@/app/(app)/finance/actions";
+import { EmiPayDialog, type EmiPayTarget } from "@/components/finance/emi-pay-dialog";
 import type { LoanRow } from "@/app/(app)/finance/queries";
 
 function textToIso(text: string): string {
@@ -70,21 +66,6 @@ const emptyLoan = {
   remarks: "",
 };
 
-const emptyEmi = {
-  loanId: "",
-  loanNo: "",
-  payDateText: formatDate(new Date()),
-  outstanding: 0,
-  principal: 0,
-  interest: 0,
-  penalty: 0,
-  otherAmt: 0,
-  tdsAmt: 0,
-  bankPartyId: null as string | null,
-  isSettlement: false,
-  remarks: "",
-};
-
 /**
  * Loan Register — the whole module in one screen. A user only ever needs three
  * actions: create the loan, pay an instalment, close it. Interest, TDS, the
@@ -108,13 +89,12 @@ export function LoanRegisterClient({
   const [busy, setBusy] = React.useState(false);
   const [loanOpen, setLoanOpen] = React.useState(false);
   const [loanForm, setLoanForm] = React.useState(emptyLoan);
-  const [emiOpen, setEmiOpen] = React.useState(false);
-  const [emiForm, setEmiForm] = React.useState(emptyEmi);
+  // shared EMI popup (same component the EMI Due page uses)
+  const [emiTarget, setEmiTarget] = React.useState<EmiPayTarget | null>(null);
   const [toDelete, setToDelete] = React.useState<LoanRow | null>(null);
   const [view, setView] = React.useState<LoanRow | null>(null);
 
   const setLoan = (p: Partial<typeof emptyLoan>) => setLoanForm((f) => ({ ...f, ...p }));
-  const setEmi = (p: Partial<typeof emptyEmi>) => setEmiForm((f) => ({ ...f, ...p }));
 
   const openNew = () => {
     setLoanForm(emptyLoan);
@@ -149,24 +129,9 @@ export function LoanRegisterClient({
     setLoanOpen(true);
   };
 
-  /** Open the EMI screen with every figure pre-calculated and editable. */
-  const openEmi = async (l: LoanRow, settlement: boolean) => {
-    const s = await getEmiSuggestion(l.id);
-    if (!s) return toast({ variant: "destructive", title: "Loan not found" });
-    setEmiForm({
-      ...emptyEmi,
-      loanId: l.id,
-      loanNo: l.loanNo,
-      outstanding: s.outstanding,
-      // settlement clears whatever is left; a normal EMI takes the instalment
-      principal: settlement ? s.outstanding : s.principal,
-      interest: s.interest,
-      tdsAmt: s.tds,
-      isSettlement: settlement,
-      payDateText: formatDate(new Date()),
-    });
-    setEmiOpen(true);
-  };
+  /** Open the shared EMI popup with every figure pre-calculated. */
+  const openEmi = (l: LoanRow, settlement: boolean) =>
+    setEmiTarget({ loanId: l.id, loanNo: l.loanNo, settlement });
 
   const submitLoan = async () => {
     setBusy(true);
@@ -198,40 +163,6 @@ export function LoanRegisterClient({
         setLoanOpen(false);
         router.refresh();
       } else toast({ variant: "destructive", title: "Save failed", description: res.error });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const emiTotal =
-    Math.round(
-      (emiForm.principal + emiForm.interest + emiForm.penalty + emiForm.otherAmt) * 100
-    ) / 100;
-  const emiNet = Math.round((emiTotal - emiForm.tdsAmt) * 100) / 100;
-
-  const submitEmi = async () => {
-    setBusy(true);
-    try {
-      const res = await payLoanEmi({
-        loanId: emiForm.loanId,
-        payDate: textToIso(emiForm.payDateText),
-        principal: emiForm.principal,
-        interest: emiForm.interest,
-        penalty: emiForm.penalty,
-        otherAmt: emiForm.otherAmt,
-        tdsAmt: emiForm.tdsAmt,
-        bankPartyId: emiForm.bankPartyId ?? "",
-        isSettlement: emiForm.isSettlement,
-        remarks: emiForm.remarks,
-      });
-      if (res.ok) {
-        toast({
-          title: emiForm.isSettlement ? "Loan closed" : "EMI recorded",
-          description: `Voucher ${res.voucherNo} posted`,
-        });
-        setEmiOpen(false);
-        router.refresh();
-      } else toast({ variant: "destructive", title: "Payment failed", description: res.error });
     } finally {
       setBusy(false);
     }
@@ -638,111 +569,13 @@ export function LoanRegisterClient({
       </Dialog>
 
       {/* ---------------- EMI / settlement ---------------- */}
-      <Dialog open={emiOpen} onOpenChange={setEmiOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {emiForm.isSettlement ? "Full Settlement" : "Pay EMI"} — {emiForm.loanNo}
-            </DialogTitle>
-            <DialogDescription>
-              Outstanding principal {formatMoney(emiForm.outstanding)}. Every figure below is
-              calculated for you and can be changed if the lender&apos;s statement differs.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <div className="space-y-1">
-              <Label className="text-xs">Payment Date *</Label>
-              <DateInput
-                className="h-8"
-                value={emiForm.payDateText}
-                onChange={(t) => setEmi({ payDateText: t })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Principal</Label>
-              <Input
-                type="number"
-                className="h-8 text-right"
-                value={emiForm.principal ? String(emiForm.principal) : ""}
-                onChange={(e) => setEmi({ principal: Number(e.target.value) || 0 })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Interest</Label>
-              <Input
-                type="number"
-                className="h-8 text-right"
-                value={emiForm.interest ? String(emiForm.interest) : ""}
-                onChange={(e) => setEmi({ interest: Number(e.target.value) || 0 })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Penalty</Label>
-              <Input
-                type="number"
-                className="h-8 text-right"
-                value={emiForm.penalty ? String(emiForm.penalty) : ""}
-                onChange={(e) => setEmi({ penalty: Number(e.target.value) || 0 })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Other Charges</Label>
-              <Input
-                type="number"
-                className="h-8 text-right"
-                value={emiForm.otherAmt ? String(emiForm.otherAmt) : ""}
-                onChange={(e) => setEmi({ otherAmt: Number(e.target.value) || 0 })}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Less TDS (on interest)</Label>
-              <Input
-                type="number"
-                className="h-8 text-right"
-                value={emiForm.tdsAmt ? String(emiForm.tdsAmt) : ""}
-                onChange={(e) => setEmi({ tdsAmt: Number(e.target.value) || 0 })}
-              />
-            </div>
-            <div className="space-y-1 sm:col-span-2">
-              <Label className="text-xs">Bank / Cash *</Label>
-              <MasterCombobox
-                options={bankOptions}
-                value={emiForm.bankPartyId}
-                onChange={(v) => setEmi({ bankPartyId: v })}
-                placeholder="Select account..."
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Remarks</Label>
-              <Input
-                className="h-8"
-                value={emiForm.remarks}
-                onChange={(e) => setEmi({ remarks: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-4 rounded-md border bg-muted/40 p-2 text-xs">
-            <span>
-              Instalment <b>{formatMoney(emiTotal)}</b>
-            </span>
-            <span>
-              Bank movement <b>{formatMoney(emiNet)}</b>
-            </span>
-            <span>
-              Outstanding after{" "}
-              <b>{formatMoney(Math.max(0, emiForm.outstanding - emiForm.principal))}</b>
-            </span>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEmiOpen(false)} disabled={busy}>
-              Cancel
-            </Button>
-            <Button onClick={submitEmi} disabled={busy || emiTotal <= 0 || !emiForm.bankPartyId}>
-              {busy ? "Saving..." : emiForm.isSettlement ? "Close Loan" : "Save EMI"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* THE EMI popup — shared with the EMI Due page */}
+      <EmiPayDialog
+        target={emiTarget}
+        onClose={() => setEmiTarget(null)}
+        onPaid={() => router.refresh()}
+        bankOptions={bankOptions}
+      />
 
       {/* ---------------- view ---------------- */}
       <Dialog open={!!view} onOpenChange={(o: boolean) => !o && setView(null)}>
