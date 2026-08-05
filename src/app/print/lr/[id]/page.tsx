@@ -263,6 +263,12 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                 <div className="pb-0.5 text-center text-[14px] font-black tracking-wide" style={{ color: RED }}>
                   {copyLabel}
                 </div>
+                {/* caution on top, then consignment note, then trip details */}
+                <div className="border border-black p-1.5 text-[8.6px] font-semibold leading-snug">
+                  <b>Caution :</b> This Consignment will not be detained, diverted, re-routed or
+                  re-booked without Consignee Bank&apos;s written permission. Will be Delivered at
+                  the destination.
+                </div>
                 <div className="border border-black">
                   <BoxTitle>Consignment Note</BoxTitle>
                   <div className="p-1.5">
@@ -275,29 +281,28 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                     <Rule label="Date :" value={formatDate(lr.lrDate)} />
                   </div>
                 </div>
-                {/* trip details: From / To / Truck / Invoice grouped */}
+                {/* trip details: fixed label column so every value starts on the
+                    same vertical line */}
                 <div className="flex-1 border border-black">
                   <BoxTitle>Trip Details</BoxTitle>
-                  <div className="p-1.5 text-[12px]">
-                    <Rule label="From :" value={<span className="uppercase">{sourceCity?.name}</span>} />
-                    <Rule label="To :" value={<span className="uppercase">{destCity?.name}</span>} />
-                    <Rule
-                      label="Truck No. :"
-                      value={<span className="text-[13px]">{vehicle?.number ?? lr.vehicleText}</span>}
-                    />
-                    <div className="mt-1.5">
-                      <Rule label="Invoice No. :" value={lr.invoiceNo} />
-                      <Rule
-                        label="Invoice Date :"
-                        value={lr.invoiceDate ? formatDate(lr.invoiceDate) : ""}
-                      />
-                    </div>
+                  <div className="p-1.5 text-[11.5px]">
+                    {(
+                      [
+                        ["From :", <span key="f" className="uppercase">{sourceCity?.name}</span>],
+                        ["To :", <span key="t" className="uppercase">{destCity?.name}</span>],
+                        ["Truck No. :", <span key="v" className="text-[12.5px]">{vehicle?.number ?? lr.vehicleText}</span>],
+                        ["Invoice No. :", lr.invoiceNo],
+                        ["Invoice Date :", lr.invoiceDate ? formatDate(lr.invoiceDate) : ""],
+                      ] as [string, React.ReactNode][]
+                    ).map(([label, value]) => (
+                      <div key={label} className="flex items-end gap-1 py-[3px]">
+                        <span className="w-[82px] shrink-0 font-bold">{label}</span>
+                        <span className="min-w-0 flex-1 break-words border-b border-neutral-500 px-1 font-extrabold leading-tight">
+                          {value ?? " "}
+                        </span>
+                      </div>
+                    ))}
                   </div>
-                </div>
-                <div className="border border-black p-1.5 text-[8.6px] font-semibold leading-snug">
-                  <b>Caution :</b> This Consignment will not be detained, diverted, re-routed or
-                  re-booked without Consignee Bank&apos;s written permission. Will be Delivered at
-                  the destination.
                 </div>
               </div>
 
