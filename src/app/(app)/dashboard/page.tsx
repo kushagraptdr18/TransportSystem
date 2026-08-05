@@ -84,7 +84,7 @@ export default async function DashboardPage() {
           </Card>
         </a>
 
-        <a href="/masters/document-master?tab=registration" className="group">
+        <a href="/documents-status" target="_blank" rel="noreferrer" className="group">
           <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
             <CardContent className="flex items-start gap-3 p-5">
               <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
