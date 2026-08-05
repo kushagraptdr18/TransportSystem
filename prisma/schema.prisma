@@ -1466,6 +1466,29 @@ model VoucherAllocation {
   @@index([tenantId, refType, refId])
 }
 
+// Extra Work Information (Vehicle module) — pure tracking, no accounting.
+// Status is DERIVED: completeDate set => COMPLETED, blank => PENDING.
+model VehicleWork {
+  id           String    @id @default(cuid())
+  tenantId     String
+  firmId       String
+  fyId         String
+  workDate     DateTime
+  vehicleId    String
+  description  String
+  supplier     String? // free text — workshop / mechanic, no master
+  completeDate DateTime?
+  remarks      String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  @@index([tenantId, firmId, fyId, vehicleId])
+  @@index([tenantId, firmId, fyId, workDate])
+}
+
 model LedgerEntry {
   id            String    @id @default(cuid())
   tenantId      String

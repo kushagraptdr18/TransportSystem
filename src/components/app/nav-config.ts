@@ -151,6 +151,7 @@ export const NAV: NavGroup[] = [
       { label: "Vehicle Management", href: "/vehicle/management" },
       // driver info, salary, +/- settlement, advance and F&F are tabs of one screen
       { label: "Driver Management", href: "/vehicle/driver-management" },
+      { label: "Extra Work Information", href: "/vehicle/work" },
       { label: "Tyre Management", href: "/vehicle/tyres" },
       { label: "AdBlue (Urea) Stock", href: "/vehicle/adblue" },
     ],
