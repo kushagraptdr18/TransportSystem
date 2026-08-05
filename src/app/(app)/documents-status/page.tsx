@@ -16,11 +16,33 @@ export default async function DocumentsStatusPage() {
   await authorize(session, "masters", "view");
 
   const { rows, docTypes, vehicles } = await withTenant(session.tenantId, async (tx) => {
-    const [docs, docTypes, vehicles] = await Promise.all([
+    const [allDocs, docTypes, vehicles] = await Promise.all([
       tx.vehicleDocument.findMany({ include: { docType: true }, orderBy: { expiryDate: "asc" } }),
       tx.documentType.findMany({ orderBy: { name: "asc" } }),
       tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
     ]);
+    // Reminder rule: a document appears here only while its expiry falls
+    // within its type's reminderDays window (or is already past). Renew it —
+    // push the expiry out — and it disappears on the next load.
+    const now = new Date();
+    const docs = allDocs.filter((d) => {
+      if (!d.expiryDate || !d.docType.showReminder) return false;
+      const windowEnd = new Date(now);
+      windowEnd.setDate(windowEnd.getDate() + (d.docType.reminderDays ?? 30));
+      return d.expiryDate <= windowEnd;
+    });
+    // first appearance on the board = renewal work starts: DONE flips to
+    // PENDING automatically, no manual action
+    const toPending = docs.filter((d) => d.status === "DONE").map((d) => d.id);
+    if (toPending.length) {
+      await tx.vehicleDocument.updateMany({
+        where: { id: { in: toPending } },
+        data: { status: "PENDING" },
+      });
+      docs.forEach((d) => {
+        if (toPending.includes(d.id)) d.status = "PENDING";
+      });
+    }
     return { docs, docTypes, vehicles };
   }).then(({ docs, docTypes, vehicles }) => {
     const vname = new Map(vehicles.map((v) => [v.id, v.number]));
@@ -39,6 +61,8 @@ export default async function DocumentsStatusPage() {
       expiredNow: !!d.expiryDate && d.expiryDate < now,
       status: d.status,
       remarks: d.remarks ?? "",
+      filePath: d.filePath,
+      fileName: d.fileName,
     }));
     return { rows, docTypes, vehicles };
   });

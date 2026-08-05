@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { DateInput } from "@/components/data/date-input";
+import { FileUploadField } from "@/components/data/file-upload-field";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import {
   bulkSetVehicleDocStatus,
@@ -37,6 +38,8 @@ export interface DocStatusRow {
   expiredNow: boolean;
   status: string;
   remarks: string;
+  filePath: string | null;
+  fileName: string | null;
 }
 
 const STATUSES = [
@@ -75,6 +78,7 @@ export function DocStatusClient({
   const [q, setQ] = React.useState("");
 
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = React.useState(false);
   const [bulkStatus, setBulkStatus] = React.useState<(typeof STATUSES)[number]["value"]>("PROCESSING");
   const [bulkRemarks, setBulkRemarks] = React.useState("");
   const [saving, setSaving] = React.useState(false);
@@ -89,6 +93,8 @@ export function DocStatusClient({
     expiryDate: "",
     status: "PENDING",
     remarks: "",
+    filePath: null as string | null,
+    fileName: null as string | null,
   });
 
   const openEdit = (r: DocStatusRow) => {
@@ -101,6 +107,8 @@ export function DocStatusClient({
       expiryDate: r.expiryDate,
       status: r.status,
       remarks: r.remarks,
+      filePath: r.filePath,
+      fileName: r.fileName,
     });
   };
 
@@ -147,6 +155,7 @@ export function DocStatusClient({
         toast({ title: `${selected.size} document(s) marked ${STATUSES.find((s) => s.value === bulkStatus)?.label}` });
         setSelected(new Set());
         setBulkRemarks("");
+        setBulkOpen(false);
         router.refresh();
       } else toast({ variant: "destructive", title: res.error });
     } finally {
@@ -178,6 +187,8 @@ export function DocStatusClient({
         expiryDate: form.expiryDate ? toIso(form.expiryDate) : null,
         status: form.status,
         remarks: form.remarks || null,
+        filePath: form.filePath,
+        fileName: form.fileName,
       });
       if (res.ok) {
         toast({ title: `${edit.vehicleNumber} — ${edit.docTypeName} updated` });
@@ -223,35 +234,16 @@ export function DocStatusClient({
         </div>
       </div>
 
-      {/* bulk bar */}
+      {/* selection bar: tick rows, then one clean popup does the update */}
       <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-2">
-        <span className="text-xs font-medium">Bulk update ({selected.size} selected):</span>
-        {STATUSES.map((s) => (
-          <Button
-            key={s.value}
-            size="sm"
-            variant={bulkStatus === s.value ? "default" : "outline"}
-            className="h-7 text-xs"
-            onClick={() => setBulkStatus(s.value)}
-          >
-            {s.label}
-          </Button>
-        ))}
-        {bulkStatus === "PROBLEM" && (
-          <Input
-            className="h-7 w-64 text-xs"
-            placeholder="Remarks * (e.g. Fitness Failed)"
-            value={bulkRemarks}
-            onChange={(e) => setBulkRemarks(e.target.value)}
-          />
-        )}
+        <span className="text-xs font-medium">{selected.size} selected</span>
         <Button
           size="sm"
           className="h-7 text-xs"
-          disabled={saving || selected.size === 0 || (bulkStatus === "PROBLEM" && !bulkRemarks.trim())}
-          onClick={() => void applyBulk()}
+          disabled={selected.size === 0}
+          onClick={() => setBulkOpen(true)}
         >
-          {saving ? "Updating..." : "Apply"}
+          Bulk Update Status
         </Button>
         <Button
           variant="ghost"
@@ -321,6 +313,53 @@ export function DocStatusClient({
         </table>
       </div>
 
+      {/* bulk update popup */}
+      <Dialog open={bulkOpen} onOpenChange={(o) => !o && setBulkOpen(false)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Bulk Update Status</DialogTitle>
+            <DialogDescription>
+              {selected.size} selected document(s) will move to the chosen status.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Status</Label>
+              <div className="flex flex-wrap gap-1">
+                {STATUSES.filter((s) => s.value !== "DONE").map((s) => (
+                  <Button
+                    key={s.value}
+                    size="sm"
+                    variant={bulkStatus === s.value ? "default" : "outline"}
+                    className="h-8"
+                    onClick={() => setBulkStatus(s.value)}
+                  >
+                    {s.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            {bulkStatus === "PROBLEM" && (
+              <div className="space-y-1">
+                <Label className="text-xs">Remarks * (reason — e.g. Fitness Failed, RTO Query Pending)</Label>
+                <Input className="h-9" value={bulkRemarks} onChange={(e) => setBulkRemarks(e.target.value)} />
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkOpen(false)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void applyBulk()}
+              disabled={saving || (bulkStatus === "PROBLEM" && !bulkRemarks.trim())}
+            >
+              {saving ? "Updating..." : "Update"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* edit popup: basic registration details */}
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
         <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-lg">
@@ -372,6 +411,15 @@ export function DocStatusClient({
             <div className="space-y-1 sm:col-span-2">
               <Label className="text-xs">Remarks {form.status === "PROBLEM" ? "* (reason required)" : ""}</Label>
               <Textarea rows={2} value={form.remarks} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} />
+            </div>
+            <div className="sm:col-span-2">
+              <FileUploadField
+                label="Attachment (Fitness / Insurance / Permit / RC / PUC — PDF, JPG, PNG)"
+                endpoint="/api/uploads/docreg"
+                filePath={form.filePath}
+                fileName={form.fileName}
+                onChange={(fp, fn) => setForm((f) => ({ ...f, filePath: fp, fileName: fn }))}
+              />
             </div>
           </div>
           <DialogFooter>

@@ -20,7 +20,7 @@ export default async function DashboardPage() {
   const base = new Date(`${todayCal}T00:00:00Z`).getTime();
   const window = [-2, -1, 0, 1, 2].map((off) => new Date(base + off * dayMs).toISOString().slice(0, 10));
 
-  const { expiredCount, todayCount, upcomingCount, docPending, docProcessing, docProblem } =
+  const { expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem } =
     await withTenant(session.tenantId, async (tx) => {
       const lrs = await tx.lr.findMany({
         where: {
@@ -42,12 +42,27 @@ export default async function DashboardPage() {
         else if (c === todayCal) todayCount++;
         else upcomingCount++;
       }
-      const [docPending, docProcessing, docProblem] = await Promise.all([
-        tx.vehicleDocument.count({ where: { status: "PENDING" } }),
-        tx.vehicleDocument.count({ where: { status: "PROCESSING" } }),
-        tx.vehicleDocument.count({ where: { status: "PROBLEM" } }),
-      ]);
-      return { expiredCount, todayCount, upcomingCount, docPending, docProcessing, docProblem };
+      // document counts follow each type's reminderDays window (Document
+      // Master), exactly like the status page itself
+      const docs = await tx.vehicleDocument.findMany({
+        where: { expiryDate: { not: null } },
+        include: { docType: true },
+      });
+      const now = new Date();
+      const typeCounts = new Map<string, number>();
+      let docProblem = 0;
+      for (const d of docs) {
+        if (!d.docType.showReminder || !d.expiryDate) continue;
+        const windowEnd = new Date(now);
+        windowEnd.setDate(windowEnd.getDate() + (d.docType.reminderDays ?? 30));
+        if (d.expiryDate > windowEnd) continue;
+        typeCounts.set(d.docType.name, (typeCounts.get(d.docType.name) ?? 0) + 1);
+        if (d.status === "PROBLEM") docProblem++;
+      }
+      const docTypeCounts = Array.from(typeCounts.entries())
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+      return { expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem };
     });
 
   return (
@@ -97,16 +112,23 @@ export default async function DashboardPage() {
                 <span className="block text-sm text-muted-foreground">
                   Renewal workflow — bulk / individual status
                 </span>
-                <span className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
-                  <span className="rounded bg-neutral-500/10 px-2 py-0.5 text-neutral-600 dark:text-neutral-300">
-                    Pending: {docPending}
-                  </span>
-                  <span className="rounded bg-blue-500/10 px-2 py-0.5 text-blue-600">
-                    Processing: {docProcessing}
-                  </span>
-                  <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
-                    Problem: {docProblem}
-                  </span>
+                <span className="mt-2 flex flex-wrap gap-1.5 text-xs font-medium">
+                  {docTypeCounts.length === 0 ? (
+                    <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-emerald-600">
+                      All documents in order
+                    </span>
+                  ) : (
+                    docTypeCounts.map((t) => (
+                      <span key={t.name} className="rounded bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-500">
+                        {t.name} ({t.count})
+                      </span>
+                    ))
+                  )}
+                  {docProblem > 0 && (
+                    <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                      Problem: {docProblem}
+                    </span>
+                  )}
                 </span>
               </span>
             </CardContent>
