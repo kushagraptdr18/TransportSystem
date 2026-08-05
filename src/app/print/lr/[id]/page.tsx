@@ -108,10 +108,19 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
             @media print {
               .no-print { display: none !important; }
               body { background: #fff; }
-              .lr-copy { page-break-after: always; box-shadow: none !important; margin: 0 !important; }
+              /* one copy = exactly one sheet: the copy is scaled a notch so its
+                 full height always fits inside A4 landscape, and page breaks
+                 are forced between copies — 5 copies, 5 pages, PDF included */
+              .lr-copy {
+                zoom: 0.88;
+                page-break-after: always;
+                page-break-inside: avoid;
+                box-shadow: none !important;
+                margin: 0 !important;
+              }
               .lr-copy:last-child { page-break-after: auto; }
             }
-            @page { size: A4 landscape; margin: 5mm; }
+            @page { size: A4 landscape; margin: 4mm; }
           `,
         }}
       />
