@@ -15,32 +15,40 @@ import {
 import { requireSession } from "@/lib/session";
 import { Card, CardContent } from "@/components/ui/card";
 
+// Report cards open the Month Browser: month chips on top, the whole list
+// below with endless scroll and filters. The working registers inside each
+// module stay untouched — this is the reading view.
 const SECTIONS: { title: string; links: { label: string; href: string; icon: typeof FileText; desc: string }[] }[] = [
   {
     title: "Operations",
     links: [
-      { label: "LR Register", href: "/lr/register", icon: FileText, desc: "All bookings with filters and totals" },
+      { label: "LR Register", href: "/reports/browser?src=LR", icon: FileText, desc: "Month-wise bookings, endless scroll" },
       { label: "Bilty Status", href: "/lr/status", icon: ClipboardCheck, desc: "Track a single LR end to end" },
-      { label: "Chalan Register", href: "/chalan/register", icon: Truck, desc: "Freight chalans and balances" },
-      { label: "POD Register", href: "/pod/register", icon: ClipboardCheck, desc: "Proof-of-delivery records" },
-      { label: "Broker Register", href: "/broker/register", icon: Users, desc: "Broker slips, both sides" },
+      { label: "Chalan (Market / Broker)", href: "/reports/browser?src=CHALAN_MARKET", icon: Truck, desc: "Market vehicle chalans and balances" },
+      { label: "Chalan (Own / Relative)", href: "/reports/browser?src=CHALAN_OWNREL", icon: Truck, desc: "Own and relative vehicle chalans" },
+      { label: "POD Register", href: "/reports/browser?src=POD", icon: ClipboardCheck, desc: "Proof-of-delivery records" },
+      { label: "Broker Register", href: "/reports/browser?src=BROKER", icon: Users, desc: "Broker slips, both sides" },
     ],
   },
   {
     title: "Billing",
     links: [
-      { label: "Billing Register", href: "/billing/register", icon: ReceiptText, desc: "PT / FT / Manual / GST invoices" },
-      { label: "Outstanding", href: "/accounts/outstanding", icon: Scale, desc: "Unpaid and partly-paid invoices" },
-      { label: "Voucher Register", href: "/accounts/vouchers/register", icon: Wallet, desc: "Receipts, payments, contra" },
+      { label: "Billing Register", href: "/reports/browser?src=BILLING", icon: ReceiptText, desc: "PT / FT / Manual / GST invoices" },
+      { label: "Outstanding Receivable", href: "/reports/browser?src=OUT_RECV", icon: Scale, desc: "Bills where money is still to come" },
+      { label: "Outstanding Payable", href: "/reports/browser?src=OUT_PAY", icon: Scale, desc: "Chalans / slips still to be paid" },
+      { label: "Voucher Register", href: "/reports/browser?src=VOUCHER", icon: Wallet, desc: "Receipts, payments, contra, journal" },
     ],
   },
   {
     title: "Accounts",
     links: [
-      { label: "Bank / Cash / Card Book", href: "/accounts/bank-book", icon: Landmark, desc: "All money accounts day book" },
-      { label: "Ledger Summary", href: "/accounts/ledger", icon: BookOpen, desc: "Party ledger with running balance" },
-      { label: "Common Ledgers", href: "/accounts/common-ledger", icon: Scale, desc: "Shortage, round off, commission, mamool, detention — net position" },
-      { label: "TDS Report", href: "/accounts/tds", icon: Scale, desc: "TDS deducted across documents" },
+      { label: "Bank Book", href: "/reports/browser?src=BOOK_BANK", icon: Landmark, desc: "Bank accounts, running balance" },
+      { label: "Cash Book", href: "/reports/browser?src=BOOK_CASH", icon: Landmark, desc: "Cash accounts, running balance" },
+      { label: "Card Book", href: "/reports/browser?src=BOOK_CARD", icon: Landmark, desc: "Card accounts, running balance" },
+      { label: "Ledger Summary", href: "/reports/browser?src=LEDGER", icon: BookOpen, desc: "Pick a ledger, read it month-wise" },
+      { label: "Common Ledgers", href: "/reports/browser?src=COMMON", icon: Scale, desc: "Shortage, round off, commission, mamool, detention" },
+      { label: "TDS Payable", href: "/reports/browser?src=TDS_PAY", icon: Scale, desc: "TDS we deducted, month-wise" },
+      { label: "TDS Receivable", href: "/reports/browser?src=TDS_RECV", icon: Scale, desc: "TDS deducted from us, month-wise" },
       { label: "Company Operational P&L", href: "/accounts/operational-pnl", icon: BarChart3, desc: "Operational income vs expense" },
     ],
   },
