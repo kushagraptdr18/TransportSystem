@@ -391,11 +391,14 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                       </td>
                       <td className="border-r border-t border-black px-1 py-0.5">
                         <div
-                          className="mx-auto w-fit rotate-[-2deg] text-center text-[8.5px] font-black leading-tight"
-                          style={{ color: RED }}
+                          className="mx-auto w-fit border px-2 py-0.5 text-center text-[7.5px] font-black leading-snug"
+                          style={{ color: RED, borderColor: RED }}
                         >
-                          * GOODS DESCRIBED AS ABOVE &amp; RECEIVED IN GOOD ORDER &amp; CONDITION ·
-                          CONTENTS NOT CHECKED · PLEASE TAKE DELIVERY FROM THE RISK *
+                          * GOODS DESCRIBED AS ABOVE &amp; RECEIVED IN
+                          <br />
+                          GOOD ORDER &amp; CONDITION · CONTENTS NOT CHECKED
+                          <br />
+                          PLEASE TAKE DELIVERY FROM THE RISK *
                         </div>
                       </td>
                       <td className="border-r border-t border-black px-1 py-0.5 text-right tabular-nums">
