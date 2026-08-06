@@ -41,6 +41,7 @@ export const NAV: NavGroup[] = [
       { label: "Ledger / Parties", href: "/masters/parties" },
       { label: "Accounts (Bank / Cash / Card)", href: "/masters/bank-cash-heads" },
       { label: "Income-Expense Heads", href: "/masters/account-heads" },
+      { label: "TDS Master", href: "/masters/tds-sections" },
       // groups, products and units are tabs of one screen
       { label: "Product Master", href: "/masters/products" },
       { label: "States", href: "/masters/states" },

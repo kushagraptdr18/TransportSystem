@@ -1396,6 +1396,49 @@ model OfficeTransaction {
 // One bill, many heads: an optional head-wise split of an office bill (spare
 // parts + repair labour on one invoice). When present, the ledger debits each
 // line's head; supplier/bank legs stay on the bill total.
+// TDS threshold monitoring: sections carry the head mapping (a head belongs to
+// at most one section); deductions record what was actually cut so the monitor
+// can show only the incremental amount still to deduct.
+model TdsSection {
+  id              String    @id @default(cuid())
+  tenantId        String
+  code            String // current section code (new Income Tax Act numbering)
+  oldCode         String? // legacy code (194Q / 194C ...) shown as a hint
+  name            String
+  annualLimit     Decimal   @default(0) @db.Decimal(14, 2)
+  singleBillLimit Decimal   @default(0) @db.Decimal(14, 2) // 0 = not applicable
+  rateIndividual  Decimal   @default(0) @db.Decimal(5, 2) // PAN 4th letter P/H
+  rateCompany     Decimal   @default(0) @db.Decimal(5, 2) // everyone else
+  // EXCESS = TDS only on the amount above the annual limit (194Q style);
+  // FULL = once crossed, TDS on the whole year's amount (194C style)
+  basis           String    @default("FULL")
+  headIds         String[]  @default([]) // connected expense AccountHead ids
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId])
+}
+
+model TdsDeduction {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  fyId      String
+  partyId   String
+  sectionId String
+  date      DateTime
+  amount    Decimal  @default(0) @db.Decimal(14, 2)
+  remarks   String?
+
+  createdById String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  @@index([tenantId, firmId, fyId, partyId, sectionId])
+}
+
 model OfficeTxnLine {
   id       String            @id @default(cuid())
   tenantId String

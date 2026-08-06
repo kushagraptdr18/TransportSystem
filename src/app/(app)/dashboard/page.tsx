@@ -1,4 +1,4 @@
-import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon, Truck, UserSearch } from "lucide-react";
+import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon, Percent, Truck, UserSearch } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,6 +6,7 @@ import { FinanceCardsSection } from "./finance-cards";
 import { InfoHint } from "@/components/ui/info-hint";
 import { getLrSummary } from "./lr-actions";
 import { getOutstandingAgeing } from "./outstanding-actions";
+import { getTdsMonitor } from "./tds-actions";
 import { LR_VIEW_META } from "./lr-views";
 import { formatMoney } from "@/lib/utils";
 
@@ -20,11 +21,13 @@ const calDate = (d: Date) => new Date(d.getTime() + 12 * 3600 * 1000).toISOStrin
 
 export default async function DashboardPage() {
   const session = requireSession();
-  const [lrSummary, recvRes, payRes] = await Promise.all([
+  const [lrSummary, recvRes, payRes, tdsRes] = await Promise.all([
     getLrSummary(),
     getOutstandingAgeing({ side: "RECV" }),
     getOutstandingAgeing({ side: "PAY" }),
+    getTdsMonitor(),
   ]);
+  const tds = tdsRes.ok ? tdsRes.data : null;
   const recv = recvRes.ok ? recvRes.data.totals : null;
   const pay = payRes.ok ? payRes.data.totals : null;
 
@@ -316,6 +319,46 @@ export default async function DashboardPage() {
                   {emiDue > 0 && (
                     <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
                       Due now: {emiDue}
+                    </span>
+                  )}
+                </span>
+              </span>
+            </CardContent>
+          </Card>
+        </a>
+
+        <a href="/dashboard/tds-monitor" target="_blank" rel="noreferrer" className="group">
+          <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
+            <CardContent className="flex items-start gap-3 p-5">
+              <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <Percent className="h-6 w-6" />
+              </span>
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
+                  TDS Threshold Monitor
+                  <InfoHint>
+                    Supplier-wise limits per TDS section (heads connected in the TDS Master) —
+                    who crossed, who is close, and the TDS still to deduct
+                  </InfoHint>
+                </span>
+                <span className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
+                  {tds && tds.crossedCount > 0 && (
+                    <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                      Crossed: {tds.crossedCount}
+                    </span>
+                  )}
+                  {tds && tds.nearCount > 0 && (
+                    <span className="rounded bg-amber-500/10 px-2 py-0.5 text-amber-600">
+                      Near limit: {tds.nearCount}
+                    </span>
+                  )}
+                  {tds && tds.toDeductTotal > 0 ? (
+                    <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                      To deduct: {formatMoney(tds.toDeductTotal)}
+                    </span>
+                  ) : (
+                    <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-emerald-600">
+                      All clear
                     </span>
                   )}
                 </span>
