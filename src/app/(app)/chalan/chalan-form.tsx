@@ -389,6 +389,7 @@ export function ChalanForm({
         paymentMode: balMode as
           | "CASH"
           | "BANK"
+          | "CARD"
           | "UPI"
           | "CHEQUE"
           | "NEFT_RTGS"
@@ -1144,6 +1145,7 @@ export function ChalanForm({
               >
                 <option value="BANK">Bank Transfer</option>
                 <option value="CASH">Cash</option>
+                <option value="CARD">Card</option>
                 <option value="UPI">UPI</option>
                 <option value="CHEQUE">Cheque</option>
                 <option value="NEFT_RTGS">NEFT / RTGS</option>

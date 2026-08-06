@@ -939,7 +939,7 @@ const balancePaymentSchema = z.object({
   paymentDate: z.string().min(1, "Payment date is required"),
   paymentHeadId: z.string().optional().nullable(),
   paymentMode: z
-    .enum(["CASH", "BANK", "UPI", "CHEQUE", "NEFT_RTGS", "ADVANCE_ADJ"])
+    .enum(["CASH", "BANK", "CARD", "UPI", "CHEQUE", "NEFT_RTGS", "ADVANCE_ADJ"])
     .default("BANK"),
   remarks: z.string().optional().nullable(),
   /** manual voucher-wise advance adjustment applied to the balance */

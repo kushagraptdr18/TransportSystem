@@ -90,7 +90,7 @@ const fnfSchema = z.object({
   negativeAdjust: z.number().min(0).default(0),
   otherRecoveries: z.number().min(0).default(0),
   otherPayments: z.number().min(0).default(0),
-  paymentMode: z.enum(["CASH", "BANK"]).default("CASH"),
+  paymentMode: z.enum(["CASH", "BANK", "CARD"]).default("CASH"),
   bankPartyId: z.string().min(1, "Cash / Bank account is required"),
   refNo: z.string().nullish(),
   remarks: z.string().nullish(),

@@ -76,7 +76,7 @@ const emptyForm = {
   txnType: "EXPENSE" as "INCOME" | "EXPENSE",
   headId: null as string | null,
   partyId: null as string | null,
-  paymentMode: "CASH" as "CASH" | "BANK" | "CREDIT",
+  paymentMode: "CASH" as "CASH" | "BANK" | "CARD" | "CREDIT",
   bankPartyId: null as string | null,
   amount: 0,
   gstPct: 0,
@@ -123,7 +123,7 @@ export function OfficeTxnClient({
       txnType: row.txnType as "INCOME" | "EXPENSE",
       headId: row.headId,
       partyId: row.partyId,
-      paymentMode: (row.paymentMode || "CREDIT") as "CASH" | "BANK" | "CREDIT",
+      paymentMode: (row.paymentMode || "CREDIT") as "CASH" | "BANK" | "CARD" | "CREDIT",
       bankPartyId: row.bankPartyId,
       amount: row.amount,
       gstPct: row.gstPct,
@@ -470,7 +470,7 @@ export function OfficeTxnClient({
                 value={form.paymentMode}
                 onValueChange={(v) =>
                   set({
-                    paymentMode: v as "CASH" | "BANK" | "CREDIT",
+                    paymentMode: v as "CASH" | "BANK" | "CARD" | "CREDIT",
                     ...(v === "CREDIT" ? { bankPartyId: null } : {}),
                   })
                 }
@@ -481,6 +481,7 @@ export function OfficeTxnClient({
                 <SelectContent>
                   <SelectItem value="CASH">Cash</SelectItem>
                   <SelectItem value="BANK">Bank</SelectItem>
+                  <SelectItem value="CARD">Card</SelectItem>
                   <SelectItem value="CREDIT">Credit — settle later via voucher</SelectItem>
                 </SelectContent>
               </Select>
@@ -496,7 +497,7 @@ export function OfficeTxnClient({
               ) : (
                 <MasterCombobox
                   options={bankOptions.filter((b) =>
-                    form.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                    b.meta === form.paymentMode
                   )}
                   value={form.bankPartyId}
                   onChange={(v) => set({ bankPartyId: v })}

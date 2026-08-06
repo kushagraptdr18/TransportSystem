@@ -109,7 +109,7 @@ export function DriverSettlementClient({
   const [settleOf, setSettleOf] = React.useState<DriverSettlementRow | null>(null);
   const [settle, setSettle] = React.useState({
     dateText: formatDate(new Date()),
-    paymentMode: "CASH" as "CASH" | "BANK",
+    paymentMode: "CASH" as "CASH" | "BANK" | "CARD",
     bankPartyId: null as string | null,
     remarks: "",
   });
@@ -428,13 +428,14 @@ export function DriverSettlementClient({
               <Select
                 value={settle.paymentMode}
                 onValueChange={(v) =>
-                  setSettle((f) => ({ ...f, paymentMode: v as "CASH" | "BANK", bankPartyId: null }))
+                  setSettle((f) => ({ ...f, paymentMode: v as "CASH" | "BANK" | "CARD", bankPartyId: null }))
                 }
               >
                 <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CASH">Cash</SelectItem>
                   <SelectItem value="BANK">Bank</SelectItem>
+                  <SelectItem value="CARD">Card</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -442,7 +443,7 @@ export function DriverSettlementClient({
               <Label className="text-xs">Cash / Bank Account *</Label>
               <MasterCombobox
                 options={bankOptions.filter((b) =>
-                  settle.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                  b.meta === settle.paymentMode
                 )}
                 value={settle.bankPartyId}
                 onChange={(v) => setSettle((f) => ({ ...f, bankPartyId: v }))}

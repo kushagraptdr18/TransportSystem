@@ -71,7 +71,7 @@ const emptyForm = {
   negativeAdjust: 0,
   otherRecoveries: 0,
   otherPayments: 0,
-  paymentMode: "CASH" as "CASH" | "BANK",
+  paymentMode: "CASH" as "CASH" | "BANK" | "CARD",
   bankPartyId: null as string | null,
   refNo: "",
   remarks: "",
@@ -323,12 +323,13 @@ export function DriverFnfClient({
                   <Label className="text-xs">Payment Mode</Label>
                   <Select
                     value={form.paymentMode}
-                    onValueChange={(v) => set({ paymentMode: v as "CASH" | "BANK", bankPartyId: null })}
+                    onValueChange={(v) => set({ paymentMode: v as "CASH" | "BANK" | "CARD", bankPartyId: null })}
                   >
                     <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="CASH">Cash</SelectItem>
                       <SelectItem value="BANK">Bank</SelectItem>
+                  <SelectItem value="CARD">Card</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -336,7 +337,7 @@ export function DriverFnfClient({
                   <Label className="text-xs">Cash / Bank Account *</Label>
                   <MasterCombobox
                     options={bankOptions.filter((b) =>
-                      form.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                      b.meta === form.paymentMode
                     )}
                     value={form.bankPartyId}
                     onChange={(v) => set({ bankPartyId: v })}

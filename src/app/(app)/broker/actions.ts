@@ -662,7 +662,7 @@ const brokerBalancePaymentSchema = z.object({
   shortage: z.number().min(0).default(0),
   paymentDate: z.string().min(1, "Payment date is required"),
   paymentHeadId: z.string().min(1, "Payment head (bank/cash) is required"),
-  paymentMode: z.enum(["CASH", "BANK", "UPI", "CHEQUE", "NEFT_RTGS"]).default("BANK"),
+  paymentMode: z.enum(["CASH", "BANK", "CARD", "UPI", "CHEQUE", "NEFT_RTGS"]).default("BANK"),
   remarks: z.string().optional().nullable(),
 });
 

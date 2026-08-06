@@ -81,7 +81,7 @@ const emptyForm = {
   billDateText: "",
   gstPct: 0,
   gstAmount: 0,
-  paymentMode: "CREDIT" as "CASH" | "BANK" | "CREDIT",
+  paymentMode: "CREDIT" as "CASH" | "BANK" | "CARD" | "CREDIT",
   bankPartyId: null as string | null,
   refNo: "",
   remarks: "",
@@ -220,7 +220,7 @@ export function AdblueClient({
                 billDateText: row.original.billDate ? formatDate(row.original.billDate) : "",
                 gstPct: row.original.gstPct,
                 gstAmount: row.original.gstAmount,
-                paymentMode: (row.original.paymentMode || "CREDIT") as "CASH" | "BANK" | "CREDIT",
+                paymentMode: (row.original.paymentMode || "CREDIT") as "CASH" | "BANK" | "CARD" | "CREDIT",
                 bankPartyId: row.original.bankPartyId,
                 refNo: row.original.refNo,
                 remarks: row.original.remarks,
@@ -470,13 +470,14 @@ export function AdblueClient({
                   <Label className="text-xs">Payment</Label>
                   <Select
                     value={form.paymentMode}
-                    onValueChange={(v) => set({ paymentMode: v as "CASH" | "BANK" | "CREDIT" })}
+                    onValueChange={(v) => set({ paymentMode: v as "CASH" | "BANK" | "CARD" | "CREDIT" })}
                   >
                     <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="CREDIT">On credit (settle by voucher)</SelectItem>
                       <SelectItem value="CASH">Paid &mdash; Cash</SelectItem>
                       <SelectItem value="BANK">Paid &mdash; Bank</SelectItem>
+                      <SelectItem value="CARD">Paid &mdash; Card</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

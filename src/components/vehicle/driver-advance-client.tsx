@@ -68,7 +68,7 @@ const emptyForm = {
   vehicleId: null as string | null,
   tripRef: "",
   amount: 0,
-  paymentMode: "CASH" as "CASH" | "BANK",
+  paymentMode: "CASH" as "CASH" | "BANK" | "CARD",
   bankPartyId: null as string | null,
   voucherRef: "",
   remarks: "",
@@ -189,7 +189,7 @@ export function DriverAdvanceClient({
                   vehicleId: row.original.vehicleId,
                   tripRef: row.original.tripRef,
                   amount: row.original.amount,
-                  paymentMode: row.original.paymentMode as "CASH" | "BANK",
+                  paymentMode: row.original.paymentMode as "CASH" | "BANK" | "CARD",
                   bankPartyId: row.original.bankPartyId,
                   voucherRef: row.original.voucherRef,
                   remarks: row.original.remarks,
@@ -311,11 +311,12 @@ export function DriverAdvanceClient({
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Payment Mode</Label>
-              <Select value={form.paymentMode} onValueChange={(v) => set({ paymentMode: v as "CASH" | "BANK" })}>
+              <Select value={form.paymentMode} onValueChange={(v) => set({ paymentMode: v as "CASH" | "BANK" | "CARD" })}>
                 <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="CASH">Cash</SelectItem>
                   <SelectItem value="BANK">Bank</SelectItem>
+                  <SelectItem value="CARD">Card</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -323,7 +324,7 @@ export function DriverAdvanceClient({
               <Label className="text-xs">Cash / Bank Account</Label>
               <MasterCombobox
                 options={bankOptions.filter((b) =>
-                  form.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                  b.meta === form.paymentMode
                 )}
                 value={form.bankPartyId}
                 onChange={(v) => set({ bankPartyId: v })}

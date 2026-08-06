@@ -48,7 +48,7 @@ const schema = z.object({
   billDate: z.string().nullish(),
   gstPct: z.number().min(0).default(0),
   gstAmount: z.number().min(0).default(0),
-  paymentMode: z.enum(["CASH", "BANK"]).nullish(), // blank = on credit
+  paymentMode: z.enum(["CASH", "BANK", "CARD"]).nullish(), // blank = on credit
   bankPartyId: z.string().nullish(),
   refNo: z.string().nullish(),
   remarks: z.string().nullish(),

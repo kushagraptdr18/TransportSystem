@@ -494,6 +494,7 @@ export function BrokerSlipForm({
         paymentMode: settle[side].paymentMode as
           | "CASH"
           | "BANK"
+          | "CARD"
           | "UPI"
           | "CHEQUE"
           | "NEFT_RTGS",
@@ -581,6 +582,7 @@ export function BrokerSlipForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="BANK">Bank Transfer</SelectItem>
+                <SelectItem value="CARD">Card</SelectItem>
                 <SelectItem value="CASH">Cash</SelectItem>
                 <SelectItem value="UPI">UPI</SelectItem>
                 <SelectItem value="CHEQUE">Cheque</SelectItem>

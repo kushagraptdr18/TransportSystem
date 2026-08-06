@@ -72,7 +72,7 @@ export async function saveDriverSettlement(
 const settleSchema = z.object({
   id: z.string().min(1),
   date: z.string().min(1, "Date is required"),
-  paymentMode: z.enum(["CASH", "BANK"]).default("CASH"),
+  paymentMode: z.enum(["CASH", "BANK", "CARD"]).default("CASH"),
   bankPartyId: z.string().min(1, "Cash / Bank account is required"),
   remarks: z.string().nullish(),
 });
@@ -230,7 +230,7 @@ export async function deleteDriverSettlement(
 const runningSettleSchema = z.object({
   driverId: z.string().min(1),
   date: z.string().min(1, "Date is required"),
-  paymentMode: z.enum(["CASH", "BANK"]).default("CASH"),
+  paymentMode: z.enum(["CASH", "BANK", "CARD"]).default("CASH"),
   bankPartyId: z.string().min(1, "Cash / Bank account is required"),
   remarks: z.string().nullish(),
 });

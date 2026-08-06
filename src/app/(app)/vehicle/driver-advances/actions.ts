@@ -26,7 +26,7 @@ const schema = z.object({
   vehicleId: z.string().nullish(),
   tripRef: z.string().nullish(),
   amount: z.number().min(0.01, "Amount is required"),
-  paymentMode: z.enum(["CASH", "BANK"]).default("CASH"),
+  paymentMode: z.enum(["CASH", "BANK", "CARD"]).default("CASH"),
   bankPartyId: z.string().nullish(),
   voucherRef: z.string().nullish(),
   remarks: z.string().nullish(),

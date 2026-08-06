@@ -314,7 +314,7 @@ const payRunningSchema = z.object({
   driverId: z.string().min(1),
   paymentDate: z.string().min(1, "Payment date is required"),
   paymentHeadId: z.string().min(1, "Cash / Bank account is required"),
-  paymentMode: z.enum(["CASH", "BANK"]).default("CASH"),
+  paymentMode: z.enum(["CASH", "BANK", "CARD"]).default("CASH"),
   /** shortage amount to adjust against the salary (full or partial) */
   shortageAdjust: z.number().min(0).default(0),
   /** money actually paid now (partial payments allowed) */

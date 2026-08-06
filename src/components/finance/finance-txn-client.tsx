@@ -307,6 +307,7 @@ export function FinanceTxnClient({
                 <SelectContent>
                   <SelectItem value="CASH">Cash</SelectItem>
                   <SelectItem value="BANK">Bank</SelectItem>
+                  <SelectItem value="CARD">Card</SelectItem>
                 </SelectContent>
               </Select>
             </div>

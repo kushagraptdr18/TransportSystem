@@ -140,7 +140,7 @@ export function DriverSalaryClient({
   const [payOf, setPayOf] = React.useState<DriverSalaryRow | null>(null);
   const [pay, setPay] = React.useState({
     dateText: formatDate(new Date()),
-    paymentMode: "CASH" as "CASH" | "BANK",
+    paymentMode: "CASH" as "CASH" | "BANK" | "CARD",
     paymentHeadId: null as string | null,
     shortageAdjust: 0,
     paymentAmount: 0,
@@ -636,13 +636,14 @@ export function DriverSalaryClient({
                   <Select
                     value={pay.paymentMode}
                     onValueChange={(v) =>
-                      setPay((f) => ({ ...f, paymentMode: v as "CASH" | "BANK", paymentHeadId: null }))
+                      setPay((f) => ({ ...f, paymentMode: v as "CASH" | "BANK" | "CARD", paymentHeadId: null }))
                     }
                   >
                     <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="CASH">Cash</SelectItem>
                       <SelectItem value="BANK">Bank</SelectItem>
+                  <SelectItem value="CARD">Card</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -650,7 +651,7 @@ export function DriverSalaryClient({
                   <Label className="text-xs">Cash / Bank Account *</Label>
                   <MasterCombobox
                     options={bankOptions.filter((b) =>
-                      pay.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                      b.meta === pay.paymentMode
                     )}
                     value={pay.paymentHeadId}
                     onChange={(v) => setPay((f) => ({ ...f, paymentHeadId: v }))}

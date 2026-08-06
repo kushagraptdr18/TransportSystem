@@ -40,7 +40,7 @@ const schema = z.object({
   txnType: z.enum(["INCOME", "EXPENSE"]),
   headId: z.string().min(1, "Income / Expense head is required"),
   partyId: z.string().nullish(), // supplier / party — optional
-  paymentMode: z.enum(["CASH", "BANK"]).nullish(), // blank = on credit (settle later)
+  paymentMode: z.enum(["CASH", "BANK", "CARD"]).nullish(), // blank = on credit (settle later)
   bankPartyId: z.string().nullish(),
   amount: z.number().min(0.01, "Amount is required"),
   gstPct: z.number().min(0).default(0),

@@ -85,7 +85,7 @@ export async function downloadVehicleExpenseTemplate(): Promise<
     put(1, ["EXPENSE", "INCOME"]);
     put(2, heads.map((h) => h.name));
     put(3, vehicles.map((v) => v.number));
-    put(4, ["CASH", "BANK", "CREDIT"]);
+    put(4, ["CASH", "BANK", "CARD", "CREDIT"]);
     put(5, banks.map((b) => b.name));
     put(6, suppliers.map((s) => s.name));
 
@@ -227,7 +227,7 @@ export async function importVehicleExpenses(fd: FormData): Promise<ImportSummary
       if (amount <= 0) err(`AMOUNT must be a positive number (got "${rec["AMOUNT"]}")`);
 
       const modeRaw = (rec["PAYMENT MODE"] || "CREDIT").toUpperCase();
-      if (!["CASH", "BANK", "CREDIT"].includes(modeRaw)) {
+      if (!["CASH", "BANK", "CARD", "CREDIT"].includes(modeRaw)) {
         err(`invalid PAYMENT MODE "${rec["PAYMENT MODE"]}" — CASH / BANK / CREDIT`);
       }
       const paymentMode = modeRaw === "CREDIT" ? null : (modeRaw as "CASH" | "BANK");

@@ -91,7 +91,7 @@ const emptyForm = {
   txnType: "EXPENSE" as "EXPENSE" | "INCOME",
   headId: null as string | null,
   partyId: null as string | null,
-  paymentMode: "CASH" as "CASH" | "BANK" | "CREDIT",
+  paymentMode: "CASH" as "CASH" | "BANK" | "CARD" | "CREDIT",
   bankPartyId: null as string | null,
   paymentDateText: formatDate(new Date()),
   refNo: "",
@@ -156,7 +156,7 @@ export function VehicleExpenseClient({
       txnType: row.txnType as "EXPENSE" | "INCOME",
       headId: row.headId,
       partyId: row.partyId,
-      paymentMode: (row.paymentMode || "CREDIT") as "CASH" | "BANK" | "CREDIT",
+      paymentMode: (row.paymentMode || "CREDIT") as "CASH" | "BANK" | "CARD" | "CREDIT",
       bankPartyId: row.bankPartyId,
       paymentDateText: row.paymentDate ? formatDate(row.paymentDate) : formatDate(row.date),
       refNo: row.refNo,
@@ -430,7 +430,7 @@ export function VehicleExpenseClient({
                 value={form.paymentMode}
                 onValueChange={(v) =>
                   set({
-                    paymentMode: v as "CASH" | "BANK" | "CREDIT",
+                    paymentMode: v as "CASH" | "BANK" | "CARD" | "CREDIT",
                     ...(v === "CREDIT" ? { bankPartyId: null } : {}),
                   })
                 }
@@ -439,6 +439,7 @@ export function VehicleExpenseClient({
                 <SelectContent>
                   <SelectItem value="CASH">Cash</SelectItem>
                   <SelectItem value="BANK">Bank</SelectItem>
+                  <SelectItem value="CARD">Card</SelectItem>
                   <SelectItem value="CREDIT">Credit — settle later</SelectItem>
                 </SelectContent>
               </Select>
@@ -449,7 +450,7 @@ export function VehicleExpenseClient({
                   <Label className="text-xs">Cash / Bank Account *</Label>
                   <MasterCombobox
                     options={bankOptions.filter((b) =>
-                      form.paymentMode === "CASH" ? b.meta === "CASH" : b.meta === "BANK"
+                      b.meta === form.paymentMode
                     )}
                     value={form.bankPartyId}
                     onChange={(v) => set({ bankPartyId: v })}

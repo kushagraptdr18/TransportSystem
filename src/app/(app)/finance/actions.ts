@@ -571,7 +571,7 @@ const financeTxnSchema = z.object({
   ]),
   partyId: z.string().min(1, "Party is required"),
   amount: z.number().min(0.01, "Amount is required"),
-  entryType: z.enum(["CASH", "BANK"]).default("CASH"),
+  entryType: z.enum(["CASH", "BANK", "CARD"]).default("CASH"),
   bankPartyId: z.string().min(1, "Cash / Bank account is required"),
   remarks: z.string().nullish(),
 });
