@@ -51,10 +51,9 @@ export function FinanceCardsSection({ defaultFrom, defaultTo }: { defaultFrom: s
           value: data.booking.margin,
           hint: (
             <>
-              LR Freight − Market Chalan − Own/Relative Chalan
+              Booking Freight − Vehicle Freight (chalans)
               <br />
-              {formatMoney(data.booking.lrFreight)} − {formatMoney(data.booking.marketFreight)} −{" "}
-              {formatMoney(data.booking.ownFreight)}
+              {formatMoney(data.booking.bookingFreight)} − {formatMoney(data.booking.vehicleFreight)}
               <br />
               (cancelled chalan excluded)
             </>

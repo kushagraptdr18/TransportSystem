@@ -12,7 +12,7 @@ import { round2 } from "@/lib/calc/tds";
 
 export interface FinanceCards {
   income: number;
-  booking: { lrFreight: number; marketFreight: number; ownFreight: number; margin: number };
+  booking: { bookingFreight: number; vehicleFreight: number; margin: number };
   broker: { partyAmt: number; ownerAmt: number; margin: number };
   commission: number;
   mamool: number;
@@ -54,25 +54,18 @@ export async function getFinanceCards(input: {
         return round2(of("CREDIT") - of("DEBIT"));
       };
 
-      const [income, commission, mamool, lrAgg, chalans, slipAgg] = await Promise.all([
+      const [income, commission, mamool, chalanAgg, slipAgg] = await Promise.all([
         ledgerNet(incomeHeadIds),
         ledgerNet([headIdByName.get("commission")].filter(Boolean) as string[]),
         ledgerNet(
           [headIdByName.get("mamool") ?? headIdByName.get("mamul")].filter(Boolean) as string[]
         ),
-        tx.lr.aggregate({
-          where: {
-            ...scope,
-            deletedAt: null,
-            lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
-            lrDate: { gte, lt },
-          },
-          _sum: { freight: true },
-        }),
-        // only active (non-cancelled) chalans count toward the margin
-        tx.chalan.findMany({
+        // only active (non-cancelled) chalans count toward the margin —
+        // Booking Freight (the reference figure on the chalan) vs the vehicle
+        // freight actually agreed
+        tx.chalan.aggregate({
           where: { ...scope, deletedAt: null, cancelledAt: null, chalanDate: { gte, lt } },
-          select: { vehicleId: true, freight: true },
+          _sum: { bookingFreight: true, freight: true },
         }),
         tx.brokerSlip.aggregate({
           where: { ...scope, deletedAt: null, slipDate: { gte, lt } },
@@ -80,32 +73,17 @@ export async function getFinanceCards(input: {
         }),
       ]);
 
-      const brokerVehicles = new Set(
-        (
-          await tx.vehicle.findMany({ where: { ownershipType: "BROKER" }, select: { id: true } })
-        ).map((v) => v.id)
-      );
-      let marketFreight = 0;
-      let ownFreight = 0;
-      for (const c of chalans) {
-        const f = toNum(String(c.freight));
-        if (brokerVehicles.has(c.vehicleId)) marketFreight += f;
-        else ownFreight += f;
-      }
-      marketFreight = round2(marketFreight);
-      ownFreight = round2(ownFreight);
-
-      const lrFreight = round2(toNum(String(lrAgg._sum.freight ?? 0)));
+      const bookingFreight = round2(toNum(String(chalanAgg._sum.bookingFreight ?? 0)));
+      const vehicleFreight = round2(toNum(String(chalanAgg._sum.freight ?? 0)));
       const partyAmt = round2(toNum(String(slipAgg._sum.pChalanAmt ?? 0)));
       const ownerAmt = round2(toNum(String(slipAgg._sum.vChalanAmt ?? 0)));
 
       return {
         income,
         booking: {
-          lrFreight,
-          marketFreight,
-          ownFreight,
-          margin: round2(lrFreight - marketFreight - ownFreight),
+          bookingFreight,
+          vehicleFreight,
+          margin: round2(bookingFreight - vehicleFreight),
         },
         broker: { partyAmt, ownerAmt, margin: round2(partyAmt - ownerAmt) },
         commission,
