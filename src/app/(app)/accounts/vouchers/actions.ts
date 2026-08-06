@@ -128,6 +128,9 @@ const voucherSchema = z.object({
   adjustments: z.array(adjustmentSchema).default([]),
   // open party advances adjusted against this voucher's allocations
   advanceAdjustments: z.array(advanceUseSchema).default([]),
+  // chalan-cancel advances this voucher recovers (receipt) or writes off
+  // (journal against the broker's credit side)
+  cancelAdvanceUses: z.array(advanceUseSchema).default([]),
 });
 
 export type SaveVoucherResult = { ok: true; id: string } | { ok: false; error: string };
@@ -188,6 +191,24 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       ok: false,
       error: "Advance adjustment is only available on receipt/payment vouchers against a party",
     };
+  }
+  const cancelUseTotal = round2(data.cancelAdvanceUses.reduce((s, a) => s + a.amount, 0));
+  if (cancelUseTotal > 0.009) {
+    if (data.type === "RECEIPT") {
+      if (!data.partyId)
+        return { ok: false, error: "Party is required to recover cancel advances" };
+    } else if (data.type === "JOURNAL") {
+      if (!data.bankPartyId)
+        return {
+          ok: false,
+          error: "The credit side must be the broker party to write off a cancel advance",
+        };
+    } else {
+      return {
+        ok: false,
+        error: "Cancel-advance recovery is only available on receipt or journal vouchers",
+      };
+    }
   }
   const pureAdvanceAdjust = isMoneyType && advUseTotal > 0.009;
   if (data.amount <= 0 && !pureAdvanceAdjust) {
@@ -574,6 +595,21 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // the requested lines — each validated against the advance's live open
       // balance, party and direction inside the same transaction.
       await restoreAdvanceUses(tx, "VOUCHER", savedId);
+      // chalan-cancel recoveries: only THAT party's open CHALAN_CANCEL
+      // advances qualify (receipt = money back, journal = bad-debt write-off)
+      const cancelLines = data.cancelAdvanceUses.filter((l) => l.amount > 0.009);
+      const cancelParty = data.type === "JOURNAL" ? data.bankPartyId : data.partyId;
+      if (cancelLines.length) {
+        const advs = await tx.partyAdvance.findMany({
+          where: { id: { in: cancelLines.map((l) => l.advanceId) }, deletedAt: null },
+        });
+        for (const l of cancelLines) {
+          const adv = advs.find((a) => a.id === l.advanceId);
+          if (!adv || adv.partyId !== cancelParty || adv.source !== "CHALAN_CANCEL" || adv.kind !== "PAID") {
+            throw new Error("Only this party's open chalan-cancel advances can be recovered here");
+          }
+        }
+      }
       if (advUseTotal > 0.009 && data.partyId) {
         const own = await tx.partyAdvance.findFirst({
           where: {
@@ -582,6 +618,25 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
           },
         });
         if (own) throw new Error("A voucher cannot adjust the advance it created itself.");
+        // direction check that the kinds param used to enforce
+        const adjAdvs = await tx.partyAdvance.findMany({
+          where: { id: { in: data.advanceAdjustments.map((l) => l.advanceId) } },
+        });
+        for (const a of adjAdvs) {
+          if (a.kind !== advanceKind) {
+            throw new Error(
+              `Voucher ${a.voucherNo ?? a.id} is an advance ${a.kind.toLowerCase()} and cannot be adjusted here`
+            );
+          }
+        }
+      }
+      // one combined apply per voucher (the helper releases prior uses itself,
+      // so it must never run twice for the same voucher)
+      const moneyLines = [
+        ...(advUseTotal > 0.009 && data.partyId ? data.advanceAdjustments : []),
+        ...(data.type === "RECEIPT" ? cancelLines : []),
+      ];
+      if (moneyLines.length && data.partyId) {
         await applyManualAdvanceUses(tx, {
           tenantId: session.tenantId,
           firmId: session.firmId,
@@ -592,8 +647,18 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
           // "Used Against" reads "SBRL/001" rather than a bare voucher number
           refNo: docRefNo,
           date: voucherDate,
-          kinds: [advanceKind],
-          lines: data.advanceAdjustments,
+          lines: moneyLines,
+        });
+      } else if (data.type === "JOURNAL" && cancelLines.length && data.bankPartyId) {
+        await applyManualAdvanceUses(tx, {
+          tenantId: session.tenantId,
+          firmId: session.firmId,
+          partyId: data.bankPartyId,
+          refType: "VOUCHER",
+          refId: savedId,
+          refNo: docRefNo,
+          date: voucherDate,
+          lines: cancelLines,
         });
       }
 
@@ -603,8 +668,16 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // advance balance for that party — no second voucher is ever needed.
       if ((data.type === "RECEIPT" || data.type === "PAYMENT") && data.partyId && !data.accountHeadId) {
         // advance = money moved that no reference consumed; allocations funded
-        // by adjusted advances are not this voucher's money
-        const unallocated = round2(netAmount + advUseTotal - allocatedSum);
+        // by adjusted advances are not this voucher's money, and money that
+        // recovered a cancel advance is spoken for too
+        if (data.type === "RECEIPT" && cancelUseTotal > 0.009) {
+          if (round2(allocatedSum + cancelUseTotal) > round2(netAmount + advUseTotal) + 0.01) {
+            throw new Error(
+              "Cancel-advance recovery plus allocations exceed the money received"
+            );
+          }
+        }
+        const unallocated = round2(netAmount + advUseTotal - allocatedSum - cancelUseTotal);
         const existingAdv = await tx.partyAdvance.findFirst({
           where: { voucherId: savedId, deletedAt: null },
         });
@@ -1190,6 +1263,43 @@ export async function getOpenAdvances(input: {
     });
     // a voucher must not offer the advance it created itself
     return input.voucherId ? rows.filter((r) => r.voucherId !== input.voucherId) : rows;
+  });
+}
+
+export interface OpenCancelAdvance {
+  id: string;
+  chalanNo: string;
+  date: string;
+  amount: number;
+  available: number;
+  remarks: string | null;
+}
+
+/** Open chalan-cancel advances of a party — offered for recovery on receipt
+ *  vouchers and for bad-debt write-off on journals. */
+export async function getOpenCancelAdvances(partyId: string): Promise<OpenCancelAdvance[]> {
+  const session = requireSession();
+  return withTenant(session.tenantId, async (tx) => {
+    const advances = await tx.partyAdvance.findMany({
+      where: {
+        firmId: session.firmId,
+        partyId,
+        deletedAt: null,
+        source: "CHALAN_CANCEL",
+        kind: "PAID",
+      },
+      orderBy: { date: "asc" },
+    });
+    return advances
+      .map((a) => ({
+        id: a.id,
+        chalanNo: a.voucherNo ?? "",
+        date: a.date.toISOString().slice(0, 10),
+        amount: round2(Number(a.amount)),
+        available: round2(Number(a.amount) - Number(a.consumedAmount)),
+        remarks: a.remarks,
+      }))
+      .filter((a) => a.available > 0.009);
   });
 }
 

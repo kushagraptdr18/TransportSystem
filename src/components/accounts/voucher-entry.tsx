@@ -33,9 +33,11 @@ import {
   deleteVoucher,
   getAllocationCandidates,
   getOpenAdvances,
+  getOpenCancelAdvances,
   getPartyAdvanceInfo,
   saveVoucher,
   type AllocationCandidate,
+  type OpenCancelAdvance,
 } from "@/app/(app)/accounts/vouchers/actions";
 import type { OpenAdvance } from "@/lib/party-advance";
 
@@ -172,6 +174,9 @@ export function VoucherEntry({
   // open advances of the selected party, same direction as the voucher type —
   // each may be adjusted (fully or partly) against the pending references
   const [advRows, setAdvRows] = React.useState<(OpenAdvance & { use: number })[]>([]);
+  // open chalan-cancel advances of the target party: recovered on a receipt,
+  // written off (bad debt) on a journal whose credit side is that party
+  const [cancelRows, setCancelRows] = React.useState<(OpenCancelAdvance & { use: number })[]>([]);
 
   const resetAll = React.useCallback(
     (t: VType) => {
@@ -190,6 +195,7 @@ export function VoucherEntry({
       setRows([]);
       setAdvInfo(null);
       setAdvRows([]);
+      setCancelRows([]);
     },
     [peekNumbers]
   );
@@ -274,17 +280,54 @@ export function VoucherEntry({
     setPartyId(pid);
     void loadRefs(pid);
     setAdvRows([]);
+    setCancelRows([]);
     if (pid) {
       getPartyAdvanceInfo(pid).then(setAdvInfo).catch(() => setAdvInfo(null));
       if (type === "RECEIPT" || type === "PAYMENT")
         getOpenAdvances({ partyId: pid, type })
           .then((list) => setAdvRows(list.map((a) => ({ ...a, use: 0 }))))
           .catch(() => setAdvRows([]));
+      if (type === "RECEIPT")
+        getOpenCancelAdvances(pid)
+          .then((list) => setCancelRows(list.map((a) => ({ ...a, use: 0 }))))
+          .catch(() => setCancelRows([]));
     } else setAdvInfo(null);
   };
 
+  // journal write-off: cancel advances of the CREDIT-side party
+  React.useEffect(() => {
+    if (type !== "JOURNAL") return;
+    const pid = jCreditParty;
+    if (!pid) {
+      setCancelRows([]);
+      return;
+    }
+    let alive = true;
+    getOpenCancelAdvances(pid)
+      .then((list) => {
+        if (alive) setCancelRows(list.map((a) => ({ ...a, use: 0 })));
+      })
+      .catch(() => {
+        if (alive) setCancelRows([]);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, jCreditParty]);
+
   const setAdvRow = (i: number, use: number) =>
     setAdvRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, use } : r)));
+
+  const setCancelRow = (i: number, use: number) =>
+    setCancelRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, use } : r)));
+  const cancelUseTotal = round2(cancelRows.reduce((s, r) => s + r.use, 0));
+  const cancelRowError = (r: OpenCancelAdvance & { use: number }): string | null => {
+    if (r.use < 0) return "negative value";
+    if (r.use > r.available + 0.01) return `exceeds balance ${formatMoney(r.available)}`;
+    return null;
+  };
+  const hasCancelErrors = cancelRows.some((r) => cancelRowError(r) !== null);
 
   const setRow = (i: number, patch: Partial<SettleRow>) =>
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -393,6 +436,12 @@ export function VoucherEntry({
               .filter((r) => r.use > 0)
               .map((r) => ({ advanceId: r.id, amount: r.use }))
           : [],
+        cancelAdvanceUses:
+          type === "RECEIPT" || type === "JOURNAL"
+            ? cancelRows
+                .filter((r) => r.use > 0)
+                .map((r) => ({ advanceId: r.id, amount: r.use }))
+            : [],
         allocations: isMoney || type === "JOURNAL"
           ? selected
               .filter((r) => Math.abs(r.receive + r.tds + r.shortage + r.other + r.roundOff) > 0)
@@ -446,7 +495,8 @@ export function VoucherEntry({
           !!creditLedgerId &&
           partyId !== creditLedgerId &&
           !hasRowErrors &&
-          !overAllocated
+          !overAllocated &&
+          !hasCancelErrors
         : // a receipt/payment may move no money at all when it purely adjusts
           // an open advance against pending references
           (money > 0 || advUsed > 0) &&
@@ -454,6 +504,7 @@ export function VoucherEntry({
           !!bankPartyId &&
           !hasRowErrors &&
           !hasAdvErrors &&
+          !hasCancelErrors &&
           !overAllocated &&
           !advUnderApplied);
 
@@ -696,6 +747,82 @@ export function VoucherEntry({
           </CardContent>
         </Card>
       )}
+
+      {/* ---------- chalan-cancel advance recovery / write-off ---------- */}
+      {((type === "RECEIPT" && partyId) || (type === "JOURNAL" && jCreditParty)) &&
+        cancelRows.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">
+                {type === "RECEIPT" ? "Recover Cancel Advances" : "Write Off Cancel Advances"}
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  {type === "RECEIPT"
+                    ? "open advances from cancelled chalans — the amount received closes them"
+                    : "debit Bad Debts and allocate here — the advance closes as written off"}
+                </span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Cancelled Chalan</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead className="text-right">Advance</TableHead>
+                      <TableHead className="text-right">Balance</TableHead>
+                      <TableHead className="w-32 text-right">
+                        {type === "RECEIPT" ? "Recover" : "Write Off"}
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cancelRows.map((r, i) => {
+                      const err = cancelRowError(r);
+                      return (
+                        <TableRow key={r.id} className={err ? "bg-destructive/5" : undefined}>
+                          <TableCell className="font-medium">{r.chalanNo || "—"}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">
+                            {formatDate(r.date)}
+                          </TableCell>
+                          <TableCell className="max-w-[16rem] text-xs text-muted-foreground">
+                            {r.remarks ?? ""}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatMoney(r.amount)}
+                          </TableCell>
+                          <TableCell className="text-right font-medium tabular-nums">
+                            {formatMoney(r.available)}
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              className="h-8 text-right"
+                              value={r.use ? String(r.use) : ""}
+                              placeholder="0"
+                              onChange={(e) => setCancelRow(i, Number(e.target.value) || 0)}
+                            />
+                            {err && (
+                              <div className="mt-0.5 text-[11px] text-destructive">{err}</div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              {cancelUseTotal > 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {type === "RECEIPT"
+                    ? `${formatMoney(cancelUseTotal)} of the money received will close these advances (it will not become a new advance).`
+                    : `${formatMoney(cancelUseTotal)} will be marked written off against this journal.`}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
       {/* ---------- settlement grid ---------- */}
       {((isMoneyType && partyId) || (type === "JOURNAL" && journalRefParty)) && (
