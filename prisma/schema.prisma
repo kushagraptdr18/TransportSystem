@@ -1413,6 +1413,9 @@ model TdsSection {
   // FULL = once crossed, TDS on the whole year's amount (194C style)
   basis           String    @default("FULL")
   headIds         String[]  @default([]) // connected expense AccountHead ids
+  // freight TDS (chalan / broker slip / hire) has no expense head — these
+  // module tags label it in the TDS Payable report ONLY (never the monitor)
+  moduleRefs      String[]  @default([]) // CHALAN | BROKER_SLIP | HIRE
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt

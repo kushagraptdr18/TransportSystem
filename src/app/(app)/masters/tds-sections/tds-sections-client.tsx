@@ -30,7 +30,14 @@ interface SectionRow {
   rateCompany: number;
   basis: "FULL" | "EXCESS";
   headIds: string[];
+  moduleRefs: ("CHALAN" | "BROKER_SLIP" | "HIRE")[];
 }
+
+const MODULES: { value: "CHALAN" | "BROKER_SLIP" | "HIRE"; label: string }[] = [
+  { value: "CHALAN", label: "Challan (Owner)" },
+  { value: "BROKER_SLIP", label: "Broker Slip (Owner)" },
+  { value: "HIRE", label: "Hire Slip" },
+];
 
 interface HeadOpt {
   id: string;
@@ -48,6 +55,7 @@ const EMPTY = {
   rateCompany: 0,
   basis: "FULL" as "FULL" | "EXCESS",
   headIds: [] as string[],
+  moduleRefs: [] as ("CHALAN" | "BROKER_SLIP" | "HIRE")[],
 };
 
 export function TdsSectionsClient({
@@ -82,8 +90,9 @@ export function TdsSectionsClient({
             rateCompany: s.rateCompany,
             basis: s.basis,
             headIds: [...s.headIds],
+            moduleRefs: [...s.moduleRefs],
           }
-        : { ...EMPTY, headIds: [] }
+        : { ...EMPTY, headIds: [], moduleRefs: [] }
     );
   };
 
@@ -101,6 +110,7 @@ export function TdsSectionsClient({
       rateCompany: Number(form.rateCompany) || 0,
       basis: form.basis,
       headIds: form.headIds,
+      moduleRefs: form.moduleRefs,
     });
     setSaving(false);
     if (res.ok) {
@@ -176,10 +186,15 @@ export function TdsSectionsClient({
                   </Badge>
                 </td>
                 <td className={cell}>
-                  {s.headIds.length === 0 ? (
+                  {s.headIds.length === 0 && s.moduleRefs.length === 0 ? (
                     <span className="text-muted-foreground">none</span>
                   ) : (
                     <span className="flex flex-wrap gap-1">
+                      {s.moduleRefs.map((m) => (
+                        <Badge key={m} variant="secondary">
+                          {MODULES.find((x) => x.value === m)?.label ?? m}
+                        </Badge>
+                      ))}
                       {s.headIds.map((h) => (
                         <Badge key={h} variant="outline">
                           {headName.get(h) ?? "?"}
@@ -302,6 +317,41 @@ export function TdsSectionsClient({
                   <option value="EXCESS">Only the amount ABOVE the annual limit (194Q style)</option>
                   <option value="FULL">The FULL year&apos;s amount once crossed (194C style)</option>
                 </select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">
+                  Freight Modules (labels chalan / slip TDS in the TDS Payable report only — the
+                  monitor never reads these)
+                </Label>
+                <div className="flex flex-wrap gap-3 rounded-md border p-2">
+                  {MODULES.map((m) => {
+                    const other = sections.find(
+                      (s) => s.id !== form.id && s.moduleRefs.includes(m.value)
+                    )?.code;
+                    return (
+                      <label
+                        key={m.value}
+                        className={`flex items-center gap-1.5 text-xs ${other ? "opacity-50" : "cursor-pointer"}`}
+                      >
+                        <input
+                          type="checkbox"
+                          disabled={!!other}
+                          checked={form.moduleRefs.includes(m.value)}
+                          onChange={(e) =>
+                            setForm({
+                              ...form,
+                              moduleRefs: e.target.checked
+                                ? [...form.moduleRefs, m.value]
+                                : form.moduleRefs.filter((x) => x !== m.value),
+                            })
+                          }
+                        />
+                        {m.label}
+                        {other && <span className="text-muted-foreground">(in {other})</span>}
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
               <div className="space-y-1">
                 <Label className="text-xs">

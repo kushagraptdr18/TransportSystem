@@ -64,6 +64,7 @@ export default async function TdsSectionsPage() {
         rateCompany: toNum(String(s.rateCompany)),
         basis: s.basis as "FULL" | "EXCESS",
         headIds: s.headIds,
+        moduleRefs: s.moduleRefs as ("CHALAN" | "BROKER_SLIP" | "HIRE")[],
       }))}
       heads={heads.map((h) => ({ id: h.id, name: h.name }))}
     />

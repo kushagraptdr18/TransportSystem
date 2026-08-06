@@ -96,6 +96,94 @@ export async function TdsPayableTab({
     ]);
     const partyById = new Map(parties.map((p) => [p.id, p]));
 
+    // section labels from the TDS Master: freight modules map directly, expense
+    // refs resolve through the bill's head(s)
+    const tdsSections = await tx.tdsSection.findMany({ where: { deletedAt: null } });
+    const sectionLabel = (s: (typeof tdsSections)[number]) => s.code;
+    const moduleSection = new Map<string, string>();
+    const headSection = new Map<string, string>();
+    for (const s of tdsSections) {
+      for (const m of s.moduleRefs) moduleSection.set(m, sectionLabel(s));
+      for (const h of s.headIds) headSection.set(h, sectionLabel(s));
+    }
+    /** dominant section of an expense doc: the head carrying the largest share */
+    const docSection = (
+      contributions: { headId: string; amount: number }[]
+    ): string => {
+      const perSection = new Map<string, number>();
+      for (const c of contributions) {
+        const sec = headSection.get(c.headId);
+        if (sec) perSection.set(sec, (perSection.get(sec) ?? 0) + c.amount);
+      }
+      let best = "";
+      let bestAmt = 0;
+      for (const [sec, amt] of Array.from(perSection.entries())) {
+        if (amt > bestAmt) {
+          best = sec;
+          bestAmt = amt;
+        }
+      }
+      return best;
+    };
+    // resolve expense refs used by payment-voucher allocations
+    const allocs = payVouchers.flatMap((v) => v.allocations);
+    const idsOf = (t: string) =>
+      Array.from(new Set(allocs.filter((a) => a.refType === t).map((a) => a.refId)));
+    const [officeRefs, vehicleRefs, adblueRefs] = await Promise.all([
+      idsOf("OFFICE_EXPENSE").length
+        ? tx.officeTransaction.findMany({
+            where: { id: { in: idsOf("OFFICE_EXPENSE") } },
+            include: { lines: true },
+          })
+        : [],
+      idsOf("VEHICLE_EXPENSE").length
+        ? tx.vehicleExpenseVoucher.findMany({
+            where: { id: { in: idsOf("VEHICLE_EXPENSE") } },
+            include: { lines: true },
+          })
+        : [],
+      idsOf("ADBLUE_PURCHASE").length
+        ? tx.adblueTxn.findMany({ where: { id: { in: idsOf("ADBLUE_PURCHASE") } } })
+        : [],
+    ]);
+    const ureaHead = await tx.accountHead.findFirst({
+      where: { name: { equals: "Urea Expense", mode: "insensitive" } },
+      select: { id: true },
+    });
+    const refSection = new Map<string, string>();
+    for (const t of officeRefs) {
+      refSection.set(
+        t.id,
+        docSection(
+          t.lines.length
+            ? t.lines.map((l) => ({ headId: l.headId, amount: toNum(String(l.amount)) }))
+            : [{ headId: t.headId, amount: toNum(String(t.amount)) }]
+        )
+      );
+    }
+    for (const v of vehicleRefs) {
+      refSection.set(
+        v.id,
+        docSection(
+          v.lines.length
+            ? v.lines.map((l) => ({ headId: l.headId, amount: toNum(String(l.amount)) }))
+            : [{ headId: v.headId, amount: toNum(String(v.amount)) }]
+        )
+      );
+    }
+    for (const a of adblueRefs) {
+      refSection.set(
+        a.id,
+        ureaHead ? headSection.get(ureaHead.id) ?? "" : ""
+      );
+    }
+    const allocSection = (a: (typeof allocs)[number]): string => {
+      if (a.refType === "FREIGHT_CHALLAN") return moduleSection.get("CHALAN") ?? "";
+      if (a.refType === "BROKER_ENTRY") return moduleSection.get("BROKER_SLIP") ?? "";
+      if (a.refType === "LORRY_HIRE") return moduleSection.get("HIRE") ?? "";
+      return refSection.get(a.refId) ?? "";
+    };
+
     // journal vouchers that touched the TDS Payable ledger head
     const tdsHeads = await tx.accountHead.findMany({
       where: { name: "TDS Payable" },
@@ -133,6 +221,7 @@ export async function TdsPayableTab({
       out.push({
         date: e.date.toISOString(),
         module: "JOURNAL VOUCHER",
+        section: "",
         party: p?.name ?? "",
         pan: p?.pan ?? "",
         refNo: v.voucherNo,
@@ -152,6 +241,7 @@ export async function TdsPayableTab({
           out.push({
             date: v.voucherDate.toISOString(),
             module: "PAYMENT VOUCHER",
+            section: allocSection(a),
             party: p?.name ?? "",
             pan: p?.pan ?? "",
             // for a chalan / slip the two are the same number; only a voucher
@@ -169,6 +259,7 @@ export async function TdsPayableTab({
         out.push({
           date: v.voucherDate.toISOString(),
           module: "PAYMENT VOUCHER",
+          section: "",
           party: p?.name ?? "",
           pan: p?.pan ?? "",
           refNo: v.voucherNo,
@@ -186,6 +277,7 @@ export async function TdsPayableTab({
       out.push({
         date: c.chalanDate.toISOString(),
         module: "CHALLAN (OWNER)",
+        section: moduleSection.get("CHALAN") ?? "",
         party: p?.name ?? "",
         pan: p?.pan ?? "",
         refNo: c.chalanNo,
@@ -202,6 +294,7 @@ export async function TdsPayableTab({
       out.push({
         date: s.slipDate.toISOString(),
         module: "BROKER SLIP (OWNER)",
+        section: moduleSection.get("BROKER_SLIP") ?? "",
         party: p?.name ?? s.ownerName ?? "",
         pan: p?.pan ?? "",
         refNo: s.slipNo,
@@ -278,6 +371,7 @@ export async function TdsPayableTab({
           { key: "date", header: "Date", kind: "date" },
           { key: "refNo", header: "Reference No" },
           { key: "module", header: "Module", kind: "badge" },
+          { key: "section", header: "TDS Section" },
           { key: "party", header: "Party / Owner" },
           { key: "pan", header: "PAN" },
           { key: "invoiceAmount", header: "Bill Amount", kind: "money" },

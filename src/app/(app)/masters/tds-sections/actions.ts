@@ -20,6 +20,7 @@ const sectionSchema = z.object({
   rateCompany: z.number().min(0).max(100),
   basis: z.enum(["FULL", "EXCESS"]),
   headIds: z.array(z.string()),
+  moduleRefs: z.array(z.enum(["CHALAN", "BROKER_SLIP", "HIRE"])),
 });
 
 export async function saveTdsSection(
@@ -35,7 +36,7 @@ export async function saveTdsSection(
       // a head may belong to only ONE section
       const others = await tx.tdsSection.findMany({
         where: { deletedAt: null, ...(d.id ? { id: { not: d.id } } : {}) },
-        select: { code: true, headIds: true },
+        select: { code: true, headIds: true, moduleRefs: true },
       });
       const taken = new Map<string, string>();
       for (const o of others) for (const h of o.headIds) taken.set(h, o.code);
@@ -45,6 +46,13 @@ export async function saveTdsSection(
         throw new Error(
           `Head "${head?.name ?? clash}" is already connected to section ${taken.get(clash)}`
         );
+      }
+      // a module (chalan / slip / hire) can be labelled by only one section too
+      const takenModule = new Map<string, string>();
+      for (const o of others) for (const m of o.moduleRefs) takenModule.set(m, o.code);
+      const mClash = d.moduleRefs.find((m) => takenModule.has(m));
+      if (mClash) {
+        throw new Error(`Module "${mClash}" is already labelled by section ${takenModule.get(mClash)}`);
       }
       const data = {
         code: d.code,
@@ -56,6 +64,7 @@ export async function saveTdsSection(
         rateCompany: d.rateCompany,
         basis: d.basis,
         headIds: d.headIds,
+        moduleRefs: d.moduleRefs,
       };
       if (d.id) {
         const before = await tx.tdsSection.findUniqueOrThrow({ where: { id: d.id } });
