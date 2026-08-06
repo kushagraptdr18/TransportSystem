@@ -3,6 +3,7 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatMoney, toNum } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { InfoHint } from "@/components/ui/info-hint";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport, type ReportRow } from "@/components/accounts/simple-report";
 
@@ -330,13 +331,15 @@ export default async function VehicleOperationalPnlPage({
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="page-title">Vehicle Operational Profit &amp; Loss</h1>
-      <p className="text-sm text-muted-foreground">
-        Own vehicles only ({ownCount} in the fleet) — relative and broker vehicles are fully
-        excluded. Income is the operational grand total of FleetOps chalans and broker-slip
-        owner side; expenses are every Vehicle-Module ledger (auto-classified by DR/CR, click
-        a head for its book) plus the full EMI of vehicle loans.
-      </p>
+      <h1 className="page-title flex items-center gap-2">
+        Vehicle Operational Profit &amp; Loss
+        <InfoHint>
+          Own vehicles only ({ownCount} in the fleet) — relative and broker vehicles are fully
+          excluded. Income is the operational grand total of FleetOps chalans and broker-slip
+          owner side; expenses are every Vehicle-Module ledger (auto-classified by DR/CR, click a
+          head for its book) plus the full EMI of vehicle loans.
+        </InfoHint>
+      </h1>
       <FilterBar filters={filters} />
 
       <div className="grid gap-3 sm:grid-cols-3">

@@ -639,8 +639,8 @@ export function VehicleExpenseClient({
               <p className={`text-xs ${Math.abs(splitTotal - billTotal) > 0.009 ? "font-medium text-destructive" : "text-muted-foreground"}`}>
                 Split total <b className="tabular-nums">{splitTotal.toFixed(2)}</b>
                 {Math.abs(splitTotal - billTotal) > 0.009
-                  ? ` — bill total ${billTotal.toFixed(2)} se match hona chahiye`
-                  : " — har head apne hisse me ledger/P&L me jayega; supplier, payment aur vehicle allocation poore total par"}
+                  ? ` — must match the bill total ${billTotal.toFixed(2)}`
+                  : " — each head posts its share to the ledger/P&L; supplier, payment and vehicle allocation apply on the full total"}
               </p>
             )}
           </div>

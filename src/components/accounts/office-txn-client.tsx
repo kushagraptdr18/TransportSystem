@@ -628,9 +628,9 @@ export function OfficeTxnClient({
               ))}
               {usingSplit && (
                 <p className="text-xs text-muted-foreground">
-                  Split total <b className="tabular-nums">{splitTotal.toFixed(2)}</b> hi bill ka
-                  amount banega — har head apne hisse me ledger/P&amp;L me jayega; supplier aur
-                  payment poore total par.
+                  Split total <b className="tabular-nums">{splitTotal.toFixed(2)}</b> becomes the
+                  bill amount — each head posts its share to the ledger/P&amp;L; supplier and
+                  payment apply on the full total.
                 </p>
               )}
             </div>

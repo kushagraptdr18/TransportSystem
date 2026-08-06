@@ -61,7 +61,7 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
 
   let body: React.ReactNode = (
     <div className="rounded-md border p-10 text-center text-sm text-muted-foreground">
-      Upar se party chuno — uska poora chittha ek screen par.
+      Select a party above to see its complete profile on one screen.
     </div>
   );
 
@@ -147,7 +147,7 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
             <div className="text-right">
               <div className="text-xs text-muted-foreground">Net Position (ledger)</div>
               <div className={`text-2xl font-black tabular-nums ${net >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                {formatMoney(Math.abs(net))} {net >= 0 ? "Lena" : "Dena"}
+                {formatMoney(Math.abs(net))} {net >= 0 ? "Receivable" : "Payable"}
               </div>
               <Link className="text-xs text-primary underline" href={`/accounts/ledger?party=${party.id}`}>
                 Full Ledger →
@@ -184,7 +184,7 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
             <div className="mb-1 text-xs font-black uppercase text-muted-foreground">
               Pending Bills ({pendingBills.length})
             </div>
-            {pendingBills.length === 0 && <p className="text-xs text-muted-foreground">Koi bill baaki nahi.</p>}
+            {pendingBills.length === 0 && <p className="text-xs text-muted-foreground">No bills outstanding.</p>}
             {pendingBills.slice(0, 8).map(({ inv, pos }) => (
               <div key={inv.id} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
                 <span>
@@ -201,9 +201,9 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
           {/* rate history */}
           <div className="rounded-md border p-3">
             <div className="mb-1 text-xs font-black uppercase text-muted-foreground">
-              Bhav History — aakhri {rateHistory.length} LR
-            </div>
-            {rateHistory.length === 0 && <p className="text-xs text-muted-foreground">Koi LR nahi.</p>}
+              Rate History — last {rateHistory.length} LRs
+</div>
+            {rateHistory.length === 0 && <p className="text-xs text-muted-foreground">No LRs found.</p>}
             {rateHistory.map((r) => (
               <div key={r.lrNo} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
                 <span>
@@ -215,7 +215,7 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
             ))}
             {stuckLrs.length > 0 && (
               <div className="mt-2 rounded bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-500">
-                {stuckLrs.length} bilty abhi raste/bina-bill me (POD ya billing baaki)
+                {stuckLrs.length} LRs in transit / unbilled (POD or billing pending)
               </div>
             )}
           </div>
@@ -223,8 +223,8 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
 
         {/* ledger tail */}
         <div className="rounded-md border p-3">
-          <div className="mb-1 text-xs font-black uppercase text-muted-foreground">Ledger — aakhri 10 entries</div>
-          {ledgerTail.length === 0 && <p className="text-xs text-muted-foreground">Koi entry nahi.</p>}
+          <div className="mb-1 text-xs font-black uppercase text-muted-foreground">Ledger — last 10 entries</div>
+          {ledgerTail.length === 0 && <p className="text-xs text-muted-foreground">No ledger entries.</p>}
           {ledgerTail.map((e, i) => (
             <div key={i} className="grid grid-cols-[80px_1fr_80px_80px_100px] gap-1 border-b py-0.5 text-xs last:border-0">
               <span>{formatDate(e.date.toISOString())}</span>
@@ -249,10 +249,10 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
         <div>
           <h1 className="page-title">Party 360°</h1>
           <p className="text-sm text-muted-foreground">
-            Party ka phone aaya? Ek screen par poora chittha — position, bills, bhav, sab.
+            A party&apos;s complete profile on one screen — position, bills and rate history.
           </p>
         </div>
-        <Picker360 options={parties.map((p) => ({ value: p.id, label: p.name }))} value={partyId} base="/party-360" placeholder="Party chuno..." />
+        <Picker360 options={parties.map((p) => ({ value: p.id, label: p.name }))} value={partyId} base="/party-360" placeholder="Select party..." />
       </div>
       {body}
     </div>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { LOAN_TYPE_LABEL } from "@/lib/loan";
 import { Badge } from "@/components/ui/badge";
+import { InfoHint } from "@/components/ui/info-hint";
 import { Button } from "@/components/ui/button";
 import type { MasterOption } from "@/components/data/master-combobox";
 import { EmiPayDialog, type EmiPayTarget } from "@/components/finance/emi-pay-dialog";
@@ -39,12 +40,14 @@ export function EmiDueClient({
     <div className="space-y-3 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="page-title">EMI Due</h1>
-          <p className="text-sm text-muted-foreground">
-            Next due date follows the loan&apos;s schedule and updates automatically after every
-            payment — pay early and the cycle still runs from the schedule. Payment uses the
-            same popup, voucher and ledger flow as Loan Management.
-          </p>
+          <h1 className="page-title flex items-center gap-2">
+            EMI Due
+            <InfoHint>
+              Next due date follows the loan&apos;s schedule and updates automatically after every
+              payment — pay early and the cycle still runs from the schedule. Payment uses the
+              same popup, voucher and ledger flow as Loan Management.
+            </InfoHint>
+          </h1>
         </div>
         <div className="rounded-md border bg-muted/40 px-3 py-1.5 text-sm">
           {rows.length} active EMI loan(s)

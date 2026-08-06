@@ -3,6 +3,7 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatMoney, toNum } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { InfoHint } from "@/components/ui/info-hint";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport, type ReportRow } from "@/components/accounts/simple-report";
 
@@ -280,12 +281,14 @@ export default async function OperationalPnlPage({
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="page-title">Company Operational Profit &amp; Loss</h1>
-      <p className="text-sm text-muted-foreground">
-        Transport operations only — vehicle-module costs, loan EMIs and finance entries are
-        excluded (see Vehicle P&amp;L and Finance for those). Invoice additional charges are
-        not LR revenue; they appear under their own ledger heads below.
-      </p>
+      <h1 className="page-title flex items-center gap-2">
+        Company Operational Profit &amp; Loss
+        <InfoHint>
+          Transport operations only — vehicle-module costs, loan EMIs and finance entries are
+          excluded (see Vehicle P&amp;L and Finance for those). Invoice additional charges are not
+          LR revenue; they appear under their own ledger heads.
+        </InfoHint>
+      </h1>
       <FilterBar filters={filters} />
 
       {/* ---- KPI ---- */}

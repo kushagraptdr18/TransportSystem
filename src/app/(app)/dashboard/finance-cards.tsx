@@ -73,12 +73,12 @@ export function FinanceCardsSection({ defaultFrom, defaultTo }: { defaultFrom: s
         {
           label: "Commission",
           value: data.commission,
-          hint: "Commission ledger ka net balance is period me",
+          hint: "Net balance of the Commission ledger for the selected period",
         },
         {
           label: "Mamul",
           value: data.mamool,
-          hint: "Mamool ledger ka net balance is period me",
+          hint: "Net balance of the Mamool ledger for the selected period",
         },
       ]
     : [];
@@ -101,7 +101,7 @@ export function FinanceCardsSection({ defaultFrom, defaultTo }: { defaultFrom: s
               onChange={(e) => setFrom(e.target.value)}
               className="h-8 w-[140px] text-xs"
             />
-            <span className="text-muted-foreground">se</span>
+            <span className="text-muted-foreground">to</span>
             <Input
               type="date"
               value={to}

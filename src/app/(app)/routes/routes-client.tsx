@@ -75,8 +75,8 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
           <h1 className="page-title flex items-center gap-2">
             Route Activity Monitor
             <InfoHint>
-              Lane-wise trip activity from the last trip date. Inactive route par click karke us
-              lane ke top parties ko turant call karo, business chhutne se pehle.
+              Lane-wise trip activity based on the last trip date. Open an inactive route to call
+              its top parties before the business goes elsewhere.
             </InfoHint>
           </h1>
         </div>
@@ -94,7 +94,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
             { header: "Days Since", key: "daysSince", numeric: true },
             { header: "Avg Freight", key: "avgFreight", numeric: true },
             { header: "Avg Party Rate", key: "avgPartyRate", numeric: true },
-            { header: "Avg Gaadi Bhav", key: "avgVehicleAmt", numeric: true },
+            { header: "Avg Vehicle Rate", key: "avgVehicleAmt", numeric: true },
             { header: "Margin/Trip", accessor: (r) => r.marginPerTrip ?? "" , numeric: true },
           ]}
         />
@@ -130,7 +130,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-muted/80 backdrop-blur">
             <tr>
-              {["Route", "Status", "This Month", "Last Month", "Trend", "Total", "Last Trip", "Avg Freight", "Avg Gaadi Bhav", "Margin/Trip", "Bhav & Parties"].map((h) => (
+              {["Route", "Status", "This Month", "Last Month", "Trend", "Total", "Last Trip", "Avg Freight", "Avg Vehicle Rate", "Margin/Trip", "Rates & Parties"].map((h) => (
                 <th key={h} className="whitespace-nowrap px-2 py-1.5 text-left text-xs font-medium text-muted-foreground">
                   {h}
                 </th>
@@ -188,7 +188,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
                       className="h-7 px-2 text-xs"
                       onClick={() => setPartiesFor(r)}
                     >
-                      Bhav Memory
+                      Rate Memory
                     </Button>
                   </td>
                 </tr>
@@ -204,8 +204,8 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
           <DialogHeader>
             <DialogTitle className="uppercase">{partiesFor?.route}</DialogTitle>
             <DialogDescription>
-              Party phone kare &quot;kya loge?&quot; — dono side ka bhav yahin hai: party kya deti
-              rahi hai, gaadi kis bhav par milti rahi hai, aur beech ka margin.
+              Rate history for both sides of this lane — what parties have been paying, what
+              vehicles have been costing, and the margin in between.
             </DialogDescription>
           </DialogHeader>
 
@@ -214,7 +214,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
               {/* party side */}
               <div className="rounded-md border p-2">
                 <div className="mb-1 text-xs font-black uppercase text-muted-foreground">
-                  Party Side — pichhle {partiesFor.partyHistory.length} LR/Slip
+                  Party Side — last {partiesFor.partyHistory.length} LR/Slip
                 </div>
                 {partiesFor.partyHistory.length === 0 && (
                   <p className="text-xs text-muted-foreground">No bookings yet.</p>
@@ -236,7 +236,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
               {/* gaadi side */}
               <div className="rounded-md border p-2">
                 <div className="mb-1 text-xs font-black uppercase text-muted-foreground">
-                  Gaadi Side — pichhli {partiesFor.vehicleHistory.length} market gaadi
+                  Vehicle Side — last {partiesFor.vehicleHistory.length} market vehicles
                 </div>
                 {partiesFor.vehicleHistory.length === 0 && (
                   <p className="text-xs text-muted-foreground">No market vehicle on this lane yet.</p>
@@ -266,7 +266,7 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
           )}
 
           <div className="text-xs font-black uppercase text-muted-foreground">
-            Kise Call Karein — is lane ki top parties
+            Who to Call — top parties on this lane
           </div>
           <div className="space-y-1.5">
             {partiesFor?.topParties.length === 0 && (

@@ -204,8 +204,8 @@ export function LrDetailClient({
       {error && <p className="text-sm text-destructive">{error}</p>}
       {totals.truncated && (
         <p className="text-xs text-muted-foreground">
-          Pehle 500 rows dikh rahi hain — filter lagakar list chhoti karein (totals poore filtered
-          data ke hain).
+          Showing the first 500 rows — apply filters to narrow the list (totals cover the full
+          filtered data).
         </p>
       )}
 
@@ -267,7 +267,7 @@ export function LrDetailClient({
             {!loading && rows.length === 0 && (
               <tr>
                 <td colSpan={15} className={`${cell} py-6 text-center text-muted-foreground`}>
-                  Koi LR nahi mila is filter par.
+                  No LRs match the applied filters.
                 </td>
               </tr>
             )}

@@ -298,7 +298,7 @@ export default async function DashboardPage() {
               <span className="min-w-0">
                 <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
                   Party 360°
-                  <InfoHint>Party ka poora chittha ek screen par — position, bills, bhav</InfoHint>
+                  <InfoHint>A party&apos;s complete profile on one screen — position, bills and rate history</InfoHint>
                 </span>
               </span>
             </CardContent>
@@ -314,7 +314,7 @@ export default async function DashboardPage() {
               <span className="min-w-0">
                 <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
                   Vehicle 360°
-                  <InfoHint>Gaadi ki poori kahani — kamai, kharcha, EMI, documents, driver</InfoHint>
+                  <InfoHint>A vehicle&apos;s complete profile — earnings, expenses, EMI, documents and drivers</InfoHint>
                 </span>
               </span>
             </CardContent>

@@ -109,7 +109,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
 
   let body: React.ReactNode = (
     <div className="rounded-md border p-10 text-center text-sm text-muted-foreground">
-      Upar se gaadi chuno — uski poori kahani ek screen par.
+      Select a vehicle above to see its complete profile on one screen.
     </div>
   );
 
@@ -222,13 +222,13 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
                     )}
                   </>
                 ) : (
-                  <span className="text-muted-foreground">koi assigned nahi</span>
+                  <span className="text-muted-foreground">none assigned</span>
                 )}
               </div>
             </div>
             <div className="text-right">
               <div className="text-xs text-muted-foreground">
-                {isOwn ? "Net (kamai − kharcha, FY)" : "Is gaadi par hire (FY)"}
+                {isOwn ? "Net (earnings − expenses, FY)" : "Hire paid to this vehicle (FY)"}
               </div>
               <div
                 className={`text-2xl font-black tabular-nums ${
@@ -244,9 +244,9 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {(
             [
-              [isOwn ? "Kamaya (chalan + slip)" : "Hire diya (chalan + slip)", formatMoney(earned), `${chalans.length + uniqueSlips.length} trips`],
-              ["Vehicle Kharcha (ledger net)", formatMoney(expenseTotal), ""],
-              ["Loan Outstanding", formatMoney(loanOutstanding), loanRows.length ? `${loanRows.length} active loan` : "koi loan nahi"],
+              [isOwn ? "Earned (chalan + slip)" : "Hire Paid (chalan + slip)", formatMoney(earned), `${chalans.length + uniqueSlips.length} trips`],
+              ["Vehicle Expenses (ledger net)", formatMoney(expenseTotal), ""],
+              ["Loan Outstanding", formatMoney(loanOutstanding), loanRows.length ? `${loanRows.length} active loan` : "no active loans"],
               [
                 "Next EMI",
                 loanRows.length && loanRows[0].nextDue ? formatDate(loanRows[0].nextDue.toISOString()) : "—",
@@ -266,7 +266,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
           {/* documents */}
           <div className="rounded-md border p-3">
             <div className="mb-1 text-xs font-black uppercase text-muted-foreground">Documents</div>
-            {docs.length === 0 && <p className="text-xs text-muted-foreground">Koi document registration nahi.</p>}
+            {docs.length === 0 && <p className="text-xs text-muted-foreground">No document registrations.</p>}
             {docs.map((d) => {
               const expired = !!d.expiryDate && d.expiryDate < now;
               return (
@@ -295,8 +295,8 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
 
           {/* expenses breakup */}
           <div className="rounded-md border p-3">
-            <div className="mb-1 text-xs font-black uppercase text-muted-foreground">Kharcha Head-wise (FY)</div>
-            {expenseRows.length === 0 && <p className="text-xs text-muted-foreground">Koi vehicle kharcha nahi.</p>}
+            <div className="mb-1 text-xs font-black uppercase text-muted-foreground">Expenses by Head (FY)</div>
+            {expenseRows.length === 0 && <p className="text-xs text-muted-foreground">No vehicle expenses.</p>}
             {expenseRows.slice(0, 10).map((r) => (
               <div key={r.head} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
                 <span>{r.head}</span>
@@ -308,7 +308,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
           {/* trips */}
           <div className="rounded-md border p-3">
             <div className="mb-1 text-xs font-black uppercase text-muted-foreground">
-              Aakhri Trips ({chalans.length + uniqueSlips.length} is FY)
+              Recent Trips ({chalans.length + uniqueSlips.length} this FY)
             </div>
             {chalans.slice(0, 8).map((c) => (
               <div key={c.chalanNo} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
@@ -327,14 +327,14 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
               </div>
             ))}
             {chalans.length === 0 && slips.length === 0 && (
-              <p className="text-xs text-muted-foreground">Is FY me koi trip nahi.</p>
+              <p className="text-xs text-muted-foreground">No trips this FY.</p>
             )}
           </div>
 
           {/* drivers + workshop */}
           <div className="rounded-md border p-3">
             <div className="mb-1 text-xs font-black uppercase text-muted-foreground">Driver History</div>
-            {assignments.length === 0 && <p className="text-xs text-muted-foreground">Koi assignment nahi.</p>}
+            {assignments.length === 0 && <p className="text-xs text-muted-foreground">No driver assignments.</p>}
             {assignments.map((a) => (
               <div key={a.id} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
                 <span className="font-medium">{driverOf.get(a.driverId)?.name ?? ""}</span>
@@ -346,7 +346,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
             <div className="mb-1 mt-3 text-xs font-black uppercase text-muted-foreground">
               Workshop / Extra Work {openWorks.length > 0 && <Badge variant="destructive">{openWorks.length} pending</Badge>}
             </div>
-            {works.length === 0 && <p className="text-xs text-muted-foreground">Koi work entry nahi.</p>}
+            {works.length === 0 && <p className="text-xs text-muted-foreground">No work entries.</p>}
             {works.map((w) => (
               <div key={w.id} className="flex items-center justify-between gap-2 border-b py-1 text-xs last:border-0">
                 <span className="truncate" title={w.description}>
@@ -370,14 +370,14 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
         <div>
           <h1 className="page-title">Vehicle 360°</h1>
           <p className="text-sm text-muted-foreground">
-            Gaadi chuno — kamai, kharcha, EMI, documents, driver, workshop — sab ek screen par.
+            Select a vehicle to view earnings, expenses, EMI, documents, drivers and workshop history on one screen.
           </p>
         </div>
         <Picker360
           options={vehicles.map((v) => ({ value: v.id, label: `${v.number} (${v.ownershipType})` }))}
           value={vehicleId}
           base="/vehicle-360"
-          placeholder="Vehicle chuno..."
+          placeholder="Select vehicle..."
         />
       </div>
       {body}

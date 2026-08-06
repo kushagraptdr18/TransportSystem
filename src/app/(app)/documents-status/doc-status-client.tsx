@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
+import { InfoHint } from "@/components/ui/info-hint";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -183,7 +184,7 @@ export function DocStatusClient({
   const submitEdit = async () => {
     if (!edit) return;
     if (form.status === "PROBLEM" && !form.remarks.trim()) {
-      toast({ variant: "destructive", title: "Problem status needs remarks — likhiye kya dikkat hai" });
+      toast({ variant: "destructive", title: "Problem status requires remarks — describe the issue" });
       return;
     }
     setSaving(true);
@@ -216,11 +217,13 @@ export function DocStatusClient({
     <div className="space-y-3 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h1 className="page-title">Document Registration Status</h1>
-          <p className="text-sm text-muted-foreground">
-            Renewal workflow — tick rows for a bulk status, or Edit a single document&apos;s
-            details. Problem status always needs the reason.
-          </p>
+          <h1 className="page-title flex items-center gap-2">
+            Document Registration Status
+            <InfoHint>
+              Renewal workflow — tick rows for a bulk status, or Edit a single document&apos;s
+              details. Problem status always requires a reason.
+            </InfoHint>
+          </h1>
         </div>
         {/* exports the FILTERED list, exactly what is on screen */}
         <ExportButton

@@ -3,6 +3,7 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { waLink } from "@/lib/phone";
+import { InfoHint } from "@/components/ui/info-hint";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
@@ -195,13 +196,15 @@ export default async function PodFollowUpPage({
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="page-title">POD &amp; Billing Follow-up</h1>
-      <p className="text-sm text-muted-foreground">
-        LRs older than <b>{days} din</b> (LR date se — Settings → Firm me badal sakte ho)
-        {stage === "POD"
-          ? " jinki POD abhi tak nahi aayi. Market gaadi par broker ka number, own/relative par us din ke driver ka number — click karke seedha call/WhatsApp."
-          : " jinki POD aa chuki hai par bill abhi tak nahi bana — ye paisa sirf billing ka intezaar kar raha hai."}
-      </p>
+      <h1 className="page-title flex items-center gap-2">
+        POD &amp; Billing Follow-up
+        <InfoHint>
+          LRs older than {days} days from the LR date (threshold in Settings → Firm).
+          {stage === "POD"
+            ? " Shows LRs whose POD has not arrived — the broker's number for market vehicles, that day's driver for own/relative vehicles, with one-click call/WhatsApp."
+            : " Shows LRs whose POD is in but the bill is not yet made — revenue waiting only on billing."}
+        </InfoHint>
+      </h1>
       <FilterBar filters={filters} />
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -215,7 +218,7 @@ export default async function PodFollowUpPage({
         </Card>
         <Card>
           <CardHeader className="pb-1">
-            <CardTitle className="text-sm text-muted-foreground">Atka hua Freight</CardTitle>
+            <CardTitle className="text-sm text-muted-foreground">Freight on Hold</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold tabular-nums">{formatMoney(totalAmount)}</CardContent>
         </Card>
@@ -230,7 +233,7 @@ export default async function PodFollowUpPage({
       {stage === "POD" && contactGroups.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">Kisse kitni POD lena hai</CardTitle>
+            <CardTitle className="text-base">Pending PODs by Contact</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2 text-sm">
             {contactGroups.slice(0, 12).map((g) => (
@@ -294,7 +297,7 @@ export default async function PodFollowUpPage({
                   {rw.delivered ? (
                     <Badge variant="secondary">YES</Badge>
                   ) : (
-                    <Badge variant="destructive" title="Delivery entry bhi nahi hui — LR atka hai">
+                    <Badge variant="destructive" title="No delivery entry yet — this LR is stuck">
                       NO
                     </Badge>
                   )}
@@ -336,8 +339,8 @@ export default async function PodFollowUpPage({
               <tr>
                 <td colSpan={10} className={`${cell} py-6 text-center text-muted-foreground`}>
                   {stage === "POD"
-                    ? `Koi POD pending nahi — ${days} din ke andar sab clear hai.`
-                    : "POD aayi hui har LR ka bill ban chuka hai."}
+                    ? `No PODs pending — everything within ${days} days is clear.`
+                    : "Every LR with a received POD has been billed."}
                 </td>
               </tr>
             )}

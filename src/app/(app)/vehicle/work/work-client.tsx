@@ -6,6 +6,7 @@ import { Pencil, Plus, Trash2 } from "lucide-react";
 import { formatDate, parseDdMmYyyy } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { InfoHint } from "@/components/ui/info-hint";
 import {
   Dialog,
   DialogContent,
@@ -149,11 +150,15 @@ export function WorkEntryClient({
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="page-title">Extra Work Information</h1>
-          <p className="text-sm text-muted-foreground">
-            Vehicle work tracking only — nothing here touches accounts or ledgers.
-            {pendingCount > 0 ? ` ${pendingCount} pending.` : ""}
-          </p>
+          <h1 className="page-title flex items-center gap-2">
+            Extra Work Information
+            <InfoHint>
+              Vehicle work tracking only — nothing here touches accounts or ledgers.
+            </InfoHint>
+          </h1>
+          {pendingCount > 0 && (
+            <p className="text-sm text-muted-foreground">{pendingCount} pending.</p>
+          )}
         </div>
         <Button onClick={openNew}>
           <Plus className="h-4 w-4" /> New Work Entry

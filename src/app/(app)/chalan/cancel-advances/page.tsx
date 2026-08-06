@@ -4,6 +4,7 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { InfoHint } from "@/components/ui/info-hint";
 
 export const dynamic = "force-dynamic";
 
@@ -69,12 +70,14 @@ export default async function ChalanCancelAdvancesPage() {
     <div className="space-y-4 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="page-title">Chalan Cancel Advance Register</h1>
-          <p className="text-sm text-muted-foreground">
-            Advances stuck on cancelled chalans (accident / rejection). Recover by receipt
-            voucher, or adjust in the broker&apos;s next chalan — the adjustment grid offers
-            these automatically.
-          </p>
+          <h1 className="page-title flex items-center gap-2">
+            Chalan Cancel Advance Register
+            <InfoHint>
+              Advances stuck on cancelled chalans (accident / rejection). Recover by receipt
+              voucher, or adjust in the broker&apos;s next chalan — the adjustment grid offers
+              these automatically.
+            </InfoHint>
+          </h1>
         </div>
         <div className="rounded-md border bg-muted/40 px-3 py-1.5 text-sm">
           Open to recover: <b className="tabular-nums">{formatMoney(totalOpen)}</b>

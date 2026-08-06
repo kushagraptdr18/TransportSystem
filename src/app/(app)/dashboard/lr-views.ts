@@ -10,24 +10,24 @@ export type LrView =
 export const LR_VIEW_META: Record<LrView, { title: string; info: string }> = {
   TOTAL: {
     title: "Total LR",
-    info: "Is FY ke sabhi active LR (cancelled/paper-change chhod kar) — count aur freight total.",
+    info: "All active LRs this FY (excluding cancelled/paper-change) — count and freight total.",
   },
   RECEIVED: {
     title: "Received LR",
-    info: "Jin LRs ki POD receive/upload ho chuki hai (POD module se).",
+    info: "LRs whose POD has been received/uploaded (from the POD module).",
   },
-  PENDING: { title: "Pending LR", info: "Jin LRs ki POD abhi tak receive nahi hui." },
+  PENDING: { title: "Pending LR", info: "LRs whose POD has not been received yet." },
   NO_CHALAN: {
     title: "LR Pending for Challan",
-    info: "Jin LRs par abhi tak koi active chalan nahi bana.",
+    info: "LRs not yet placed on any active challan.",
   },
-  BILLED: { title: "LR Billed", info: "Jin LRs ka bill ban chuka hai (billing module se)." },
+  BILLED: { title: "LR Billed", info: "LRs whose bill has been generated (from the billing module)." },
   RECEIVED_UNBILLED: {
     title: "LR Received but Bill Pending",
-    info: "POD aa gayi par bill abhi tak nahi bana.",
+    info: "POD received but the bill has not been generated yet.",
   },
   UNBILLED: {
     title: "LR Pending Bill Amount",
-    info: "Jin LRs ka bill abhi tak pending hai — count aur freight.",
+    info: "LRs whose bill is still pending — count and freight amount.",
   },
 };

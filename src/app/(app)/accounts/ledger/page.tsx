@@ -4,6 +4,7 @@ import { authorize } from "@/lib/authz";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport } from "@/components/accounts/simple-report";
 import { Card, CardContent } from "@/components/ui/card";
+import { InfoHint } from "@/components/ui/info-hint";
 import { BOOK_COLUMNS, ledgerBookRows } from "../_lib/book";
 
 export const dynamic = "force-dynamic";
@@ -169,14 +170,14 @@ export default async function LedgerSummaryPage({
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="page-title">
+      <h1 className="page-title flex items-center gap-2">
         Ledger Summary{selectedLabel ? ` — ${selectedLabel}` : ""}
+        <InfoHint>
+          {hasLedger
+            ? "Every filter — including the Ref No and Ref Type dropdowns — applies to this ledger only. The Account column shows the counter-ledger of each posting; click a Reference No to open the source document."
+            : `Reference-wise trace of "${searchParams.ref}" — every ledger the document touched, in date order.`}
+        </InfoHint>
       </h1>
-      <p className="text-sm text-muted-foreground">
-        {hasLedger
-          ? "Every filter below — including the Ref No and Ref Type dropdowns — applies to this ledger only. The Account column shows the counter-ledger of each posting; click a Reference No to open the source document."
-          : `Reference-wise trace of "${searchParams.ref}" — every ledger the document touched, in date order.`}
-      </p>
       <FilterBar filters={filters} />
       <SimpleReport
         title={

@@ -5,6 +5,7 @@ import { withTenant } from "@/lib/db";
 import { formatMoney, toNum } from "@/lib/utils";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport, type ReportRow } from "@/components/accounts/simple-report";
+import { InfoHint } from "@/components/ui/info-hint";
 
 export const dynamic = "force-dynamic";
 
@@ -93,12 +94,15 @@ export default async function AdvanceRegisterPage({
 
   return (
     <div className="space-y-4 p-4">
-      <h1 className="page-title">Advance Register</h1>
-      <p className="text-sm text-muted-foreground">
-        Created automatically by receipt / payment vouchers with no bill reference. Bills consume
-        them automatically; chalans consume them manually, voucher by voucher, through Advance
-        Adjustment — &ldquo;Used Against&rdquo; shows the document and amount for every adjustment.
-      </p>
+      <h1 className="page-title flex items-center gap-2">
+        Advance Register
+        <InfoHint>
+          Created automatically by receipt / payment vouchers with no bill reference. Bills
+          consume them automatically; chalans consume them manually, voucher by voucher, through
+          Advance Adjustment — &ldquo;Used Against&rdquo; shows the document and amount for every
+          adjustment.
+        </InfoHint>
+      </h1>
       <FilterBar filters={filters} />
       <SimpleReport
         title={`${rows.length} advance${rows.length === 1 ? "" : "s"}`}

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { formatDate, parseDdMmYyyy } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { InfoHint } from "@/components/ui/info-hint";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -137,11 +138,13 @@ export function EwayClient({
   return (
     <div className="space-y-3 p-4">
       <div>
-        <h1 className="page-title">E-Way Bill Monitoring</h1>
-        <p className="text-sm text-muted-foreground">
-          Expiring e-way bills, date-wise. Check = verified (visible to every user); Edit =
-          extend the expiry — the record moves to its new date automatically.
-        </p>
+        <h1 className="page-title flex items-center gap-2">
+          E-Way Bill Monitoring
+          <InfoHint>
+            Expiring e-way bills, date-wise. Check = verified (visible to every user); Edit =
+            extend the expiry — the record moves to its new date automatically.
+          </InfoHint>
+        </h1>
       </div>
 
       {/* date tabs */}
