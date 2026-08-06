@@ -77,8 +77,9 @@ export async function ledgerBookRows(params: BookParams): Promise<{
           openingSide: true,
         },
       }),
-      // full name map (incl. bank/cash) for account display + payment details
-      tx.party.findMany({ select: { id: true, name: true } }),
+      // full name map (incl. bank/cash) for account display + payment details;
+      // ledgerGroup decides the counter-account priority (money accounts first)
+      tx.party.findMany({ select: { id: true, name: true, ledgerGroup: true } }),
       tx.accountHead.findMany({
         orderBy: { name: "asc" },
         select: { id: true, name: true, kind: true },
@@ -222,6 +223,7 @@ export async function ledgerBookRows(params: BookParams): Promise<{
             refType: true,
             refId: true,
             side: true,
+            amount: true,
             partyId: true,
             accountHeadId: true,
             vehicleId: true,
@@ -233,15 +235,31 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       const key = `${s.refType}:${s.refId}`;
       siblingsByRef.set(key, [...(siblingsByRef.get(key) ?? []), s]);
     }
+    // ONE name per row, Tally-style: prefer the opposite leg with the SAME
+    // amount (that is the entry's real counterpart), then money accounts
+    // (bank/cash/card), then income/expense heads, then parties. Details live
+    // in the narration and the drill-down — the column stays readable.
+    const partyGroupById = new Map(allParties.map((p) => [p.id, p.ledgerGroup]));
+    const legRank = (l: { partyId: string | null; accountHeadId: string | null }): number => {
+      if (l.partyId) {
+        const g = partyGroupById.get(l.partyId);
+        return g === "BANK" || g === "CASH" || g === "CARD" ? 0 : 2;
+      }
+      if (l.accountHeadId) return 1;
+      return 3;
+    };
     const counterAccount = (e: (typeof entries)[number]): string => {
       const legs = siblingsByRef.get(`${e.refType}:${e.refId}`) ?? [];
+      const own = legName(e);
       const opposite = legs.filter((l) => l.id !== e.id && l.side !== e.side);
-      const pool = opposite.length ? opposite : legs.filter((l) => l.id !== e.id);
-      const names = Array.from(new Set(pool.map(legName).filter(Boolean))).filter(
-        (nm) => nm !== legName(e)
+      const pool = (opposite.length ? opposite : legs.filter((l) => l.id !== e.id)).filter(
+        (l) => legName(l) && legName(l) !== own
       );
-      if (!names.length) return "";
-      return names.length <= 2 ? names.join(", ") : `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
+      if (!pool.length) return "";
+      const amt = Number(e.amount);
+      const matched = pool.filter((l) => Math.abs(Number(l.amount) - amt) < 0.01);
+      const pick = (matched.length ? matched : pool).sort((a, b) => legRank(a) - legRank(b))[0];
+      return legName(pick);
     };
 
     // ---- drill-down: open the source document behind an entry (hrefs are
