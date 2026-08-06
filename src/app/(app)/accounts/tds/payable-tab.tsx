@@ -27,6 +27,7 @@ export async function TdsPayableTab({
     tds?: string;
     party?: string;
     module?: string;
+    section?: string;
     status?: string;
     date_from?: string;
     date_to?: string;
@@ -42,7 +43,7 @@ export async function TdsPayableTab({
         }
       : undefined;
 
-  const { rows, parties } = await withTenant(session.tenantId, async (tx) => {
+  const { rows, parties, sectionCodes } = await withTenant(session.tenantId, async (tx) => {
     const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null };
     // TDS applies only to hired vehicles. A company-owned vehicle is our own
     // asset — there is no payee to deduct from, so it never belongs here.
@@ -233,6 +234,7 @@ export async function TdsPayableTab({
     return {
       rows: out.sort((a, b) => String(a.date).localeCompare(String(b.date))),
       parties,
+      sectionCodes: tdsSections.map((s) => s.code).sort(),
     };
   });
 
@@ -242,6 +244,11 @@ export async function TdsPayableTab({
     filtered = filtered.filter((r) => r.party === name);
   }
   if (searchParams.module) filtered = filtered.filter((r) => r.module === searchParams.module);
+  if (searchParams.section) {
+    filtered = filtered.filter((r) =>
+      searchParams.section === "NONE" ? !r.section : r.section === searchParams.section
+    );
+  }
   if (searchParams.q) {
     const q = searchParams.q.toLowerCase();
     filtered = filtered.filter((r) => String(r.refNo).toLowerCase().includes(q));
@@ -273,6 +280,15 @@ export async function TdsPayableTab({
         { value: "CHALLAN (OWNER)", label: "Challan (Owner)" },
         { value: "BROKER SLIP (OWNER)", label: "Broker Slip (Owner)" },
         { value: "JOURNAL VOUCHER", label: "Journal Voucher" },
+      ],
+    },
+    {
+      type: "select",
+      key: "section",
+      label: "TDS Section",
+      options: [
+        ...sectionCodes.map((c) => ({ value: c, label: c })),
+        { value: "NONE", label: "(No Section)" },
       ],
     },
     {

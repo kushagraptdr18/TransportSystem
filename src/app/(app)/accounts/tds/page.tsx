@@ -35,6 +35,7 @@ export default async function TdsRegisterPage({
     tds?: string;
     party?: string;
     module?: string;
+    section?: string;
     status?: string;
     date_from?: string;
     date_to?: string;
