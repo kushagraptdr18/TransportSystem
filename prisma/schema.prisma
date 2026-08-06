@@ -437,6 +437,9 @@ model AccountHead {
   tenantId String
   name     String
   kind     String // INCOME | EXPENSE
+  // which operational P&L this head reports in:
+  // AUTO (module decides, default) | COMPANY | VEHICLE | EXCLUDE
+  pnlScope String @default("AUTO")
 
   @@unique([tenantId, name])
   @@index([tenantId])

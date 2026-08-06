@@ -68,16 +68,25 @@ export default async function VehicleOperationalPnlPage({
     // debited and transferred out (credit) in the same head, netting zero, and
     // urea/diesel taken by a broker vehicle credits the head via its chalan
     // advance. What remains net IS the own fleet's cost.
+    const autoVehicleHeadIds = (
+      await tx.ledgerEntry.findMany({
+        where: { ...scope, refType: { in: VEHICLE_REF_TYPES }, accountHeadId: { not: null } },
+        distinct: ["accountHeadId"],
+        select: { accountHeadId: true },
+      })
+    ).map((e) => e.accountHeadId as string);
+    // P&L Head Mapping: VEHICLE-mapped heads join even if the vehicle module
+    // never posted to them; COMPANY/EXCLUDE-mapped heads leave this report
+    const scopedHeads = await tx.accountHead.findMany({ select: { id: true, pnlScope: true } });
+    const scopeOf = new Map(scopedHeads.map((h) => [h.id, h.pnlScope]));
     const vehicleHeadIds = Array.from(
-      new Set(
-        (
-          await tx.ledgerEntry.findMany({
-            where: { ...scope, refType: { in: VEHICLE_REF_TYPES }, accountHeadId: { not: null } },
-            distinct: ["accountHeadId"],
-            select: { accountHeadId: true },
-          })
-        ).map((e) => e.accountHeadId as string)
-      )
+      new Set([
+        ...autoVehicleHeadIds.filter((id) => {
+          const s = scopeOf.get(id);
+          return s !== "COMPANY" && s !== "EXCLUDE";
+        }),
+        ...scopedHeads.filter((h) => h.pnlScope === "VEHICLE").map((h) => h.id),
+      ])
     );
 
     const [chalans, slips, heads, headSums, advances, settlements, assignments, emis] =
@@ -337,7 +346,8 @@ export default async function VehicleOperationalPnlPage({
           Own vehicles only ({ownCount} in the fleet) — relative and broker vehicles are fully
           excluded. Income is the operational grand total of FleetOps chalans and broker-slip
           owner side; expenses are every Vehicle-Module ledger (auto-classified by DR/CR, click a
-          head for its book) plus the full EMI of vehicle loans.
+          head for its book) plus the full EMI of vehicle loans. Head placement follows the
+          P&amp;L Head Mapping (Masters).
         </InfoHint>
       </h1>
       <FilterBar filters={filters} />

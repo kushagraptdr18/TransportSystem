@@ -117,6 +117,15 @@ export default async function OperationalPnlPage({
       }),
     ]);
     const vehicleLoanIds = vehicleLoans.map((l) => l.id);
+    // P&L Head Mapping: COMPANY-mapped heads pull their vehicle-module entries
+    // in here too; VEHICLE/EXCLUDE-mapped heads leave the ledger sections
+    const allHeads = await tx.accountHead.findMany({
+      select: { id: true, name: true, kind: true, pnlScope: true },
+    });
+    const blockedHeadIds = allHeads
+      .filter((h) => h.pnlScope === "VEHICLE" || h.pnlScope === "EXCLUDE")
+      .map((h) => h.id);
+    const companyForcedIds = allHeads.filter((h) => h.pnlScope === "COMPANY").map((h) => h.id);
     const financeVoucherIds = Array.from(
       new Set(
         [
@@ -166,7 +175,7 @@ export default async function OperationalPnlPage({
         by: ["accountHeadId", "side"],
         where: {
           ...scope,
-          accountHeadId: { not: null },
+          accountHeadId: blockedHeadIds.length ? { not: null, notIn: blockedHeadIds } : { not: null },
           refType: { notIn: EXCLUDED_REF_TYPES },
           // vehicle-loan vouchers + other receipts/payments are financial,
           // never operational; vehicle-loan disbursements likewise
@@ -184,7 +193,35 @@ export default async function OperationalPnlPage({
       }),
     ]);
 
-    return { billedLrLinks, pendingLrs, slips, chalans, heads, headSums };
+    // COMPANY-mapped heads: pull in the vehicle-module legs their mapping
+    // claims (the advance/transfer refTypes stay out — they never carry heads
+    // relevant here and would double-count)
+    const forcedSums = companyForcedIds.length
+      ? await tx.ledgerEntry.groupBy({
+          by: ["accountHeadId", "side"],
+          where: {
+            ...scope,
+            accountHeadId: { in: companyForcedIds },
+            refType: {
+              in: [
+                "VEHICLE_EXPENSE",
+                "VEH_EXP_ALLOC",
+                "ADBLUE",
+                "TRIP_UREA",
+                "DRIVER_ADVANCE",
+                "DRIVER_FNF",
+                "DRIVER_SALARY",
+                "DRIVER_SALARY_PAY",
+                "DRIVER_SHORTAGE",
+              ],
+            },
+            ...(dateWhere ? { date: dateWhere } : {}),
+          },
+          _sum: { amount: true },
+        })
+      : [];
+
+    return { billedLrLinks, pendingLrs, slips, chalans, heads, headSums: [...headSums, ...forcedSums] };
   });
 
   const { billedLrLinks, pendingLrs, slips, chalans, heads, headSums } = data;
@@ -286,7 +323,8 @@ export default async function OperationalPnlPage({
         <InfoHint>
           Transport operations only — vehicle-module costs, loan EMIs and finance entries are
           excluded (see Vehicle P&amp;L and Finance for those). Invoice additional charges are not
-          LR revenue; they appear under their own ledger heads.
+          LR revenue; they appear under their own ledger heads. Head placement follows the
+          P&amp;L Head Mapping (Masters).
         </InfoHint>
       </h1>
       <FilterBar filters={filters} />
