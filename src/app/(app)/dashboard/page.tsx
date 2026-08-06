@@ -4,6 +4,9 @@ import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
 import { FinanceCardsSection } from "./finance-cards";
 import { InfoHint } from "@/components/ui/info-hint";
+import { getLrSummary } from "./lr-actions";
+import { LR_VIEW_META } from "./lr-views";
+import { formatMoney } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +19,7 @@ const calDate = (d: Date) => new Date(d.getTime() + 12 * 3600 * 1000).toISOStrin
 
 export default async function DashboardPage() {
   const session = requireSession();
+  const lrSummary = await getLrSummary();
 
   const todayCal = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
   const dayMs = 24 * 3600 * 1000;
@@ -129,8 +133,39 @@ export default async function DashboardPage() {
     <div className="space-y-4 p-4">
       <h1 className="page-title">Dashboard</h1>
 
-      {/* date filter here touches ONLY these five cards */}
+      {/* date filter here touches ONLY these cards */}
       <FinanceCardsSection defaultFrom={`${todayCal.slice(0, 8)}01`} defaultTo={todayCal} />
+
+      {/* LR summary — each card drills into its own dashboard detail page */}
+      {lrSummary.ok && (
+        <Card>
+          <CardContent className="space-y-3 p-5">
+            <span className="text-lg font-semibold">LR Summary</span>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {lrSummary.cards.map((c) => (
+                <a
+                  key={c.view}
+                  href={`/dashboard/lr-detail?view=${c.view}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group/lr rounded-md border p-3 transition-all hover:border-primary/40 hover:shadow-card"
+                >
+                  <div className="flex items-center gap-1 text-[11px] font-medium uppercase text-muted-foreground">
+                    <span className="group-hover/lr:text-primary">{LR_VIEW_META[c.view].title}</span>
+                    <InfoHint>{LR_VIEW_META[c.view].info}</InfoHint>
+                  </div>
+                  <div className="text-xl font-bold tabular-nums">{c.count}</div>
+                  {c.amount !== null && (
+                    <div className="text-xs tabular-nums text-muted-foreground">
+                      {formatMoney(c.amount)}
+                    </div>
+                  )}
+                </a>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <a href="/eway" target="_blank" rel="noreferrer" className="group">
