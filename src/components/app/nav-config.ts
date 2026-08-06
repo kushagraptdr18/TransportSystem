@@ -42,7 +42,6 @@ export const NAV: NavGroup[] = [
       { label: "Accounts (Bank / Cash / Card)", href: "/masters/bank-cash-heads" },
       { label: "Income-Expense Heads", href: "/masters/account-heads" },
       { label: "TDS Master", href: "/masters/tds-sections" },
-      { label: "P&L Head Mapping", href: "/masters/pnl-mapping" },
       // groups, products and units are tabs of one screen
       { label: "Product Master", href: "/masters/products" },
       { label: "States", href: "/masters/states" },

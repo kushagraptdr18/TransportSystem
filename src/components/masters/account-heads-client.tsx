@@ -1,16 +1,75 @@
 "use client";
 
+import * as React from "react";
+import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/use-toast";
+import { InfoHint } from "@/components/ui/info-hint";
 import { SimpleMaster } from "@/components/masters/simple-master";
-import { saveAccountHead, deleteAccountHead, importAccountHeads } from "@/app/(app)/masters/account-heads/actions";
+import {
+  saveAccountHead,
+  deleteAccountHead,
+  importAccountHeads,
+  setPnlScope,
+  type PnlScope,
+} from "@/app/(app)/masters/account-heads/actions";
 
 interface Row {
   id: string;
   name: string;
   kind: string;
+  pnlScope: PnlScope;
   /** software-owned head — seeded automatically, cannot be edited or deleted */
   system: boolean;
+}
+
+const SCOPE_OPTIONS: { value: PnlScope; label: string }[] = [
+  { value: "AUTO", label: "Auto (module-wise)" },
+  { value: "COMPANY", label: "Company P&L" },
+  { value: "VEHICLE", label: "Vehicle P&L" },
+  { value: "EXCLUDE", label: "Exclude from both" },
+];
+
+/** inline instant-save dropdown — reporting placement only, never postings */
+function ScopeCell({ row }: { row: Row }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [value, setValue] = React.useState<PnlScope>(row.pnlScope);
+  const [busy, setBusy] = React.useState(false);
+  const change = async (scope: PnlScope) => {
+    const prev = value;
+    setValue(scope);
+    setBusy(true);
+    const res = await setPnlScope(row.id, scope);
+    setBusy(false);
+    if (res.ok) {
+      toast({
+        title: `${row.name} → ${SCOPE_OPTIONS.find((s) => s.value === scope)?.label}`,
+      });
+      router.refresh();
+    } else {
+      setValue(prev);
+      toast({ variant: "destructive", title: res.error });
+    }
+  };
+  return (
+    <select
+      className={`h-8 w-full max-w-[200px] rounded-md border border-input bg-background px-2 text-xs ${
+        value !== "AUTO" ? "font-semibold" : ""
+      }`}
+      value={value}
+      disabled={busy}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => change(e.target.value as PnlScope)}
+    >
+      {SCOPE_OPTIONS.map((s) => (
+        <option key={s.value} value={s.value}>
+          {s.label}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 const columns: ColumnDef<Row, unknown>[] = [
@@ -23,6 +82,21 @@ const columns: ColumnDef<Row, unknown>[] = [
         {row.original.kind}
       </Badge>
     ),
+  },
+  {
+    accessorKey: "pnlScope",
+    header: () => (
+      <span className="flex items-center gap-1">
+        P&amp;L Scope
+        <InfoHint>
+          Which operational P&amp;L this head reports in. Auto (default) lets the posting module
+          decide — today&apos;s behaviour. Company / Vehicle moves ALL the head&apos;s entries to
+          that P&amp;L; Exclude drops it from both. An entry is never counted in both reports.
+          Saves instantly.
+        </InfoHint>
+      </span>
+    ),
+    cell: ({ row }) => <ScopeCell row={row.original} />,
   },
   {
     accessorKey: "system",
@@ -47,6 +121,10 @@ export function AccountHeadsClient({ rows, canDelete }: { rows: Row[]; canDelete
       exportColumns={[
         { header: "Name", key: "name" },
         { header: "Kind", key: "kind" },
+        {
+          header: "P&L Scope",
+          accessor: (r) => SCOPE_OPTIONS.find((s) => s.value === r.pnlScope)?.label ?? r.pnlScope,
+        },
       ]}
       exportName="account-heads"
       filters={[

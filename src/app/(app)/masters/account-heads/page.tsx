@@ -54,6 +54,7 @@ export default async function AccountHeadsPage({
         id: r.id,
         name: r.name,
         kind: r.kind,
+        pnlScope: r.pnlScope as "AUTO" | "COMPANY" | "VEHICLE" | "EXCLUDE",
         system: isSystemHeadName(r.name),
       }))}
       canDelete={canDelete}

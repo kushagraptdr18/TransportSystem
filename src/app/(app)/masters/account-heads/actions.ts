@@ -53,6 +53,36 @@ export async function saveAccountHead(input: unknown): Promise<ActionResult> {
   }
 }
 
+const PNL_SCOPES = ["AUTO", "COMPANY", "VEHICLE", "EXCLUDE"] as const;
+export type PnlScope = (typeof PNL_SCOPES)[number];
+
+/** Which operational P&L this head reports in — saved instantly from the grid.
+ *  Allowed on system heads too: it changes reporting placement, not postings. */
+export async function setPnlScope(
+  headId: string,
+  scope: PnlScope
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = requireSession();
+  await authorize(session, "masters", "edit");
+  if (!PNL_SCOPES.includes(scope)) return { ok: false, error: "Invalid scope" };
+  try {
+    await withTenant(session.tenantId, async (tx) => {
+      const before = await tx.accountHead.findUniqueOrThrow({ where: { id: headId } });
+      const after = await tx.accountHead.update({
+        where: { id: headId },
+        data: { pnlScope: scope },
+      });
+      await audit(tx, session, { entity: "AccountHead", entityId: headId, action: "UPDATE", before, after });
+    });
+    revalidatePath("/masters/account-heads");
+    revalidatePath("/accounts/operational-pnl");
+    revalidatePath("/accounts/vehicle-operational-pnl");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Failed to save" };
+  }
+}
+
 export async function deleteAccountHead(id: string): Promise<ActionResult> {
   const session = requireSession();
   await authorize(session, "masters", "delete");
