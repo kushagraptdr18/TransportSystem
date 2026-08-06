@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { FinanceCardsSection } from "./finance-cards";
 import { InfoHint } from "@/components/ui/info-hint";
 import { getLrSummary } from "./lr-actions";
+import { getOutstandingAgeing } from "./outstanding-actions";
 import { LR_VIEW_META } from "./lr-views";
 import { formatMoney } from "@/lib/utils";
 
@@ -19,7 +20,13 @@ const calDate = (d: Date) => new Date(d.getTime() + 12 * 3600 * 1000).toISOStrin
 
 export default async function DashboardPage() {
   const session = requireSession();
-  const lrSummary = await getLrSummary();
+  const [lrSummary, recvRes, payRes] = await Promise.all([
+    getLrSummary(),
+    getOutstandingAgeing({ side: "RECV" }),
+    getOutstandingAgeing({ side: "PAY" }),
+  ]);
+  const recv = recvRes.ok ? recvRes.data.totals : null;
+  const pay = payRes.ok ? payRes.data.totals : null;
 
   const todayCal = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
   const dayMs = 24 * 3600 * 1000;
@@ -135,6 +142,68 @@ export default async function DashboardPage() {
 
       {/* date filter here touches ONLY these cards */}
       <FinanceCardsSection defaultFrom={`${todayCal.slice(0, 8)}01`} defaultTo={todayCal} />
+
+      {/* receivable / payable position with ageing drill-down */}
+      {(recv || pay) && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {recv && (
+            <a href="/dashboard/outstanding?side=RECV" target="_blank" rel="noreferrer" className="group">
+              <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
+                <CardContent className="p-5">
+                  <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
+                    Receivable
+                    <InfoHint>
+                      Open party bills by settlement math — click for party-wise ageing
+                      (0–30 / 31–60 / 61–90 / 90+ days) with pending documents
+                    </InfoHint>
+                  </span>
+                  <div className="mt-1 text-2xl font-black tabular-nums text-emerald-600">
+                    {formatMoney(recv.total)}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-xs font-medium">
+                    <span className="rounded bg-blue-500/10 px-2 py-0.5 text-blue-600">
+                      {recv.parties} parties
+                    </span>
+                    {recv.b90 > 0 && (
+                      <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                        90+ days: {formatMoney(recv.b90)}
+                      </span>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </a>
+          )}
+          {pay && (
+            <a href="/dashboard/outstanding?side=PAY" target="_blank" rel="noreferrer" className="group">
+              <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
+                <CardContent className="p-5">
+                  <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
+                    Payable
+                    <InfoHint>
+                      Open payables — market chalan balances, broker slips and hire slips —
+                      click for party-wise ageing with pending documents
+                    </InfoHint>
+                  </span>
+                  <div className="mt-1 text-2xl font-black tabular-nums text-red-600">
+                    {formatMoney(pay.total)}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-xs font-medium">
+                    <span className="rounded bg-blue-500/10 px-2 py-0.5 text-blue-600">
+                      {pay.parties} parties
+                    </span>
+                    {pay.b90 > 0 && (
+                      <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
+                        90+ days: {formatMoney(pay.b90)}
+                      </span>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </a>
+          )}
+        </div>
+      )}
 
       {/* LR summary — each card drills into its own dashboard detail page */}
       {lrSummary.ok && (
