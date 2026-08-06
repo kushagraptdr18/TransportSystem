@@ -112,14 +112,15 @@ export async function getLrSummary(): Promise<
         }),
         loadSets(tx, scope),
       ]);
+      // card order fixed by the dashboard spec; UNBILLED has no card any more
+      // (its detail view still answers if opened directly)
       const views: LrView[] = [
         "TOTAL",
-        "RECEIVED",
-        "PENDING",
         "NO_CHALAN",
+        "PENDING",
+        "RECEIVED",
         "BILLED",
         "RECEIVED_UNBILLED",
-        "UNBILLED",
       ];
       return views.map((view) => {
         let count = 0;
