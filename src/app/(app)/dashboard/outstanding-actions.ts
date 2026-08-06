@@ -4,7 +4,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant, type Tx } from "@/lib/db";
 import { toNum } from "@/lib/utils";
 import { round2 } from "@/lib/calc/tds";
-import { invoiceSettlement, payableSettlement } from "@/lib/settlement";
+import { invoiceSettlement, payableSettlement, refPositions } from "@/lib/settlement";
 
 /**
  * Receivables & Payables with party-wise ageing. Same settlement math as the
@@ -57,7 +57,20 @@ type RawDoc = {
 async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: OutSide): Promise<RawDoc[]> {
   const out: RawDoc[] = [];
   if (side === "RECV") {
-    const invoices = await tx.invoice.findMany({ where: { ...scope, deletedAt: null } });
+    const [invoices, slips, advances, settlements, drivers] = await Promise.all([
+      tx.invoice.findMany({ where: { ...scope, deletedAt: null } }),
+      // party/broker side of slips — what the party still owes after its own
+      // balance-received figures
+      tx.brokerSlip.findMany({ where: { ...scope, deletedAt: null, partyId: { not: null } } }),
+      // advances we PAID that nothing consumed yet — the party owes them back
+      // (chalan-cancel advances included, labelled apart)
+      tx.partyAdvance.findMany({ where: { ...scope, deletedAt: null, kind: "PAID" } }),
+      // a negative pending settlement = the driver owes the company
+      tx.driverSettlement.findMany({
+        where: { ...scope, deletedAt: null, status: "PENDING", amount: { lt: 0 } },
+      }),
+      tx.driver.findMany({ select: { id: true, partyId: true, name: true } }),
+    ]);
     const settle = await invoiceSettlement(tx, { ...scope, invoices });
     for (const i of invoices) {
       const s = settle.get(i.id);
@@ -73,16 +86,95 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
         outstanding: s.outstanding,
       });
     }
+    for (const s of slips) {
+      const balance = toNum(String(s.pBalance));
+      const own = round2(
+        toNum(String(s.pPaidAmount)) + toNum(String(s.pShortage)) + toNum(String(s.pRoundOff))
+      );
+      const outstanding = round2(balance - own);
+      if (outstanding <= 0.009) continue;
+      out.push({
+        partyId: s.partyId,
+        partyName: null,
+        refNo: s.slipNo,
+        date: s.slipDate,
+        type: "BROKER SLIP (PARTY)",
+        amount: balance,
+        settled: own,
+        outstanding,
+      });
+    }
+    for (const a of advances) {
+      const available = round2(toNum(String(a.amount)) - toNum(String(a.consumedAmount)));
+      if (available <= 0.009) continue;
+      out.push({
+        partyId: a.partyId,
+        partyName: null,
+        refNo: a.voucherNo ?? "ADV",
+        date: a.date,
+        type: a.source === "CHALAN_CANCEL" ? "CANCEL ADVANCE" : "ADVANCE (PAID)",
+        amount: round2(toNum(String(a.amount))),
+        settled: round2(toNum(String(a.consumedAmount))),
+        outstanding: available,
+      });
+    }
+    const driverById = new Map(drivers.map((d) => [d.id, d]));
+    const settPos = await refPositions(tx, {
+      ...scope,
+      refType: "DRIVER_SETTLEMENT",
+      docs: settlements.map((s) => ({ id: s.id, original: Math.abs(toNum(String(s.amount))) })),
+    });
+    for (const s of settlements) {
+      const p = settPos.get(s.id);
+      if (!p || p.outstanding <= 0.009) continue;
+      const drv = driverById.get(s.driverId);
+      out.push({
+        partyId: drv?.partyId ?? null,
+        partyName: drv?.name ?? null,
+        refNo: s.tripRef || s.voucherNo || "SETTLEMENT",
+        date: s.date,
+        type: "DRIVER SETTLEMENT",
+        amount: p.original,
+        settled: p.settled,
+        outstanding: p.outstanding,
+      });
+    }
     return out;
   }
-  const [chalans, slips, hires, brokerVehicles] = await Promise.all([
-    tx.chalan.findMany({ where: { ...scope, deletedAt: null, cancelledAt: null, isFinal: true } }),
-    tx.brokerSlip.findMany({ where: { ...scope, deletedAt: null } }),
-    tx.hireSlip.findMany({ where: { ...scope, deletedAt: null } }),
-    tx.vehicle.findMany({ where: { ownershipType: "BROKER" }, select: { id: true } }),
-  ]);
+  const [chalans, slips, hires, brokerVehicles, officeBills, vehicleBills, adblueBills, salaries, driverPay, drivers] =
+    await Promise.all([
+      tx.chalan.findMany({ where: { ...scope, deletedAt: null, cancelledAt: null, isFinal: true } }),
+      tx.brokerSlip.findMany({ where: { ...scope, deletedAt: null } }),
+      tx.hireSlip.findMany({ where: { ...scope, deletedAt: null } }),
+      tx.vehicle.findMany({ where: { ownershipType: "BROKER" }, select: { id: true } }),
+      // supplier bills booked on credit (no payment mode at entry)
+      tx.officeTransaction.findMany({
+        where: { ...scope, deletedAt: null, txnType: "EXPENSE", paymentMode: null, partyId: { not: null } },
+      }),
+      tx.vehicleExpenseVoucher.findMany({
+        where: { ...scope, deletedAt: null, txnType: "EXPENSE", paymentMode: null, partyId: { not: null } },
+      }),
+      tx.adblueTxn.findMany({
+        where: {
+          ...scope,
+          deletedAt: null,
+          type: "REFILL",
+          billNo: { not: null },
+          paymentMode: null,
+          supplierId: { not: null },
+          amount: { gt: 0 },
+        },
+      }),
+      tx.staffSalary.findMany({ where: { ...scope, deletedAt: null } }),
+      // a positive pending settlement = the company owes the driver
+      tx.driverSettlement.findMany({
+        where: { ...scope, deletedAt: null, status: "PENDING", amount: { gt: 0 } },
+      }),
+      tx.driver.findMany({ select: { id: true, partyId: true, name: true } }),
+    ]);
   const market = new Set(brokerVehicles.map((v) => v.id));
   const marketChalans = chalans.filter((c) => market.has(c.vehicleId));
+  const driverById = new Map(drivers.map((d) => [d.id, d]));
   const chalanPos = await payableSettlement(tx, {
     ...scope,
     refType: "FREIGHT_CHALLAN",
@@ -109,10 +201,13 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
       outstanding: p.outstanding,
     });
   }
+  // owner side is payable only on MARKET (broker) vehicles — own/relative
+  // vehicle slips are the fleet's own trips
+  const marketSlips = slips.filter((s) => s.vehicleId && market.has(s.vehicleId));
   const slipPos = await payableSettlement(tx, {
     ...scope,
     refType: "BROKER_ENTRY",
-    docs: slips.map((s) => ({
+    docs: marketSlips.map((s) => ({
       id: s.id,
       balance: toNum(String(s.vBalance)),
       ownPaid: toNum(String(s.vPaidAmount)),
@@ -120,7 +215,7 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
       ownRoundOff: toNum(String(s.vRoundOff)),
     })),
   });
-  for (const s of slips) {
+  for (const s of marketSlips) {
     const p = slipPos.get(s.id);
     if (!p || p.outstanding <= 0.009) continue;
     out.push({
@@ -157,6 +252,137 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
       amount: p.balance,
       settled: p.settled,
       outstanding: p.outstanding,
+    });
+  }
+
+  // supplier bills on credit — office, vehicle and adblue purchases
+  const pushRef = async (
+    refType: "OFFICE_EXPENSE" | "VEHICLE_EXPENSE" | "ADBLUE_PURCHASE",
+    type: string,
+    docs: { id: string; partyId: string | null; refNo: string; date: Date; amount: number }[]
+  ) => {
+    const pos = await refPositions(tx, {
+      ...scope,
+      refType,
+      docs: docs.map((d) => ({ id: d.id, original: d.amount })),
+    });
+    for (const d of docs) {
+      const p = pos.get(d.id);
+      if (!p || p.outstanding <= 0.009) continue;
+      out.push({
+        partyId: d.partyId,
+        partyName: null,
+        refNo: d.refNo,
+        date: d.date,
+        type,
+        amount: p.original,
+        settled: p.settled,
+        outstanding: p.outstanding,
+      });
+    }
+  };
+  await pushRef(
+    "OFFICE_EXPENSE",
+    "OFFICE BILL",
+    officeBills.map((t) => ({
+      id: t.id,
+      partyId: t.partyId,
+      refNo: t.voucherNo,
+      date: t.date,
+      amount: toNum(String(t.amount)),
+    }))
+  );
+  await pushRef(
+    "VEHICLE_EXPENSE",
+    "VEHICLE BILL",
+    vehicleBills.map((v) => ({
+      id: v.id,
+      partyId: v.partyId,
+      refNo: v.voucherNo,
+      date: v.date,
+      amount: toNum(String(v.amount)),
+    }))
+  );
+  await pushRef(
+    "ADBLUE_PURCHASE",
+    "ADBLUE BILL",
+    adblueBills.map((a) => ({
+      id: a.id,
+      partyId: a.supplierId,
+      refNo: a.billNo ?? a.refNo ?? "ADBLUE",
+      date: a.billDate ?? a.date,
+      amount: toNum(String(a.amount)),
+    }))
+  );
+
+  // staff salaries: net payable until marked paid / voucher-settled
+  const monthEndOf = (month: string): Date => {
+    const [y, m] = month.split("-").map(Number);
+    return new Date(y, m, 0);
+  };
+  const salPos = await refPositions(tx, {
+    ...scope,
+    refType: "STAFF_PAYROLL",
+    docs: salaries.map((s) => ({
+      id: s.id,
+      original: toNum(String(s.netSalary)),
+      ownSettled: s.paymentStatus === "PAID" ? toNum(String(s.netSalary)) : 0,
+    })),
+  });
+  const staffParties = new Map(salaries.map((s) => [s.id, s.partyId]));
+  for (const s of salaries) {
+    const p = salPos.get(s.id);
+    if (!p || p.outstanding <= 0.009) continue;
+    out.push({
+      partyId: staffParties.get(s.id) ?? null,
+      partyName: null,
+      refNo: `SAL-${s.month}`,
+      date: monthEndOf(s.month),
+      type: "STAFF SALARY",
+      amount: p.original,
+      settled: p.settled,
+      outstanding: p.outstanding,
+    });
+  }
+
+  // pending driver settlements the company owes
+  const drvPos = await refPositions(tx, {
+    ...scope,
+    refType: "DRIVER_SETTLEMENT",
+    docs: driverPay.map((s) => ({ id: s.id, original: toNum(String(s.amount)) })),
+  });
+  for (const s of driverPay) {
+    const p = drvPos.get(s.id);
+    if (!p || p.outstanding <= 0.009) continue;
+    const drv = driverById.get(s.driverId);
+    out.push({
+      partyId: drv?.partyId ?? null,
+      partyName: drv?.name ?? null,
+      refNo: s.tripRef || s.voucherNo || "SETTLEMENT",
+      date: s.date,
+      type: "DRIVER SETTLEMENT",
+      amount: p.original,
+      settled: p.settled,
+      outstanding: p.outstanding,
+    });
+  }
+
+  // advances RECEIVED that nothing consumed — we owe them back to the party
+  const advRecv = await tx.partyAdvance.findMany({
+    where: { ...scope, deletedAt: null, kind: "RECEIVED" },
+  });
+  for (const a of advRecv) {
+    const available = round2(toNum(String(a.amount)) - toNum(String(a.consumedAmount)));
+    if (available <= 0.009) continue;
+    out.push({
+      partyId: a.partyId,
+      partyName: null,
+      refNo: a.voucherNo ?? "ADV",
+      date: a.date,
+      type: "ADVANCE (RECEIVED)",
+      amount: round2(toNum(String(a.amount))),
+      settled: round2(toNum(String(a.consumedAmount))),
+      outstanding: available,
     });
   }
   return out;
