@@ -104,6 +104,7 @@ export default async function ReportsBrowserPage({
       vehicleOptions={vehicleOptions}
       headOptions={headOptions}
       requireParty={src === "LEDGER"}
+      hasObd={src === "LR"}
     />
   );
 }

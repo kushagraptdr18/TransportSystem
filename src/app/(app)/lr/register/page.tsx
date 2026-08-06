@@ -56,6 +56,7 @@ export default async function LrRegisterPage({
     ];
   }
   if (searchParams.vehicle) where.vehicleId = searchParams.vehicle;
+  if (searchParams.obd) where.obdNo = { contains: searchParams.obd, mode: "insensitive" };
   if (searchParams.status && (LR_STATUSES as readonly string[]).includes(searchParams.status)) {
     where.status = searchParams.status as (typeof LR_STATUSES)[number];
   }
@@ -130,6 +131,7 @@ export default async function LrRegisterPage({
       label: "Vehicle",
       options: vehicles.map((v) => ({ value: v.id, label: v.number })),
     },
+    { type: "text", key: "obd", label: "OBD No" },
     {
       type: "select",
       key: "status",

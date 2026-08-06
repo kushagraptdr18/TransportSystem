@@ -29,6 +29,7 @@ export function BrowserClient({
   vehicleOptions,
   headOptions,
   requireParty,
+  hasObd,
 }: {
   src: BrowseSrc;
   title: string;
@@ -40,12 +41,15 @@ export function BrowserClient({
   headOptions: string[];
   /** LEDGER: nothing loads until a ledger is picked */
   requireParty: boolean;
+  /** LR: show the OBD No filter */
+  hasObd?: boolean;
 }) {
   const [month, setMonth] = React.useState<string>("ALL");
   const [q, setQ] = React.useState("");
   const [partyId, setPartyId] = React.useState<string | null>(null);
   const [vehicleId, setVehicleId] = React.useState<string | null>(null);
   const [head, setHead] = React.useState<string | null>(null);
+  const [obd, setObd] = React.useState("");
 
   const [columns, setColumns] = React.useState<BrowseResult["columns"]>([]);
   const [rows, setRows] = React.useState<BrowseRow[]>([]);
@@ -77,6 +81,7 @@ export function BrowserClient({
           partyId,
           vehicleId,
           head,
+          obd: obd || null,
           cursor,
           runningStart,
         });
@@ -92,14 +97,14 @@ export function BrowserClient({
         if (token === requestToken.current) setLoading(false);
       }
     },
-    [src, month, q, partyId, vehicleId, head, requireParty]
+    [src, month, q, partyId, vehicleId, head, obd, requireParty]
   );
 
   // reload from the top whenever a filter changes (debounced for typing)
   React.useEffect(() => {
-    const t = setTimeout(() => void load(0, null, true), q ? 350 : 0);
+    const t = setTimeout(() => void load(0, null, true), q || obd ? 350 : 0);
     return () => clearTimeout(t);
-  }, [load, q]);
+  }, [load, q, obd]);
 
   // infinite scroll sentinel
   const sentinelRef = React.useRef<HTMLDivElement | null>(null);
@@ -175,6 +180,16 @@ export function BrowserClient({
             />
           </div>
         )}
+        {hasObd && (
+          <div className="w-44">
+            <Input
+              className="h-8"
+              placeholder="OBD No..."
+              value={obd}
+              onChange={(e) => setObd(e.target.value)}
+            />
+          </div>
+        )}
         {headOptions.length > 0 && (
           <div className="w-56">
             <MasterCombobox
@@ -185,7 +200,7 @@ export function BrowserClient({
             />
           </div>
         )}
-        {(q || partyId || vehicleId || head) && (
+        {(q || partyId || vehicleId || head || obd) && (
           <Button
             variant="ghost"
             size="sm"
@@ -195,6 +210,7 @@ export function BrowserClient({
               setPartyId(null);
               setVehicleId(null);
               setHead(null);
+              setObd("");
             }}
           >
             Clear

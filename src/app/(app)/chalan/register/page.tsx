@@ -17,6 +17,9 @@ export default async function ChalanRegisterPage({
   // two registers in one screen: MARKET (payable workflow, the default) and
   // OWNREL (own + relative vehicles — no payment actions, hisab via ledger)
   const tab = searchParams.type === "OWNREL" ? ("OWNREL" as const) : ("MARKET" as const);
+  // each tab has its own Cancel Register: cancelled chalans leave the normal
+  // register entirely and live here until restored
+  const view = searchParams.view === "CANCELLED" ? ("CANCELLED" as const) : ("ACTIVE" as const);
 
   const [rows, brokers, vehicles, billStatusByChalan, payable] = await withTenant(
     session.tenantId,
@@ -36,6 +39,7 @@ export default async function ChalanRegisterPage({
         firmId: session.firmId,
         fyId: session.fyId,
         deletedAt: null,
+        cancelledAt: view === "CANCELLED" ? { not: null } : null,
         ...(date_from || date_to
           ? {
               chalanDate: {
@@ -171,6 +175,7 @@ export default async function ChalanRegisterPage({
     <ChalanRegisterClient
       rows={data}
       mode={tab}
+      view={view}
       brokers={brokers.map((b) => ({ value: b.id, label: b.name }))}
       vehicles={vehicles.map((v) => ({ value: v.id, label: v.number }))}
       canDelete={session.role === "ADMIN" || session.role === "OWNER"}

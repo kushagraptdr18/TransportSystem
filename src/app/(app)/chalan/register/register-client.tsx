@@ -59,6 +59,7 @@ const sum = (rows: ChalanRegisterRow[], k: keyof ChalanRegisterRow) =>
 export function ChalanRegisterClient({
   rows,
   mode,
+  view,
   brokers,
   vehicles,
   canDelete,
@@ -66,6 +67,8 @@ export function ChalanRegisterClient({
   rows: ChalanRegisterRow[];
   /** MARKET = payable workflow (default); OWNREL = own + relative, no payment actions */
   mode: "MARKET" | "OWNREL";
+  /** ACTIVE = the normal register; CANCELLED = this tab's Cancel Register */
+  view: "ACTIVE" | "CANCELLED";
   brokers: { value: string; label: string }[];
   vehicles: { value: string; label: string }[];
   canDelete: boolean;
@@ -87,6 +90,16 @@ export function ChalanRegisterClient({
     const qs = p.toString();
     return `${pathname}${qs ? `?${qs}` : ""}`;
   };
+  // Active <-> Cancel Register of the SAME tab, keeping the other filters
+  const viewHref = (v: "ACTIVE" | "CANCELLED") => {
+    const p = new URLSearchParams(searchParams.toString());
+    if (v === "CANCELLED") p.set("view", "CANCELLED");
+    else p.delete("view");
+    p.delete("payment");
+    const qs = p.toString();
+    return `${pathname}${qs ? `?${qs}` : ""}`;
+  };
+  const isCancelledView = view === "CANCELLED";
   // complete chalan lifecycle dialog
   const [status, setStatus] = React.useState<ChalanStatusData | null>(null);
   const [statusLoading, setStatusLoading] = React.useState(false);
@@ -198,6 +211,20 @@ export function ChalanRegisterClient({
           <Badge variant="secondary">Draft</Badge>
         ),
     },
+    // the Cancel Register shows WHY each chalan was cancelled
+    ...(isCancelledView
+      ? [
+          {
+            accessorKey: "cancelReason",
+            header: "Cancel Reason",
+            cell: ({ row }) => (
+              <span className="max-w-[220px] truncate text-xs" title={row.original.cancelReason}>
+                {row.original.cancelReason || "—"}
+              </span>
+            ),
+          } as ColumnDef<ChalanRegisterRow>,
+        ]
+      : []),
     {
       id: "podStatus",
       header: "POD Status",
@@ -369,7 +396,9 @@ export function ChalanRegisterClient({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold">Chalan Register</h1>
+          <h1 className="text-xl font-semibold">
+            {isCancelledView ? "Cancel Chalan Register" : "Chalan Register"}
+          </h1>
           {/* two registers, one screen: payment work vs ledger-side record */}
           <div className="flex rounded-md border p-0.5">
             <Button
@@ -387,6 +416,20 @@ export function ChalanRegisterClient({
               className="h-7 px-3"
             >
               <Link href={tabHref("OWNREL")}>Own / Relative</Link>
+            </Button>
+          </div>
+          {/* the tab's own Cancel Register — cancelled chalans live only here */}
+          <div className="flex rounded-md border p-0.5">
+            <Button asChild size="sm" variant={!isCancelledView ? "default" : "ghost"} className="h-7 px-3">
+              <Link href={viewHref("ACTIVE")}>Active</Link>
+            </Button>
+            <Button
+              asChild
+              size="sm"
+              variant={isCancelledView ? "destructive" : "ghost"}
+              className="h-7 px-3"
+            >
+              <Link href={viewHref("CANCELLED")}>Cancelled</Link>
             </Button>
           </div>
         </div>

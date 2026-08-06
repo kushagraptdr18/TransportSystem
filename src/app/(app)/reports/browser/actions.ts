@@ -43,6 +43,8 @@ export interface BrowseInput {
   vehicleId?: string | null;
   /** COMMON: head name filter */
   head?: string | null;
+  /** LR: OBD number filter */
+  obd?: string | null;
   cursor?: number;
   /** running balance carried across pages (books / ledger) */
   runningStart?: number | null;
@@ -115,26 +117,30 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
 
     // ---------------------------------------------------------------- LR
     if (input.src === "LR") {
+      const obd = input.obd?.trim() || null;
       const where = {
         ...scope,
         deletedAt: null,
         ...dateFilter("lrDate", input.month),
         ...(q ? { lrNo: { contains: q, mode: "insensitive" as const } } : {}),
+        ...(obd ? { obdNo: { contains: obd, mode: "insensitive" as const } } : {}),
         ...(input.partyId
           ? { OR: [{ consignorId: input.partyId }, { consigneeId: input.partyId }, { billToId: input.partyId }] }
           : {}),
         ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
       };
-      const [rows, count, sums] = await Promise.all([
+      const [rows, count, sums, wtSums] = await Promise.all([
         tx.lr.findMany({
           where,
-          include: { items: { select: { chargeWt: true } } },
+          include: { items: { select: { chargeWt: true, actualWt: true, rate: true } } },
           orderBy: [{ lrDate: "desc" }, { lrNo: "desc" }],
           skip: cursor,
           take: PAGE,
         }),
         tx.lr.count({ where }),
         tx.lr.aggregate({ where, _sum: { grandTotal: true } }),
+        // weights live on the LR items — totals follow the SAME filter
+        tx.lrItem.aggregate({ where: { lr: where }, _sum: { actualWt: true, chargeWt: true } }),
       ]);
       const maps = await nameMaps(tx, {
         partyIds: rows.flatMap((r) => [r.consignorId, r.consigneeId]),
@@ -149,10 +155,12 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
           { label: "To" },
           { label: "Consignor" },
           { label: "Consignee" },
-          { label: "Vehicle" },
+          { label: "OBD No" },
+          { label: "Vehicle No" },
+          { label: "Actual Wt", numeric: true },
           { label: "Charge Wt", numeric: true },
-          { label: "Freight Total", numeric: true },
-          { label: "Status" },
+          { label: "Rate", numeric: true },
+          { label: "Freight", numeric: true },
         ],
         rows: rows.map((r) => ({
           id: r.id,
@@ -164,15 +172,19 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
             maps.city.get(r.destCityId) ?? "",
             maps.party.get(r.consignorId) ?? "",
             maps.party.get(r.consigneeId) ?? "",
+            r.obdNo ?? "",
             r.vehicleId ? maps.vehicle.get(r.vehicleId) ?? "" : r.vehicleText ?? "",
+            round2(r.items.reduce((s, it) => s + toNum(it.actualWt), 0)),
             round2(r.items.reduce((s, it) => s + toNum(it.chargeWt), 0)),
+            r.items.length ? Math.max(...r.items.map((it) => toNum(it.rate))) : null,
             toNum(r.grandTotal),
-            r.status,
           ],
         })),
         nextCursor: cursor + rows.length < count ? cursor + rows.length : null,
         totals: [
           { label: "LRs", value: count },
+          { label: "Actual Wt", value: toNum(wtSums._sum?.actualWt ?? 0) },
+          { label: "Charge Wt", value: toNum(wtSums._sum?.chargeWt ?? 0) },
           { label: "Freight Total", value: toNum(sums._sum?.grandTotal ?? 0) },
         ],
       };
@@ -186,6 +198,9 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
       const where = {
         ...scope,
         deletedAt: null,
+        // cancelled chalans live in the Cancel Register — the browser's list
+        // AND its totals (count / freight / advance) count active ones only
+        cancelledAt: null,
         ...dateFilter("chalanDate", input.month),
         ...(q ? { chalanNo: { contains: q, mode: "insensitive" as const } } : {}),
         ...(input.partyId ? { brokerId: input.partyId } : {}),
