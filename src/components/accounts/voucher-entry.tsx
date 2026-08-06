@@ -324,20 +324,40 @@ export function VoucherEntry({
   // an adjusted advance exists to settle references — it cannot become new money
   const advUnderApplied = advUsed > allocated + 0.01;
 
+  // distributes ONLY across the rows the user ticked, oldest first —
+  // an unticked reference is never touched
   const autoAllocate = () => {
+    if (!rows.some((r) => r.selected)) {
+      toast({
+        variant: "destructive",
+        title: "Select references first — Auto Allocate fills only the ticked rows",
+      });
+      return;
+    }
     let remaining = funds;
     setRows((prev) =>
       prev.map((r) => {
+        if (!r.selected) return r;
         const avail = Math.max(
           0,
           round2(r.outstanding - r.tds - r.shortage - r.other - r.roundOff)
         );
         const pay = round2(Math.min(avail, Math.max(0, remaining)));
         remaining = round2(remaining - pay);
-        return pay > 0 || r.selected ? { ...r, selected: pay > 0 || r.selected, receive: pay } : r;
+        return { ...r, receive: pay };
       })
     );
   };
+
+  const allSelected = rows.length > 0 && rows.every((r) => r.selected);
+  const toggleSelectAll = (checked: boolean) =>
+    setRows((prev) =>
+      prev.map((r) => ({
+        ...r,
+        selected: checked,
+        ...(checked ? {} : { receive: 0, tds: 0, shortage: 0, other: 0, roundOff: 0 }),
+      }))
+    );
 
   // ---- save ----
   const save = async () => {
@@ -692,7 +712,12 @@ export function VoucherEntry({
                 </span>
               )}
             </CardTitle>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {rows.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {selected.length} of {rows.length} selected
+                </span>
+              )}
               <Button type="button" variant="outline" size="sm" onClick={autoAllocate} disabled={funds <= 0}>
                 <Wand2 className="h-3.5 w-3.5" /> Auto Allocate
               </Button>
@@ -715,7 +740,13 @@ export function VoucherEntry({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-8" />
+                    <TableHead className="w-8">
+                      <Checkbox
+                        checked={allSelected}
+                        onCheckedChange={(c) => toggleSelectAll(!!c)}
+                        aria-label="Select all references"
+                      />
+                    </TableHead>
                     <TableHead>Ref No</TableHead>
                     <TableHead>Module</TableHead>
                     <TableHead>Date</TableHead>
