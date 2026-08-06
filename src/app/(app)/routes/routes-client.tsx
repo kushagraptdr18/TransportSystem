@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Phone } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
+import { waLink } from "@/lib/phone";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -283,11 +284,13 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
                         <Phone className="h-3 w-3" /> Call
                       </a>
                     </Button>
-                    <Button asChild variant="outline" size="sm" className="h-7 px-2 text-xs">
-                      <a href={`https://wa.me/91${p.mobile.replace(/\D/g, "").slice(-10)}`} target="_blank" rel="noreferrer">
-                        WhatsApp
-                      </a>
-                    </Button>
+                    {waLink(p.mobile) && (
+                      <Button asChild variant="outline" size="sm" className="h-7 px-2 text-xs">
+                        <a href={waLink(p.mobile)!} target="_blank" rel="noreferrer">
+                          WhatsApp
+                        </a>
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>

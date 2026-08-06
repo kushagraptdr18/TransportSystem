@@ -62,12 +62,13 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
             totalChalanAmt: true,
             grandTotal: true,
             paymentStatus: true,
+            lrs: { select: { lr: { select: { lrNo: true } } } },
           },
         }),
         tx.brokerSlip.findMany({
           where: { ...scope, deletedAt: null, vehicleId },
           orderBy: { slipDate: "desc" },
-          select: { slipNo: true, slipDate: true, vChalanAmt: true },
+          select: { slipNo: true, slipDate: true, vChalanAmt: true, lrNo: true },
         }),
         tx.ledgerEntry.groupBy({
           by: ["accountHeadId", "side"],
@@ -123,7 +124,15 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
     // income: for own/relative vehicles the chalan freight is company income;
     // for a broker vehicle it is the hire we PAID (shown as cost, not income)
     const chalanTotal = round2(chalans.reduce((s, c) => s + toNum(c.freight), 0));
-    const slipTotal = round2(slips.reduce((s, x) => s + toNum(x.vChalanAmt), 0));
+    // a broker slip whose LR was later put on a chalan is the SAME trip — the
+    // chalan figure wins, the slip is dropped from the total (not counted twice)
+    const chalanLrNos = new Set(
+      chalans.flatMap((c) => c.lrs.map((x) => x.lr.lrNo.trim().toLowerCase())).filter(Boolean)
+    );
+    const uniqueSlips = slips.filter(
+      (x) => !(x.lrNo && chalanLrNos.has(x.lrNo.trim().toLowerCase()))
+    );
+    const slipTotal = round2(uniqueSlips.reduce((s, x) => s + toNum(x.vChalanAmt), 0));
     const earned = round2(chalanTotal + slipTotal);
 
     // expenses = vehicle-stamped ledger (urea, driver costs) net Dr − Cr,
@@ -235,7 +244,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {(
             [
-              [isOwn ? "Kamaya (chalan + slip)" : "Hire diya (chalan + slip)", formatMoney(earned), `${chalans.length + slips.length} trips`],
+              [isOwn ? "Kamaya (chalan + slip)" : "Hire diya (chalan + slip)", formatMoney(earned), `${chalans.length + uniqueSlips.length} trips`],
               ["Vehicle Kharcha (ledger net)", formatMoney(expenseTotal), ""],
               ["Loan Outstanding", formatMoney(loanOutstanding), loanRows.length ? `${loanRows.length} active loan` : "koi loan nahi"],
               [
@@ -299,7 +308,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
           {/* trips */}
           <div className="rounded-md border p-3">
             <div className="mb-1 text-xs font-black uppercase text-muted-foreground">
-              Aakhri Trips ({chalans.length + slips.length} is FY)
+              Aakhri Trips ({chalans.length + uniqueSlips.length} is FY)
             </div>
             {chalans.slice(0, 8).map((c) => (
               <div key={c.chalanNo} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
@@ -309,7 +318,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
                 <span className="tabular-nums">{formatMoney(toNum(c.freight))}</span>
               </div>
             ))}
-            {slips.slice(0, 4).map((s) => (
+            {uniqueSlips.slice(0, 4).map((s) => (
               <div key={s.slipNo} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
                 <span>
                   {formatDate(s.slipDate.toISOString())} · <b>{s.slipNo}</b> (slip)

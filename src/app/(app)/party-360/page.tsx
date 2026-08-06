@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
+import { waLink } from "@/lib/phone";
 import { round2 } from "@/lib/calc/tds";
 import { invoiceSettlement } from "@/lib/settlement";
 import { Badge } from "@/components/ui/badge";
@@ -129,14 +130,16 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
                     <a className="text-primary underline" href={`tel:${party.mobile}`}>
                       📞 {party.mobile}
                     </a>
-                    <a
-                      className="text-primary underline"
-                      href={`https://wa.me/91${party.mobile.replace(/\D/g, "").slice(-10)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      WhatsApp
-                    </a>
+                    {waLink(party.mobile) && (
+                      <a
+                        className="text-primary underline"
+                        href={waLink(party.mobile)!}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        WhatsApp
+                      </a>
+                    )}
                   </>
                 )}
               </div>

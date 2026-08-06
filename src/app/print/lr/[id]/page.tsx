@@ -122,6 +122,17 @@ export default async function LrPrintPage({ params }: { params: { id: string } }
                 margin: 0 !important;
               }
               .lr-copy:last-child { page-break-after: auto; }
+              /* browsers without CSS zoom (old Firefox): scale the copy
+                 instead, widening the layout box so the scaled sheet still
+                 spans the full printable width */
+              @supports not (zoom: 1) {
+                .lr-copy {
+                  zoom: normal;
+                  transform: scale(0.88);
+                  transform-origin: top left;
+                  width: 113.6%;
+                }
+              }
             }
             @page { size: A4 landscape; margin: 4mm; }
           `,

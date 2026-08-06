@@ -426,14 +426,34 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         refNo: string;
         date: Date;
         partyId: string | null;
+        /** display + party-filter fallback for docs without a party link (hire slips) */
+        partyName?: string | null;
         amount: number;
         settled: number;
         outstanding: number;
         href: string | null;
       };
       const pend: Pending[] = [];
+      // filters are pushed into the queries so a scroll page never recomputes
+      // the whole FY's settlement math for documents it will filter out anyway
+      const outRange = monthRange(input.month);
+      const dateIn = (field: string) =>
+        outRange ? { [field]: { gte: outRange.gte, lt: outRange.lt } } : {};
+      const refNoLike = (field: string) =>
+        q ? { [field]: { contains: q, mode: "insensitive" as const } } : {};
+      const filterPartyName = input.partyId
+        ? (await tx.party.findUnique({ where: { id: input.partyId }, select: { name: true } }))?.name ?? null
+        : null;
       if (input.src === "OUT_RECV") {
-        const invoices = await tx.invoice.findMany({ where: { ...scope, deletedAt: null } });
+        const invoices = await tx.invoice.findMany({
+          where: {
+            ...scope,
+            deletedAt: null,
+            ...dateIn("invoiceDate"),
+            ...refNoLike("invoiceNo"),
+            ...(input.partyId ? { partyId: input.partyId } : {}),
+          },
+        });
         const settle = await invoiceSettlement(tx, { ...scope, invoices });
         for (const i of invoices) {
           const s = settle.get(i.id);
@@ -452,9 +472,31 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         }
       } else {
         const [chalans, slips, hires] = await Promise.all([
-          tx.chalan.findMany({ where: { ...scope, deletedAt: null, cancelledAt: null, isFinal: true } }),
-          tx.brokerSlip.findMany({ where: { ...scope, deletedAt: null } }),
-          tx.hireSlip.findMany({ where: { ...scope, deletedAt: null } }),
+          tx.chalan.findMany({
+            where: {
+              ...scope,
+              deletedAt: null,
+              cancelledAt: null,
+              isFinal: true,
+              ...dateIn("chalanDate"),
+              ...refNoLike("chalanNo"),
+              ...(input.partyId ? { brokerId: input.partyId } : {}),
+            },
+          }),
+          tx.brokerSlip.findMany({
+            where: {
+              ...scope,
+              deletedAt: null,
+              ...dateIn("slipDate"),
+              ...refNoLike("slipNo"),
+              ...(input.partyId ? { ownerId: input.partyId } : {}),
+            },
+          }),
+          // a hire slip has no party link — with a party filter it is matched
+          // below by the typed owner/broker name instead of dropped silently
+          tx.hireSlip.findMany({
+            where: { ...scope, deletedAt: null, ...dateIn("slipDate"), ...refNoLike("slipNo") },
+          }),
         ]);
         // only market vehicles are payable through the chalan
         const brokers = new Set(
@@ -515,12 +557,18 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
             href: `/broker/slip?id=${s.id}`,
           });
         }
+        const nameMatches = (h: { ownerName: string | null; brokerName: string | null }) =>
+          !filterPartyName ||
+          [h.ownerName, h.brokerName].some(
+            (n) => n && n.trim().toLowerCase() === filterPartyName.trim().toLowerCase()
+          );
+        const myHires = hires.filter(nameMatches);
         const hirePos = await payableSettlement(tx, {
           ...scope,
           refType: "LORRY_HIRE",
-          docs: hires.map((h) => ({ id: h.id, balance: toNum(h.balance), ownPaid: 0, ownShortage: 0, ownRoundOff: 0 })),
+          docs: myHires.map((h) => ({ id: h.id, balance: toNum(h.balance), ownPaid: 0, ownShortage: 0, ownRoundOff: 0 })),
         });
-        for (const h of hires) {
+        for (const h of myHires) {
           const p = hirePos.get(h.id);
           if (!p || p.outstanding <= 0.009) continue;
           pend.push({
@@ -529,6 +577,7 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
             refNo: h.slipNo,
             date: h.slipDate,
             partyId: null,
+            partyName: h.ownerName || h.brokerName || null,
             amount: p.balance,
             settled: p.settled,
             outstanding: p.outstanding,
@@ -536,11 +585,10 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
           });
         }
       }
-      const range = monthRange(input.month);
-      let list = pend
-        .filter((p) => (range ? p.date >= range.gte && p.date < range.lt : true))
-        .filter((p) => (input.partyId ? p.partyId === input.partyId : true))
-        .filter((p) => (q ? p.refNo.toLowerCase().includes(q.toLowerCase()) : true));
+      // queries already filtered; hire slips matched by name carry partyName
+      let list = pend.filter((p) =>
+        input.partyId ? p.partyId === input.partyId || p.partyName != null : true
+      );
       list = list.sort((a, b) => b.date.getTime() - a.date.getTime());
       const page = list.slice(cursor, cursor + PAGE);
       const maps = await nameMaps(tx, { partyIds: page.map((p) => p.partyId ?? "") });
@@ -561,7 +609,7 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
             p.type,
             p.refNo,
             fmtDate(p.date),
-            p.partyId ? maps.party.get(p.partyId) ?? "" : "",
+            p.partyId ? maps.party.get(p.partyId) ?? "" : p.partyName ?? "",
             round2(p.amount),
             round2(p.settled),
             round2(p.outstanding),

@@ -543,12 +543,17 @@ async function postSalaryLedger(
 ) {
   const s = await tx.staffSalary.findFirstOrThrow({ where: { id: salaryId } });
   const monthLabel = s.month;
+  // the expense belongs to the salary month (accrued at month-end), even when
+  // it is paid in a later month — only the money legs carry the payment date
+  const [my, mm] = s.month.split("-").map(Number);
+  const accrualDate = new Date(my, mm, 0);
   const common = {
-    date: s.paymentDate ?? new Date(`${s.month}-01T00:00:00`),
+    date: accrualDate,
     refType: "STAFF_SALARY",
     refId: s.id,
     refNo: `SAL-${s.month}`,
   };
+  const payCommon = { ...common, date: s.paymentDate ?? accrualDate };
   const gross = toNum(String(s.grossSalary));
   const net = toNum(String(s.netSalary));
   const advRec = toNum(String(s.advanceRecovery));
@@ -584,14 +589,14 @@ async function postSalaryLedger(
   }
   if (s.paymentStatus === "PAID" && s.paymentHeadId && net > 0) {
     entries.push({
-      ...common,
+      ...payCommon,
       partyId: s.paymentHeadId,
       side: "CREDIT",
       amount: net,
       narration: `Salary payment ${monthLabel}`,
     });
     entries.push({
-      ...common,
+      ...payCommon,
       partyId: s.partyId,
       side: "DEBIT",
       amount: net,

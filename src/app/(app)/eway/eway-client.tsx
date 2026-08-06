@@ -66,6 +66,26 @@ export function EwayClient({
 
   const activeTab = tabs.find((t) => t.date === active) ?? tabs[2];
 
+  // a screen left open past midnight keeps yesterday's tabs — refetch when the
+  // IST calendar day moves past the server-rendered one
+  React.useEffect(() => {
+    const check = () => {
+      const ist = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+      if (ist !== todayCal) router.refresh();
+    };
+    const id = window.setInterval(check, 60_000);
+    return () => window.clearInterval(id);
+  }, [todayCal, router]);
+
+  // server re-render moved "today": follow it unless the user picked a tab
+  const lastToday = React.useRef(todayCal);
+  React.useEffect(() => {
+    if (lastToday.current !== todayCal) {
+      if (active === lastToday.current) setActive(todayCal);
+      lastToday.current = todayCal;
+    }
+  }, [todayCal, active]);
+
   // current-expiry matches, plus (on past tabs) extended-away records
   const list = rows
     .filter((r) => r.expiry === active || (activeTab.isPast && r.prevExpiries.includes(active)))

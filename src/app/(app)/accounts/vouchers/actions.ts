@@ -200,6 +200,10 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
     return { ok: false, error: "Net amount must be positive" };
   }
 
+  // two operators prefill the same next number: retry a create with a bumped
+  // number instead of failing on the unique constraint (edits never renumber)
+  const maxAttempts = data.id ? 1 : 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
       const voucherDate = toDate(data.voucherDate);
@@ -659,10 +663,17 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
     return { ok: true, id };
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      const m = data.voucherNo.match(/^(.*?)(\d+)\s*$/);
+      if (attempt < maxAttempts - 1 && m) {
+        data.voucherNo = `${m[1]}${Number(m[2]) + 1}`;
+        continue;
+      }
       return { ok: false, error: "Voucher number already exists" };
     }
     return { ok: false, error: err instanceof Error ? err.message : "Failed to save voucher" };
   }
+  }
+  return { ok: false, error: "Voucher number already exists" };
 }
 
 export async function deleteVoucher(
@@ -686,6 +697,11 @@ export async function deleteVoucher(
         await tx.partyAdvance.update({ where: { id: adv.id }, data: { deletedAt: new Date() } });
       }
       await tx.voucher.update({ where: { id }, data: { deletedAt: new Date() } });
+      // driver settlements this voucher had settled become payable again
+      await tx.driverSettlement.updateMany({
+        where: { voucherId: id, deletedAt: null },
+        data: { status: "PENDING", settledDate: null, voucherId: null, voucherNo: null },
+      });
       // give back whatever OTHER advances this voucher had adjusted
       await restoreAdvanceUses(tx, "VOUCHER", id);
       await reverseLedger(tx, "VOUCHER", id);

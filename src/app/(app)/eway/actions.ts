@@ -67,6 +67,12 @@ export async function extendEway(
   if (!/^\d{4}-\d{2}-\d{2}$/.test(newExpiry)) {
     return { ok: false, error: "Valid expiry date is required" };
   }
+  // an extension moves the expiry FORWARD — today (IST) or later; a mistyped
+  // past date would silently bury the LR in an old tab
+  const todayIst = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+  if (newExpiry < todayIst) {
+    return { ok: false, error: `New expiry cannot be before today (${todayIst})` };
+  }
   try {
     await withTenant(session.tenantId, async (tx) => {
       const lr = await tx.lr.findFirst({

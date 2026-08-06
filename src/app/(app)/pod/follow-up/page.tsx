@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
+import { waLink } from "@/lib/phone";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
@@ -314,14 +315,16 @@ export default async function PodFollowUpPage({
                       <a className="text-primary hover:underline" href={`tel:${rw.contactMobile}`}>
                         {rw.contactMobile}
                       </a>{" "}
-                      <a
-                        className="text-emerald-600 hover:underline"
-                        href={`https://wa.me/91${rw.contactMobile.replace(/\D/g, "").slice(-10)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        WA
-                      </a>
+                      {waLink(rw.contactMobile) && (
+                        <a
+                          className="text-emerald-600 hover:underline"
+                          href={waLink(rw.contactMobile)!}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          WA
+                        </a>
+                      )}
                     </>
                   ) : (
                     "—"

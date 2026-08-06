@@ -136,6 +136,17 @@ export function DocStatusClient({
     DONE: rows.filter((r) => r.status === "DONE").length,
   };
 
+  // changing a filter must not leave hidden rows silently selected — a bulk
+  // update only ever touches rows the user can see
+  React.useEffect(() => {
+    setSelected((prev) => {
+      const visible = new Set(list.map((r) => r.id));
+      const next = new Set(Array.from(prev).filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, vehicleFilter, docTypeFilter, q]);
+
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
