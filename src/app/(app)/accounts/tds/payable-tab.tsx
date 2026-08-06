@@ -4,8 +4,6 @@ import { toNum } from "@/lib/utils";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport, type ReportRow } from "@/components/accounts/simple-report";
 
-const r2 = (n: number) => Math.round(n * 100) / 100;
-
 /** So a nil deduction reads as a deliberate outcome, not a missing row. */
 const tdsStatus = (amt: number) => (amt > 0.009 ? "DEDUCTED" : "NOT DEDUCTED");
 
@@ -96,92 +94,17 @@ export async function TdsPayableTab({
     ]);
     const partyById = new Map(parties.map((p) => [p.id, p]));
 
-    // section labels from the TDS Master: freight modules map directly, expense
-    // refs resolve through the bill's head(s)
+    // section labels come ONLY from the TDS Master's freight-module ticks —
+    // chalan, broker slip and hire references. Everything else stays blank
+    // (no head-based guessing).
     const tdsSections = await tx.tdsSection.findMany({ where: { deletedAt: null } });
-    const sectionLabel = (s: (typeof tdsSections)[number]) => s.code;
     const moduleSection = new Map<string, string>();
-    const headSection = new Map<string, string>();
-    for (const s of tdsSections) {
-      for (const m of s.moduleRefs) moduleSection.set(m, sectionLabel(s));
-      for (const h of s.headIds) headSection.set(h, sectionLabel(s));
-    }
-    /** dominant section of an expense doc: the head carrying the largest share */
-    const docSection = (
-      contributions: { headId: string; amount: number }[]
-    ): string => {
-      const perSection = new Map<string, number>();
-      for (const c of contributions) {
-        const sec = headSection.get(c.headId);
-        if (sec) perSection.set(sec, (perSection.get(sec) ?? 0) + c.amount);
-      }
-      let best = "";
-      let bestAmt = 0;
-      for (const [sec, amt] of Array.from(perSection.entries())) {
-        if (amt > bestAmt) {
-          best = sec;
-          bestAmt = amt;
-        }
-      }
-      return best;
-    };
-    // resolve expense refs used by payment-voucher allocations
-    const allocs = payVouchers.flatMap((v) => v.allocations);
-    const idsOf = (t: string) =>
-      Array.from(new Set(allocs.filter((a) => a.refType === t).map((a) => a.refId)));
-    const [officeRefs, vehicleRefs, adblueRefs] = await Promise.all([
-      idsOf("OFFICE_EXPENSE").length
-        ? tx.officeTransaction.findMany({
-            where: { id: { in: idsOf("OFFICE_EXPENSE") } },
-            include: { lines: true },
-          })
-        : [],
-      idsOf("VEHICLE_EXPENSE").length
-        ? tx.vehicleExpenseVoucher.findMany({
-            where: { id: { in: idsOf("VEHICLE_EXPENSE") } },
-            include: { lines: true },
-          })
-        : [],
-      idsOf("ADBLUE_PURCHASE").length
-        ? tx.adblueTxn.findMany({ where: { id: { in: idsOf("ADBLUE_PURCHASE") } } })
-        : [],
-    ]);
-    const ureaHead = await tx.accountHead.findFirst({
-      where: { name: { equals: "Urea Expense", mode: "insensitive" } },
-      select: { id: true },
-    });
-    const refSection = new Map<string, string>();
-    for (const t of officeRefs) {
-      refSection.set(
-        t.id,
-        docSection(
-          t.lines.length
-            ? t.lines.map((l) => ({ headId: l.headId, amount: toNum(String(l.amount)) }))
-            : [{ headId: t.headId, amount: toNum(String(t.amount)) }]
-        )
-      );
-    }
-    for (const v of vehicleRefs) {
-      refSection.set(
-        v.id,
-        docSection(
-          v.lines.length
-            ? v.lines.map((l) => ({ headId: l.headId, amount: toNum(String(l.amount)) }))
-            : [{ headId: v.headId, amount: toNum(String(v.amount)) }]
-        )
-      );
-    }
-    for (const a of adblueRefs) {
-      refSection.set(
-        a.id,
-        ureaHead ? headSection.get(ureaHead.id) ?? "" : ""
-      );
-    }
-    const allocSection = (a: (typeof allocs)[number]): string => {
+    for (const s of tdsSections) for (const m of s.moduleRefs) moduleSection.set(m, s.code);
+    const allocSection = (a: { refType: string }): string => {
       if (a.refType === "FREIGHT_CHALLAN") return moduleSection.get("CHALAN") ?? "";
       if (a.refType === "BROKER_ENTRY") return moduleSection.get("BROKER_SLIP") ?? "";
       if (a.refType === "LORRY_HIRE") return moduleSection.get("HIRE") ?? "";
-      return refSection.get(a.refId) ?? "";
+      return "";
     };
 
     // journal vouchers that touched the TDS Payable ledger head
@@ -247,10 +170,11 @@ export async function TdsPayableTab({
             // for a chalan / slip the two are the same number; only a voucher
             // settling a bill has a distinct reference, so name both there
             refNo: a.refNo && a.refNo !== v.voucherNo ? `${a.refNo} (${v.voucherNo})` : v.voucherNo,
-            invoiceAmount: toNum(String(a.billAmt)),
+            // voucher rows carry only the TDS figure — bill/net stay blank
+            invoiceAmount: null,
             tdsPct: toNum(String(a.tdsPct)),
             tdsAmt: toNum(String(a.tdsAmt)),
-            net: r2(toNum(String(a.amount))),
+            net: null,
             status: tdsStatus(toNum(String(a.tdsAmt))),
             remarks: a.remarks ?? v.remarks ?? "",
           });
@@ -263,10 +187,10 @@ export async function TdsPayableTab({
           party: p?.name ?? "",
           pan: p?.pan ?? "",
           refNo: v.voucherNo,
-          invoiceAmount: toNum(String(v.amount)),
+          invoiceAmount: null,
           tdsPct: 0,
           tdsAmt: toNum(String(v.tdsAmt)),
-          net: toNum(String(v.netAmount)),
+          net: null,
           status: tdsStatus(toNum(String(v.tdsAmt))),
           remarks: v.remarks ?? "",
         });
