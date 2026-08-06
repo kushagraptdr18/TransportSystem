@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
-import { InfoHint } from "@/components/ui/info-hint";
 import { SimpleMaster } from "@/components/masters/simple-master";
 import {
   saveAccountHead,
@@ -55,11 +54,12 @@ function ScopeCell({ row }: { row: Row }) {
   };
   return (
     <select
-      className={`h-8 w-full max-w-[200px] rounded-md border border-input bg-background px-2 text-xs ${
+      className={`h-8 w-44 rounded-md border border-input bg-background px-2 text-xs ${
         value !== "AUTO" ? "font-semibold" : ""
       }`}
       value={value}
       disabled={busy}
+      title="Which operational P&L this head reports in. Auto (default) lets the posting module decide. Company / Vehicle moves ALL the head's entries to that P&L; Exclude drops it from both. Saves instantly."
       onClick={(e) => e.stopPropagation()}
       onChange={(e) => change(e.target.value as PnlScope)}
     >
@@ -85,17 +85,7 @@ const columns: ColumnDef<Row, unknown>[] = [
   },
   {
     accessorKey: "pnlScope",
-    header: () => (
-      <span className="flex items-center gap-1">
-        P&amp;L Scope
-        <InfoHint>
-          Which operational P&amp;L this head reports in. Auto (default) lets the posting module
-          decide — today&apos;s behaviour. Company / Vehicle moves ALL the head&apos;s entries to
-          that P&amp;L; Exclude drops it from both. An entry is never counted in both reports.
-          Saves instantly.
-        </InfoHint>
-      </span>
-    ),
+    header: "P&L Scope",
     cell: ({ row }) => <ScopeCell row={row.original} />,
   },
   {
