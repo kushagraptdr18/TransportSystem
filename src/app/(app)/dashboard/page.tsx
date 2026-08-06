@@ -2,6 +2,7 @@ import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon, Truck, UserSea
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
+import { FinanceCardsSection } from "./finance-cards";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +127,9 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-4 p-4">
       <h1 className="page-title">Dashboard</h1>
+
+      {/* date filter here touches ONLY these five cards */}
+      <FinanceCardsSection defaultFrom={`${todayCal.slice(0, 8)}01`} defaultTo={todayCal} />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <a href="/eway" target="_blank" rel="noreferrer" className="group">
