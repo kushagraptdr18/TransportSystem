@@ -1,5 +1,6 @@
 "use server";
 
+import { authorize } from "@/lib/authz";
 import { requireSession } from "./session";
 import { withTenant } from "./db";
 import { LedgerGroup } from "@prisma/client";
@@ -111,6 +112,7 @@ export async function createCityInline(input: {
   pincode?: string;
 }): Promise<Option> {
   const s = requireSession();
+  await authorize(s, "masters", "create");
   const city = await withTenant(s.tenantId, (tx) =>
     tx.city.create({
       data: { tenantId: s.tenantId, name: input.name.toUpperCase().trim(), stateId: input.stateId, district: input.district, pincode: input.pincode },
@@ -132,6 +134,7 @@ export async function createPartyInline(input: {
   tdsMode?: "TDS_APPLICABLE" | "DECLARATION";
 }): Promise<Option> {
   const s = requireSession();
+  await authorize(s, "masters", "create");
   const party = await withTenant(s.tenantId, (tx) =>
     tx.party.create({
       data: { tenantId: s.tenantId, ...input, name: input.name.toUpperCase().trim() },
@@ -153,6 +156,7 @@ export async function createVehicleInline(input: {
   insuranceNo?: string;
 }): Promise<Option> {
   const s = requireSession();
+  await authorize(s, "masters", "create");
   const v = await withTenant(s.tenantId, async (tx) => {
     const created = await tx.vehicle.create({
       data: {
@@ -183,6 +187,7 @@ export async function createProductInline(input: {
   gstPct?: number;
 }): Promise<Option> {
   const s = requireSession();
+  await authorize(s, "masters", "create");
   const p = await withTenant(s.tenantId, async (tx) => {
     if (input.unit) {
       const unit = await tx.unit.findFirst({

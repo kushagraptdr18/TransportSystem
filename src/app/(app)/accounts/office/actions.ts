@@ -128,13 +128,27 @@ export async function saveOfficeTransaction(
       // would leave a negative outstanding, and switching a credit entry to
       // cash/bank would pay it a second time. Release the voucher first.
       if (d.id) {
+        // the guard must look up settlements under the STORED type — checking
+        // the incoming type would let a settled expense slip through by being
+        // flipped to income
+        const stored = await tx.officeTransaction.findFirst({
+          where: { id: d.id, deletedAt: null },
+          select: { txnType: true },
+        });
+        if (!stored) return { ok: false as const, error: "Entry not found" };
         const settledHere = await settledByRef(tx, {
           firmId: session.firmId,
           fyId: session.fyId,
-          refTypes: [d.txnType === "EXPENSE" ? "OFFICE_EXPENSE" : "OFFICE_INCOME"],
+          refTypes: [stored.txnType === "EXPENSE" ? "OFFICE_EXPENSE" : "OFFICE_INCOME"],
           refIds: [d.id],
         });
         const settled = settledHere.get(d.id) ?? 0;
+        if (settled > 0.009 && stored.txnType !== d.txnType) {
+          return {
+            ok: false as const,
+            error: "This entry is settled by a voucher — its Income/Expense type cannot change. Release the voucher first.",
+          };
+        }
         if (settled > 0.009) {
           if (d.paymentMode) {
             return {

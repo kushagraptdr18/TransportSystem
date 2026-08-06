@@ -210,19 +210,19 @@ export function EwayClient({
                     )}
                   </td>
                   <td className="px-2 py-1.5">
-                    {!r.movedAway && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => {
-                          setEditFor(r);
-                          setNewDateText("");
-                        }}
-                      >
-                        Edit
-                      </Button>
-                    )}
+                    {/* moved-away rows stay editable too — a typo'd extension
+                        must be correctable from the tab it left behind */}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        setEditFor(r);
+                        setNewDateText("");
+                      }}
+                    >
+                      Edit
+                    </Button>
                   </td>
                 </tr>
               ))

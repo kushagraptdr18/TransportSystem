@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { firmImageUrl } from "@/lib/branding";
@@ -50,10 +51,12 @@ function BoxTitle({ children }: { children: React.ReactNode }) {
 
 export default async function LrPrintPage({ params }: { params: { id: string } }) {
   const session = requireSession();
+  await authorize(session, "lr", "print");
 
   const data = await withTenant(session.tenantId, async (tx) => {
+    // firm/FY scoped: another firm's LR must never print under this letterhead
     const lr = await tx.lr.findFirst({
-      where: { id: params.id, deletedAt: null },
+      where: { id: params.id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
       include: { items: true },
     });
     if (!lr) return null;

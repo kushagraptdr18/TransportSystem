@@ -26,7 +26,9 @@ export async function setEwayChecked(
   await authorize(session, "lr", "edit");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const lr = await tx.lr.findFirst({ where: { id: lrId, deletedAt: null } });
+      const lr = await tx.lr.findFirst({
+        where: { id: lrId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
       if (!lr) throw new Error("LR not found");
       await tx.ewayMonitor.upsert({
         where: { lrId },
@@ -67,7 +69,9 @@ export async function extendEway(
   }
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const lr = await tx.lr.findFirst({ where: { id: lrId, deletedAt: null } });
+      const lr = await tx.lr.findFirst({
+        where: { id: lrId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
       if (!lr) throw new Error("LR not found");
       const oldCal = lr.ewayExpiry ? calDate(lr.ewayExpiry) : null;
       const monitor = await tx.ewayMonitor.findUnique({ where: { lrId } });

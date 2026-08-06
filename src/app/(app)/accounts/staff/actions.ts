@@ -337,6 +337,31 @@ export async function processStaffSalary(
           deletedAt: null,
         },
       });
+      // a salary a payment voucher already settled cannot move underneath it:
+      // marking it paid again or shrinking the net would pay the staff twice
+      if (existing) {
+        const settledHere = await settledByRef(tx, {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          refTypes: ["STAFF_PAYROLL"],
+          refIds: [existing.id],
+        });
+        const settled = settledHere.get(existing.id) ?? 0;
+        if (settled > 0.009) {
+          if (d.markPaid) {
+            return {
+              ok: false as const,
+              error: `${settled.toFixed(2)} of this salary is already settled by a payment voucher — delete that voucher before marking it paid here.`,
+            };
+          }
+          if (netSalary < settled - 0.009) {
+            return {
+              ok: false as const,
+              error: `Net salary cannot be below the ${settled.toFixed(2)} already settled by a voucher.`,
+            };
+          }
+        }
+      }
 
       // recoveries must not exceed the open balances
       if (d.advanceId && d.advanceRecovery > 0) {
@@ -462,6 +487,18 @@ export async function payStaffSalary(input: {
       const before = await tx.staffSalary.findFirstOrThrow({
         where: { id: input.salaryId, deletedAt: null },
       });
+      // already settled by a payment voucher => paying here would pay twice
+      const settledHere = await settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["STAFF_PAYROLL"],
+        refIds: [before.id],
+      });
+      if ((settledHere.get(before.id) ?? 0) > 0.009) {
+        throw new Error(
+          "This salary is already settled by a payment voucher — delete that voucher before paying it here."
+        );
+      }
       const after = await tx.staffSalary.update({
         where: { id: input.salaryId },
         data: {

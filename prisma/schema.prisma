@@ -561,6 +561,9 @@ model VehicleDocument {
   remarks       String?
   filePath      String? // uploaded document (pdf/jpg/png)
   fileName      String?
+  // when the row last changed — the status board flips DONE→PENDING only for
+  // marks that predate the document entering its reminder window
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@index([tenantId, expiryDate])
 }

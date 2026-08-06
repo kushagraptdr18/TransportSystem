@@ -116,7 +116,9 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
     const { vehicle, chalans, slips, headSums, expenseItems, heads, loans, docs, assignments, drivers, works } = view;
     const headName = new Map(heads.map((h) => [h.id, h.name]));
     const driverOf = new Map(drivers.map((d) => [d.id, d]));
-    const isOwn = vehicle.ownershipType === "OWNER";
+    // own AND relative vehicles run as the fleet's own trips (relative shares
+    // transfer to the owner's ledger separately); only BROKER is market hire
+    const isOwn = vehicle.ownershipType !== "BROKER";
 
     // income: for own/relative vehicles the chalan freight is company income;
     // for a broker vehicle it is the hire we PAID (shown as cost, not income)

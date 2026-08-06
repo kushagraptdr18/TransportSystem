@@ -207,7 +207,7 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         vehicleId: input.vehicleId && vehicleIds.includes(input.vehicleId) ? input.vehicleId : { in: vehicleIds },
       };
       const [rows, count, sums] = await Promise.all([
-        tx.chalan.findMany({ where, orderBy: { chalanDate: "desc" }, skip: cursor, take: PAGE }),
+        tx.chalan.findMany({ where, orderBy: [{ chalanDate: "desc" }, { id: "desc" }], skip: cursor, take: PAGE }),
         tx.chalan.count({ where }),
         tx.chalan.aggregate({ where, _sum: { freight: true, advanceTotal: true } }),
       ]);
@@ -273,7 +273,7 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
       };
       const [rows, count, sums] = await Promise.all([
-        tx.pod.findMany({ where, include: { lr: { select: { lrNo: true } } }, orderBy: { docDate: "desc" }, skip: cursor, take: PAGE }),
+        tx.pod.findMany({ where, include: { lr: { select: { lrNo: true } } }, orderBy: [{ docDate: "desc" }, { id: "desc" }], skip: cursor, take: PAGE }),
         tx.pod.count({ where }),
         tx.pod.aggregate({ where, _sum: { shortageWt: true } }),
       ]);
@@ -321,7 +321,7 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
       };
       const [rows, count, sums] = await Promise.all([
-        tx.brokerSlip.findMany({ where, orderBy: { slipDate: "desc" }, skip: cursor, take: PAGE }),
+        tx.brokerSlip.findMany({ where, orderBy: [{ slipDate: "desc" }, { id: "desc" }], skip: cursor, take: PAGE }),
         tx.brokerSlip.count({ where }),
         tx.brokerSlip.aggregate({ where, _sum: { pChalanAmt: true, pBalance: true, vChalanAmt: true, vBalance: true } }),
       ]);
@@ -375,7 +375,7 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         ...(input.partyId ? { partyId: input.partyId } : {}),
       };
       const [rows, count, sums] = await Promise.all([
-        tx.invoice.findMany({ where, orderBy: { invoiceDate: "desc" }, skip: cursor, take: PAGE }),
+        tx.invoice.findMany({ where, orderBy: [{ invoiceDate: "desc" }, { id: "desc" }], skip: cursor, take: PAGE }),
         tx.invoice.count({ where }),
         tx.invoice.aggregate({ where, _sum: { grandTotal: true } }),
       ]);
@@ -577,16 +577,24 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
 
     // ---------------------------------------------------------------- VOUCHER
     if (input.src === "VOUCHER") {
+      // q and party BOTH use OR shapes — they must live under AND, or the
+      // second OR key silently overwrites the first and the search is ignored
       const where = {
         ...scope,
         deletedAt: null,
         ...dateFilter("voucherDate", input.month),
-        ...(q ? { voucherNo: { contains: q, mode: "insensitive" as const } } : {}),
-        ...(input.partyId ? { OR: [{ partyId: input.partyId }, { bankPartyId: input.partyId }] } : {}),
+        AND: [
+          ...(q
+            ? [{ OR: [{ voucherNo: { contains: q, mode: "insensitive" as const } }, { remarks: { contains: q, mode: "insensitive" as const } }] }]
+            : []),
+          ...(input.partyId
+            ? [{ OR: [{ partyId: input.partyId }, { bankPartyId: input.partyId }] }]
+            : []),
+        ],
         ...(input.vehicleId ? { vehicleId: input.vehicleId } : {}),
       };
       const [rows, count, sums] = await Promise.all([
-        tx.voucher.findMany({ where, orderBy: { voucherDate: "desc" }, skip: cursor, take: PAGE }),
+        tx.voucher.findMany({ where, orderBy: [{ voucherDate: "desc" }, { id: "desc" }], skip: cursor, take: PAGE }),
         tx.voucher.count({ where }),
         tx.voucher.aggregate({ where, _sum: { amount: true, netAmount: true } }),
       ]);
@@ -699,10 +707,13 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
             { narration: { contains: q, mode: "insensitive" as const } },
           ],
         };
+        // a running balance over a SEARCH-filtered subset is meaningless (and
+        // the opening would be filtered too) — the column hides while searching
+        withBalance = false;
       }
 
       const [rows, count, sums] = await Promise.all([
-        tx.ledgerEntry.findMany({ where: entryWhere, orderBy: [{ date: "asc" }, { createdAt: "asc" }], skip: cursor, take: PAGE }),
+        tx.ledgerEntry.findMany({ where: entryWhere, orderBy: [{ date: "asc" }, { createdAt: "asc" }, { id: "asc" }], skip: cursor, take: PAGE }),
         tx.ledgerEntry.count({ where: entryWhere }),
         tx.ledgerEntry.aggregate({ where: entryWhere, _sum: { amount: true } }),
       ]);

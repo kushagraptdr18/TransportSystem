@@ -298,6 +298,11 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
           })
         : null;
       if (data.id && !existing) return { ok: false as const, error: "Chalan not found" };
+      // a cancelled chalan owes nothing — editing it would re-post the accrual
+      // behind the CANCELLED stamp; Restore it first
+      if (existing?.cancelledAt) {
+        return { ok: false as const, error: "This chalan is cancelled — restore it before editing." };
+      }
 
       // duplicate chalan numbers are not allowed within a firm + financial year
       const clash = await tx.chalan.findFirst({
@@ -731,7 +736,16 @@ export async function cancelChalan(
           error: `LR ${billed.lr.lrNo} is already billed. Delete its bill before cancelling this chalan.`,
         };
       }
-      if (chalan.paymentStatus === "PAID" || toNum(chalan.balPaidAmount) > 0) {
+      // ANY own balance settlement blocks a cancel — including one paid purely
+      // by advance adjustment / shortage / round-off (balPaidAmount stays 0
+      // in that case, but CHALAN_BALANCE legs and advance uses exist)
+      if (
+        chalan.paymentStatus === "PAID" ||
+        toNum(chalan.balPaidAmount) > 0 ||
+        toNum(chalan.balAdvanceAdjusted) > 0 ||
+        toNum(chalan.balShortage) > 0 ||
+        toNum(chalan.balRoundOff) > 0
+      ) {
         return {
           ok: false as const,
           error: "Balance payment is already recorded on this chalan — delete the chalan instead, or reverse that payment first.",
@@ -753,8 +767,19 @@ export async function cancelChalan(
       // accrual gone: the broker is no longer owed the hire
       await reverseLedger(tx, "CHALAN", chalanId);
       await reverseLedger(tx, ADV_ADJ_REF, chalanId);
-      // release the advance VOUCHERS this chalan had consumed — they open again
+      // release the advance VOUCHERS this chalan had consumed — they open
+      // again, so their ChalanAdvance rows must go too (keeping them would
+      // count the same money twice after a restore: voucher open AND the
+      // chalan's advanceTotal still netting it off)
       await restoreAdvanceUses(tx, ADV_USE_ADVANCE, chalanId);
+      const adjTotal = Math.round(
+        chalan.advances
+          .filter((a) => a.type === "ADVANCE_ADJ")
+          .reduce((s, a) => s + toNum(a.amount), 0) * 100
+      ) / 100;
+      if (adjTotal > 0) {
+        await tx.chalanAdvance.deleteMany({ where: { chalanId, type: "ADVANCE_ADJ" } });
+      }
       await releaseShortage(tx, "CHALAN", chalanId);
       // NOTE: CHALAN_ADVANCE ledger entries are intentionally NOT reversed —
       // cash/bank left, diesel burned; the broker's debit is the receivable.
@@ -801,6 +826,10 @@ export async function cancelChalan(
           cancelReason: reason || null,
           balance: 0,
           paymentStatus: "CANCELLED",
+          // released voucher-adjustments no longer reduce this chalan
+          ...(adjTotal > 0
+            ? { advanceTotal: Math.round((toNum(chalan.advanceTotal) - adjTotal) * 100) / 100 }
+            : {}),
         },
       });
       await audit(tx, session, {
@@ -848,6 +877,11 @@ export async function restoreChalan(
         await tx.partyAdvance.update({ where: { id: adv.id }, data: { deletedAt: new Date() } });
       }
 
+      // clean slate first: whatever CHALAN rows exist (none normally, but a
+      // stray save could have left some) are reversed, and the shortage
+      // recovery is released, so the re-post below can never double up
+      await reverseLedger(tx, "CHALAN", chalanId);
+      await releaseShortageRecoveries(tx, "CHALAN", chalanId);
       // re-post the accrual exactly as saveChalan does, from stored figures
       const common = {
         date: chalan.chalanDate,

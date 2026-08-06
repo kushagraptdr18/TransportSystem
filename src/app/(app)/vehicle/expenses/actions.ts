@@ -9,6 +9,7 @@ import { audit } from "@/lib/audit";
 import { postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
+import { settledByRef } from "@/lib/settlement";
 
 /**
  * Vehicle Expenses — office-I&E-style accounting voucher with vehicle-wise
@@ -104,13 +105,17 @@ export async function saveVehicleExpenseTxn(
     return { ok: false, error: "The same vehicle is selected more than once." };
   }
   // A vehicle-wise entry totals its splits; a bulk purchase carries its own
-  // amount and stays unallocated until vehicles consume it.
+  // amount and stays unallocated until vehicles consume it. When BOTH are
+  // given, the bill amount wins (>= splits; the rest stays unallocated) —
+  // silently shrinking a supplier bill to the split total would drop the
+  // remainder from the ledger and the payable.
   const itemsTotal = round2(d.items.reduce((s, i) => s + i.amount, 0));
-  const amount = d.items.length ? itemsTotal : round2(d.amount ?? 0);
+  const billAmt = d.amount != null ? round2(d.amount) : 0;
+  const amount = billAmt > 0 ? billAmt : itemsTotal;
   if (amount <= 0) {
     return { ok: false, error: "Enter the purchase amount, or split it across vehicles." };
   }
-  if (d.items.length && d.amount != null && round2(d.amount) < itemsTotal - 0.009) {
+  if (d.items.length && billAmt > 0 && billAmt < itemsTotal - 0.009) {
     return { ok: false, error: "Vehicle splits exceed the purchase amount." };
   }
   // a multi-head bill leads with its first line's head; the split must cover
@@ -135,6 +140,42 @@ export async function saveVehicleExpenseTxn(
         : [];
       if (d.lines.length && lineHeads.length !== new Set(d.lines.map((l) => l.headId)).size) {
         return { ok: false as const, error: "A split head was not found." };
+      }
+      // every split head must match the entry's income/expense side, same as office
+      for (const lh of lineHeads) {
+        if (lh.kind !== d.txnType) {
+          return {
+            ok: false as const,
+            error: `"${lh.name}" is a ${lh.kind} head — every split line must be a ${d.txnType} head.`,
+          };
+        }
+      }
+
+      // A bill that a payment voucher already settled cannot move underneath
+      // it: paying it again in cash/bank or shrinking it below the settled
+      // figure would double-pay the supplier (same rule as office entries).
+      if (d.id) {
+        const settledHere = await settledByRef(tx, {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          refTypes: ["VEHICLE_EXPENSE"],
+          refIds: [d.id],
+        });
+        const settled = settledHere.get(d.id) ?? 0;
+        if (settled > 0.009) {
+          if (d.paymentMode) {
+            return {
+              ok: false as const,
+              error: `${settled.toFixed(2)} is already settled against this bill by a voucher — remove that allocation before marking it paid in cash/bank.`,
+            };
+          }
+          if (amount < settled - 0.009) {
+            return {
+              ok: false as const,
+              error: `Amount cannot be less than the ${settled.toFixed(2)} already settled against this bill.`,
+            };
+          }
+        }
       }
 
       const vehicles = await tx.vehicle.findMany({
@@ -303,16 +344,21 @@ export async function saveVehicleExpenseTxn(
       // rounding remainder)
       const splitAcross = (x: number): { headId: string; amount: number; name: string }[] => {
         if (!d.lines.length) return [{ headId: d.headId, amount: x, name: head.name }];
-        const out: { headId: string; amount: number; name: string }[] = [];
-        let used = 0;
-        d.lines.forEach((l, idx) => {
-          const share =
-            idx === d.lines.length - 1 ? round2(x - used) : round2((x * l.amount) / amount);
-          used = round2(used + share);
-          if (share > 0.009)
-            out.push({ headId: l.headId, amount: share, name: lineHeadName.get(l.headId) ?? "" });
-        });
-        return out;
+        // shares are computed against the LINE total (not the voucher gross),
+        // and the rounding remainder — positive or negative — folds into the
+        // largest share so the sum ALWAYS equals x and nothing is dropped
+        const linesTotal = round2(d.lines.reduce((s, l) => s + l.amount, 0)) || amount;
+        const out = d.lines.map((l) => ({
+          headId: l.headId,
+          amount: round2((x * l.amount) / linesTotal),
+          name: lineHeadName.get(l.headId) ?? "",
+        }));
+        const diff = round2(x - out.reduce((s, p) => s + p.amount, 0));
+        if (Math.abs(diff) > 0.001) {
+          const biggest = out.reduce((a, b) => (b.amount > a.amount ? b : a));
+          biggest.amount = round2(biggest.amount + diff);
+        }
+        return out.filter((p) => p.amount > 0.001);
       };
       if (values.partyId) {
         entries.push({
@@ -430,6 +476,18 @@ export async function deleteVehicleExpenseTxn(
         where: { id, deletedAt: null },
         include: { items: true },
       });
+      // a bill a payment voucher settled must not vanish under the voucher
+      const settledHere = await settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["VEHICLE_EXPENSE"],
+        refIds: [id],
+      });
+      if ((settledHere.get(id) ?? 0) > 0.009) {
+        throw new Error(
+          "A payment voucher already settles this bill — delete that voucher first."
+        );
+      }
       await tx.vehicleExpenseVoucher.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "VEHICLE_EXPENSE", id);
       // bulk-purchase allocations post relative-owner transfers under their

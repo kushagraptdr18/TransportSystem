@@ -195,8 +195,9 @@ export function VehicleExpenseClient({
         attachmentName: form.attachmentName,
         itemName: form.itemName || null,
         qty: form.qty || null,
-        // no vehicle named: bulk stock, allocated to vehicles later
-        amount: validItems.length ? null : form.bulkAmount,
+        // bill amount travels whenever entered — with vehicle splits it may
+        // exceed them (remainder stays unallocated bulk stock)
+        amount: form.bulkAmount > 0 ? form.bulkAmount : validItems.length ? null : form.bulkAmount,
         items: validItems.map((i) => ({ vehicleId: i.vehicleId!, amount: i.amount })),
       });
       if (res.ok) {

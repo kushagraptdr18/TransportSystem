@@ -32,8 +32,18 @@ export default async function DocumentsStatusPage() {
       return d.expiryDate <= windowEnd;
     });
     // first appearance on the board = renewal work starts: DONE flips to
-    // PENDING automatically, no manual action
-    const toPending = docs.filter((d) => d.status === "DONE").map((d) => d.id);
+    // PENDING automatically — but ONLY when the DONE mark predates the
+    // document's entry into its reminder window. A user who deliberately
+    // marks DONE while the document is already on the board (updatedAt is
+    // inside the window) is respected, so the flip can never loop.
+    const windowEntry = (d: (typeof docs)[number]) => {
+      const w = new Date(d.expiryDate as Date);
+      w.setDate(w.getDate() - (d.docType.reminderDays ?? 30));
+      return w;
+    };
+    const toPending = docs
+      .filter((d) => d.status === "DONE" && d.updatedAt < windowEntry(d))
+      .map((d) => d.id);
     if (toPending.length) {
       await tx.vehicleDocument.updateMany({
         where: { id: { in: toPending } },
