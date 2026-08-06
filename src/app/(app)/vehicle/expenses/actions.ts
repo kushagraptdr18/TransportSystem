@@ -66,6 +66,17 @@ const schema = z.object({
       })
     )
     .default([]),
+  // one bill, many heads (optional): head-wise split of the same bill —
+  // spare parts + repair labour on one invoice. Sum must equal the bill total.
+  lines: z
+    .array(
+      z.object({
+        headId: z.string().min(1),
+        amount: z.number().min(0.01),
+        remarks: z.string().nullish(),
+      })
+    )
+    .default([]),
 });
 
 export async function saveVehicleExpenseTxn(
@@ -102,11 +113,29 @@ export async function saveVehicleExpenseTxn(
   if (d.items.length && d.amount != null && round2(d.amount) < itemsTotal - 0.009) {
     return { ok: false, error: "Vehicle splits exceed the purchase amount." };
   }
+  // a multi-head bill leads with its first line's head; the split must cover
+  // the whole bill so every rupee lands in exactly one head
+  if (d.lines.length) {
+    const lineSum = round2(d.lines.reduce((s, l) => s + l.amount, 0));
+    if (Math.abs(lineSum - amount) > 0.009) {
+      return {
+        ok: false,
+        error: `Head-wise split (${lineSum.toFixed(2)}) must equal the bill amount (${amount.toFixed(2)}).`,
+      };
+    }
+    d.headId = d.lines[0].headId;
+  }
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const head = await tx.accountHead.findFirst({ where: { id: d.headId } });
       if (!head) return { ok: false as const, error: "Head not found" };
+      const lineHeads = d.lines.length
+        ? await tx.accountHead.findMany({ where: { id: { in: d.lines.map((l) => l.headId) } } })
+        : [];
+      if (d.lines.length && lineHeads.length !== new Set(d.lines.map((l) => l.headId)).size) {
+        return { ok: false as const, error: "A split head was not found." };
+      }
 
       const vehicles = await tx.vehicle.findMany({
         where: { id: { in: Array.from(uniqVehicles) } },
@@ -210,6 +239,20 @@ export async function saveVehicleExpenseTxn(
           after: { ...created, items: d.items },
         });
       }
+      // replace the head-wise split (empty array clears back to single-head)
+      await tx.vehicleExpenseLine.deleteMany({ where: { voucherId: id } });
+      if (d.lines.length) {
+        await tx.vehicleExpenseLine.createMany({
+          data: d.lines.map((l) => ({
+            tenantId: session.tenantId,
+            voucherId: id,
+            headId: l.headId,
+            amount: l.amount,
+            remarks: l.remarks || null,
+          })),
+        });
+      }
+
       await tx.vehicleExpenseItem.createMany({
         data: d.items.map((i) => ({
           tenantId: session.tenantId,
@@ -235,13 +278,42 @@ export async function saveVehicleExpenseTxn(
       const entries: LedgerPostEntry[] = [];
       const headSide = d.txnType === "EXPENSE" ? ("DEBIT" as const) : ("CREDIT" as const);
       const moneySide = d.txnType === "EXPENSE" ? ("CREDIT" as const) : ("DEBIT" as const);
-      entries.push({
-        ...common,
-        accountHeadId: d.headId,
-        side: headSide,
-        amount,
-        narration: `Vehicle ${d.txnType.toLowerCase()} ${voucherNo}: ${label}`,
-      });
+      // multi-head bill: one head leg per split line; single-head: one leg.
+      // Supplier / bank legs always stay on the bill total.
+      const lineHeadName = new Map(lineHeads.map((h) => [h.id, h.name]));
+      const headLegs = d.lines.length
+        ? d.lines.map((l) => ({
+            headId: l.headId,
+            amount: l.amount,
+            name: lineHeadName.get(l.headId) ?? "",
+            tail: `${lineHeadName.get(l.headId) ?? ""}${l.remarks ? " — " + l.remarks : ""}`,
+          }))
+        : [{ headId: d.headId, amount, name: head.name, tail: label }];
+      for (const leg of headLegs) {
+        entries.push({
+          ...common,
+          accountHeadId: leg.headId,
+          side: headSide,
+          amount: leg.amount,
+          narration: `Vehicle ${d.txnType.toLowerCase()} ${voucherNo}: ${leg.tail}`,
+        });
+      }
+      // a relative/broker share of X splits across the lines in proportion, so
+      // each head's credit matches what was debited for it (last line takes the
+      // rounding remainder)
+      const splitAcross = (x: number): { headId: string; amount: number; name: string }[] => {
+        if (!d.lines.length) return [{ headId: d.headId, amount: x, name: head.name }];
+        const out: { headId: string; amount: number; name: string }[] = [];
+        let used = 0;
+        d.lines.forEach((l, idx) => {
+          const share =
+            idx === d.lines.length - 1 ? round2(x - used) : round2((x * l.amount) / amount);
+          used = round2(used + share);
+          if (share > 0.009)
+            out.push({ headId: l.headId, amount: share, name: lineHeadName.get(l.headId) ?? "" });
+        });
+        return out;
+      };
       if (values.partyId) {
         entries.push({
           ...common,
@@ -277,22 +349,22 @@ export async function saveVehicleExpenseTxn(
         for (const item of d.items) {
           const v = vehicles.find((x) => x.id === item.vehicleId);
           if (v?.ownershipType === "RELATIVE" && v.ownerId) {
-            entries.push(
-              {
+            entries.push({
+              ...common,
+              partyId: v.ownerId,
+              side: "DEBIT",
+              amount: item.amount,
+              narration: `${head.name} for relative vehicle ${v.number} — transferred to owner`,
+            });
+            for (const part of splitAcross(item.amount)) {
+              entries.push({
                 ...common,
-                partyId: v.ownerId,
-                side: "DEBIT",
-                amount: item.amount,
-                narration: `${head.name} for relative vehicle ${v.number} — transferred to owner`,
-              },
-              {
-                ...common,
-                accountHeadId: d.headId,
+                accountHeadId: part.headId,
                 side: "CREDIT",
-                amount: item.amount,
-                narration: `${head.name} ${v.number} — shifted to relative owner ledger`,
-              }
-            );
+                amount: part.amount,
+                narration: `${part.name} ${v.number} — shifted to relative owner ledger`,
+              });
+            }
           }
         }
       }
@@ -316,22 +388,22 @@ export async function saveVehicleExpenseTxn(
             refId: item.id,
             refNo: values.refNo || voucherNo,
           };
-          transferEntries.push(
-            {
+          transferEntries.push({
+            ...allocCommon,
+            partyId: v.ownerId,
+            side: "DEBIT",
+            amount: toNum(String(item.amount)),
+            narration: `${head.name} for relative vehicle ${v.number} — transferred to owner (allocation of ${voucherNo})`,
+          });
+          for (const part of splitAcross(toNum(String(item.amount)))) {
+            transferEntries.push({
               ...allocCommon,
-              partyId: v.ownerId,
-              side: "DEBIT",
-              amount: toNum(String(item.amount)),
-              narration: `${head.name} for relative vehicle ${v.number} — transferred to owner (allocation of ${voucherNo})`,
-            },
-            {
-              ...allocCommon,
-              accountHeadId: d.headId,
+              accountHeadId: part.headId,
               side: "CREDIT",
-              amount: toNum(String(item.amount)),
-              narration: `${head.name} ${v.number} — shifted to relative owner ledger (allocation of ${voucherNo})`,
-            }
-          );
+              amount: part.amount,
+              narration: `${part.name} ${v.number} — shifted to relative owner ledger (allocation of ${voucherNo})`,
+            });
+          }
         }
         if (transferEntries.length) await postLedger(tx, session, transferEntries);
       }

@@ -51,6 +51,7 @@ export async function OfficeIncomeExpenseTab({
               }
             : {}),
         },
+        include: { lines: true },
         orderBy: [{ date: "desc" }, { createdAt: "desc" }],
       }),
       tx.accountHead.findMany({
@@ -131,6 +132,12 @@ export async function OfficeIncomeExpenseTab({
     refNo: t.refNo || t.voucherNo,
     remarks: t.remarks ?? "",
     attachmentPath: t.attachmentPath,
+    lines: t.lines.map((l) => ({
+      headId: l.headId,
+      head: headName.get(l.headId) ?? "",
+      amount: toNum(String(l.amount)),
+      remarks: l.remarks ?? "",
+    })),
     ...settlementOf(t),
   }));
 

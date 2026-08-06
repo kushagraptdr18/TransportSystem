@@ -1378,6 +1378,8 @@ model OfficeTransaction {
   remarks    String?
   attachmentPath String?
 
+  lines OfficeTxnLine[]
+
   createdById String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -1386,6 +1388,22 @@ model OfficeTransaction {
   @@unique([firmId, fyId, voucherNo])
   @@index([tenantId, firmId, fyId, txnType])
   @@index([tenantId, partyId])
+}
+
+// One bill, many heads: an optional head-wise split of an office bill (spare
+// parts + repair labour on one invoice). When present, the ledger debits each
+// line's head; supplier/bank legs stay on the bill total.
+model OfficeTxnLine {
+  id       String            @id @default(cuid())
+  tenantId String
+  txnId    String
+  txn      OfficeTransaction @relation(fields: [txnId], references: [id], onDelete: Cascade)
+  headId   String
+  amount   Decimal           @default(0) @db.Decimal(14, 2)
+  remarks  String?
+
+  @@index([txnId])
+  @@index([tenantId])
 }
 
 // ============ VOUCHERS / ACCOUNTS ============
@@ -2538,6 +2556,7 @@ model VehicleExpenseVoucher {
   attachmentName String?
 
   items VehicleExpenseItem[]
+  lines VehicleExpenseLine[]
 
   createdById String?
   createdAt   DateTime  @default(now())
@@ -2552,6 +2571,22 @@ model VehicleExpenseVoucher {
 // is booked with NO items and allocated later, one item per vehicle that
 // actually consumed it — allocation moves cost between registers, never money,
 // so it posts nothing to the ledger.
+// One bill, many heads: optional head-wise split of a vehicle bill. The ledger
+// debits each line's head; supplier/bank legs and vehicle allocation stay on
+// the bill total; relative-owner transfers split proportionally across lines.
+model VehicleExpenseLine {
+  id        String                @id @default(cuid())
+  tenantId  String
+  voucherId String
+  voucher   VehicleExpenseVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  headId    String
+  amount    Decimal               @default(0) @db.Decimal(14, 2)
+  remarks   String?
+
+  @@index([voucherId])
+  @@index([tenantId])
+}
+
 model VehicleExpenseItem {
   id        String                @id @default(cuid())
   tenantId  String

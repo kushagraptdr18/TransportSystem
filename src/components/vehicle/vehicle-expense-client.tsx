@@ -68,6 +68,8 @@ export interface VehicleExpenseRow {
   attachmentPath: string | null;
   attachmentName: string;
   items: VehicleExpenseItemRow[];
+  /** optional head-wise split of the same bill */
+  lines: { headId: string; head: string; amount: number; remarks: string }[];
 }
 
 function textToIso(text: string): string {
@@ -100,6 +102,8 @@ const emptyForm = {
   attachmentPath: null as string | null,
   attachmentName: "",
   items: [{ vehicleId: null, amount: 0 }] as FormItem[],
+  // one bill, many heads: optional split rows (head + amount + note)
+  lines: [] as { headId: string | null; amount: number; remarks: string }[],
 };
 
 export function VehicleExpenseClient({
@@ -130,6 +134,13 @@ export function VehicleExpenseClient({
   const total = Math.round(validItems.reduce((s, i) => s + i.amount, 0) * 100) / 100;
   const heads = headOptions.filter((h) => h.meta === form.txnType);
 
+  // valid split lines; when ≥2 the bill is multi-head — their sum must match
+  // the bill total (vehicle splits or bulk amount)
+  const splitLines = form.lines.filter((l) => l.headId && l.amount > 0);
+  const splitTotal = Math.round(splitLines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+  const usingSplit = splitLines.length >= 2;
+  const billTotal = validItems.length ? total : form.bulkAmount;
+
   /** split a total equally across the current vehicle rows */
   const splitEqually = (grand: number) => {
     const n = form.items.filter((i) => i.vehicleId).length || form.items.length;
@@ -157,6 +168,7 @@ export function VehicleExpenseClient({
       attachmentPath: row.attachmentPath,
       attachmentName: row.attachmentName,
       items: row.items.map((i) => ({ vehicleId: i.vehicleId, amount: i.amount })),
+      lines: row.lines.map((l) => ({ headId: l.headId, amount: l.amount, remarks: l.remarks })),
     });
     setOpen(true);
   };
@@ -168,7 +180,10 @@ export function VehicleExpenseClient({
         id: form.id,
         date: textToIso(form.dateText),
         txnType: form.txnType,
-        headId: form.headId ?? "",
+        headId: usingSplit ? splitLines[0].headId ?? "" : form.headId ?? "",
+        lines: usingSplit
+          ? splitLines.map((l) => ({ headId: l.headId as string, amount: l.amount, remarks: l.remarks || null }))
+          : [],
         partyId: form.partyId,
         paymentMode: form.paymentMode === "CREDIT" ? null : form.paymentMode,
         bankPartyId: form.paymentMode === "CREDIT" ? null : form.bankPartyId,
@@ -554,6 +569,80 @@ export function VehicleExpenseClient({
             ))}
           </div>
 
+          {/* one bill, many heads: optional head-wise split */}
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">
+                Head-wise Split (optional — same bill, alag heads; jaise Spare Parts + Repair
+                Labour)
+              </Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => set({ lines: [...form.lines, { headId: null, amount: 0, remarks: "" }] })}
+              >
+                + Line
+              </Button>
+            </div>
+            {form.lines.map((l, i) => (
+              <div key={i} className="flex flex-wrap items-center gap-1.5">
+                <div className="w-56">
+                  <MasterCombobox
+                    options={heads}
+                    value={l.headId}
+                    onChange={(v) =>
+                      set({ lines: form.lines.map((x, j) => (j === i ? { ...x, headId: v } : x)) })
+                    }
+                    placeholder="Head..."
+                  />
+                </div>
+                <Input
+                  type="number"
+                  step="0.01"
+                  className="h-8 w-28 text-right"
+                  placeholder="Amount"
+                  value={l.amount ? String(l.amount) : ""}
+                  onChange={(e) =>
+                    set({
+                      lines: form.lines.map((x, j) =>
+                        j === i ? { ...x, amount: Number(e.target.value) || 0 } : x
+                      ),
+                    })
+                  }
+                />
+                <Input
+                  className="h-8 w-44"
+                  placeholder="Note (optional)"
+                  value={l.remarks}
+                  onChange={(e) =>
+                    set({
+                      lines: form.lines.map((x, j) => (j === i ? { ...x, remarks: e.target.value } : x)),
+                    })
+                  }
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2 text-destructive"
+                  onClick={() => set({ lines: form.lines.filter((_, j) => j !== i) })}
+                >
+                  ✕
+                </Button>
+              </div>
+            ))}
+            {usingSplit && (
+              <p className={`text-xs ${Math.abs(splitTotal - billTotal) > 0.009 ? "font-medium text-destructive" : "text-muted-foreground"}`}>
+                Split total <b className="tabular-nums">{splitTotal.toFixed(2)}</b>
+                {Math.abs(splitTotal - billTotal) > 0.009
+                  ? ` — bill total ${billTotal.toFixed(2)} se match hona chahiye`
+                  : " — har head apne hisse me ledger/P&L me jayega; supplier, payment aur vehicle allocation poore total par"}
+              </p>
+            )}
+          </div>
+
           <div className="grid gap-2 sm:grid-cols-2">
             <FileUploadField
               label="Attachment (Bill / Image / PDF)"
@@ -571,7 +660,7 @@ export function VehicleExpenseClient({
             <Button
               disabled={
                 busy ||
-                !form.headId ||
+                (usingSplit ? Math.abs(splitTotal - billTotal) > 0.009 : !form.headId) ||
                 (validItems.length === 0 && form.bulkAmount <= 0) ||
                 (form.paymentMode === "CREDIT" ? !form.partyId : !form.bankPartyId)
               }

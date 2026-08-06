@@ -54,6 +54,8 @@ export interface OfficeTxnRow {
   refNo: string;
   remarks: string;
   attachmentPath: string | null;
+  /** optional head-wise split of the same bill */
+  lines: { headId: string; head: string; amount: number; remarks: string }[];
   /** live position from the shared settlement engine */
   settled: number;
   outstanding: number;
@@ -83,6 +85,8 @@ const emptyForm = {
   remarks: "",
   attachmentPath: null as string | null,
   attachmentName: "",
+  // one bill, many heads: optional split rows (head + amount + note)
+  lines: [] as { headId: string | null; amount: number; remarks: string }[],
 };
 
 export function OfficeTxnClient({
@@ -128,6 +132,7 @@ export function OfficeTxnClient({
       remarks: row.remarks,
       attachmentPath: row.attachmentPath,
       attachmentName: "",
+      lines: row.lines.map((l) => ({ headId: l.headId, amount: l.amount, remarks: l.remarks })),
     });
     setOpen(true);
   };
@@ -157,6 +162,11 @@ export function OfficeTxnClient({
 
   const heads = headOptions.filter((h) => h.meta === form.txnType);
 
+  // valid split lines; when ≥2 the bill is multi-head and their sum drives it
+  const splitLines = form.lines.filter((l) => l.headId && l.amount > 0);
+  const splitTotal = Math.round(splitLines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+  const usingSplit = splitLines.length >= 2;
+
   const submit = async () => {
     setBusy(true);
     try {
@@ -164,11 +174,14 @@ export function OfficeTxnClient({
         id: form.id,
         date: textToIso(form.dateText),
         txnType: form.txnType,
-        headId: form.headId ?? "",
+        headId: usingSplit ? splitLines[0].headId ?? "" : form.headId ?? "",
+        lines: usingSplit
+          ? splitLines.map((l) => ({ headId: l.headId as string, amount: l.amount, remarks: l.remarks || null }))
+          : [],
         partyId: form.partyId,
         paymentMode: form.paymentMode === "CREDIT" ? null : form.paymentMode,
         bankPartyId: form.paymentMode === "CREDIT" ? null : form.bankPartyId,
-        amount: form.amount,
+        amount: usingSplit ? splitTotal : form.amount,
         gstPct: form.gstPct,
         gstAmount: form.gstAmount,
         refNo: form.refNo,
@@ -543,6 +556,83 @@ export function OfficeTxnClient({
               <Label className="text-xs">Remarks</Label>
               <Input className="h-8" value={form.remarks} onChange={(e) => set({ remarks: e.target.value })} />
             </div>
+
+            {/* one bill, many heads: optional head-wise split */}
+            <div className="space-y-1 sm:col-span-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">
+                  Head-wise Split (optional — same bill, alag-alag heads; jaise Spare Parts +
+                  Repair Labour)
+                </Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() =>
+                    set({ lines: [...form.lines, { headId: null, amount: 0, remarks: "" }] })
+                  }
+                >
+                  + Line
+                </Button>
+              </div>
+              {form.lines.map((l, i) => (
+                <div key={i} className="flex flex-wrap items-center gap-1.5">
+                  <div className="w-56">
+                    <MasterCombobox
+                      options={heads}
+                      value={l.headId}
+                      onChange={(v) =>
+                        set({ lines: form.lines.map((x, j) => (j === i ? { ...x, headId: v } : x)) })
+                      }
+                      placeholder="Head..."
+                    />
+                  </div>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    className="h-8 w-28 text-right"
+                    placeholder="Amount"
+                    value={l.amount ? String(l.amount) : ""}
+                    onChange={(e) =>
+                      set({
+                        lines: form.lines.map((x, j) =>
+                          j === i ? { ...x, amount: Number(e.target.value) || 0 } : x
+                        ),
+                      })
+                    }
+                  />
+                  <Input
+                    className="h-8 w-44"
+                    placeholder="Note (optional)"
+                    value={l.remarks}
+                    onChange={(e) =>
+                      set({
+                        lines: form.lines.map((x, j) =>
+                          j === i ? { ...x, remarks: e.target.value } : x
+                        ),
+                      })
+                    }
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-destructive"
+                    onClick={() => set({ lines: form.lines.filter((_, j) => j !== i) })}
+                  >
+                    ✕
+                  </Button>
+                </div>
+              ))}
+              {usingSplit && (
+                <p className="text-xs text-muted-foreground">
+                  Split total <b className="tabular-nums">{splitTotal.toFixed(2)}</b> hi bill ka
+                  amount banega — har head apne hisse me ledger/P&amp;L me jayega; supplier aur
+                  payment poore total par.
+                </p>
+              )}
+            </div>
             <div className="space-y-1 sm:col-span-3">
               <Label className="text-xs">Attachment (optional — PDF / JPG / PNG)</Label>
               <div className="flex flex-wrap items-center gap-2">
@@ -576,8 +666,7 @@ export function OfficeTxnClient({
               onClick={submit}
               disabled={
                 busy ||
-                !form.headId ||
-                form.amount <= 0 ||
+                (usingSplit ? splitTotal <= 0 : !form.headId || form.amount <= 0) ||
                 (form.paymentMode === "CREDIT" ? !form.partyId : !form.bankPartyId)
               }
             >

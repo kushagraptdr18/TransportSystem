@@ -54,7 +54,7 @@ export async function VehicleExpensesTab({
       const [vouchers, vehicles, heads, parties, banks] = await Promise.all([
         tx.vehicleExpenseVoucher.findMany({
           where,
-          include: { items: true },
+          include: { items: true, lines: true },
           orderBy: [{ date: "desc" }, { createdAt: "desc" }],
         }),
         tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
@@ -104,6 +104,12 @@ export async function VehicleExpensesTab({
       vehicle: vehicleById.get(i.vehicleId)?.number ?? "",
       ownership: vehicleById.get(i.vehicleId)?.ownershipType ?? "",
       amount: toNum(String(i.amount)),
+    })),
+    lines: v.lines.map((l) => ({
+      headId: l.headId,
+      head: headName.get(l.headId) ?? "",
+      amount: toNum(String(l.amount)),
+      remarks: l.remarks ?? "",
     })),
   }));
   if (searchParams.ownership) {

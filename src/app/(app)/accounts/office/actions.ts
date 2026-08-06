@@ -48,6 +48,17 @@ const schema = z.object({
   refNo: z.string().nullish(), // free alphanumeric external reference
   remarks: z.string().nullish(),
   attachmentPath: z.string().nullish(),
+  // one bill, many heads (optional): head-wise split of the same bill —
+  // spare parts + repair labour on one invoice. Sum must equal `amount`.
+  lines: z
+    .array(
+      z.object({
+        headId: z.string().min(1),
+        amount: z.number().min(0.01),
+        remarks: z.string().nullish(),
+      })
+    )
+    .default([]),
 });
 
 export async function saveOfficeTransaction(
@@ -72,6 +83,18 @@ export async function saveOfficeTransaction(
     };
   }
 
+  // a multi-head bill leads with its first line's head; the total must match
+  if (d.lines.length) {
+    const lineSum = Math.round(d.lines.reduce((s, l) => s + l.amount, 0) * 100) / 100;
+    if (Math.abs(lineSum - d.amount) > 0.009) {
+      return {
+        ok: false,
+        error: `Head-wise split (${lineSum.toFixed(2)}) must equal the bill amount (${d.amount.toFixed(2)}).`,
+      };
+    }
+    d.headId = d.lines[0].headId;
+  }
+
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const head = await tx.accountHead.findFirst({ where: { id: d.headId } });
@@ -81,6 +104,23 @@ export async function saveOfficeTransaction(
           ok: false as const,
           error: `"${head.name}" is a ${head.kind} head — select a matching ${d.txnType} head.`,
         };
+      }
+      // every split head must exist and match the entry's side
+      const lineHeads = d.lines.length
+        ? await tx.accountHead.findMany({ where: { id: { in: d.lines.map((l) => l.headId) } } })
+        : [];
+      if (d.lines.length) {
+        const byId = new Map(lineHeads.map((h) => [h.id, h]));
+        for (const l of d.lines) {
+          const lh = byId.get(l.headId);
+          if (!lh) return { ok: false as const, error: "A split head was not found." };
+          if (lh.kind !== d.txnType) {
+            return {
+              ok: false as const,
+              error: `"${lh.name}" is a ${lh.kind} head — every split line must be a ${d.txnType} head.`,
+            };
+          }
+        }
       }
 
       // Once a voucher has settled against this entry, the entry can no longer
@@ -172,6 +212,20 @@ export async function saveOfficeTransaction(
         });
       }
 
+      // replace the head-wise split (empty array clears it back to single-head)
+      await tx.officeTxnLine.deleteMany({ where: { txnId: id } });
+      if (d.lines.length) {
+        await tx.officeTxnLine.createMany({
+          data: d.lines.map((l) => ({
+            tenantId: session.tenantId,
+            txnId: id,
+            headId: l.headId,
+            amount: l.amount,
+            remarks: l.remarks || null,
+          })),
+        });
+      }
+
       // ---- automatic double-entry posting ----
       const common = {
         date,
@@ -186,14 +240,25 @@ export async function saveOfficeTransaction(
       // outstanding on the supplier/party ledger until settled by a voucher
       const paid = !!values.paymentMode && !!values.bankPartyId;
       const entries: LedgerPostEntry[] = [];
+      // multi-head bill: one head leg per split line; single-head: one leg
+      const lineHeadName = new Map(lineHeads.map((h) => [h.id, h.name]));
+      const headLegs = d.lines.length
+        ? d.lines.map((l) => ({
+            headId: l.headId,
+            amount: l.amount,
+            narrTail: `${lineHeadName.get(l.headId) ?? ""}${l.remarks ? " — " + l.remarks : ""}`,
+          }))
+        : [{ headId: d.headId, amount: d.amount, narrTail: label }];
       if (d.txnType === "EXPENSE") {
-        entries.push({
-          ...common,
-          accountHeadId: d.headId,
-          side: "DEBIT",
-          amount: d.amount,
-          narration: `Office expense ${voucherNo}: ${label}`,
-        });
+        for (const leg of headLegs) {
+          entries.push({
+            ...common,
+            accountHeadId: leg.headId,
+            side: "DEBIT",
+            amount: leg.amount,
+            narration: `Office expense ${voucherNo}: ${leg.narrTail}`,
+          });
+        }
         if (values.partyId) {
           // supplier bill — stays outstanding unless paid immediately
           entries.push({
@@ -251,13 +316,15 @@ export async function saveOfficeTransaction(
             });
           }
         }
-        entries.push({
-          ...common,
-          accountHeadId: d.headId,
-          side: "CREDIT",
-          amount: d.amount,
-          narration: `Office income ${voucherNo}: ${label}`,
-        });
+        for (const leg of headLegs) {
+          entries.push({
+            ...common,
+            accountHeadId: leg.headId,
+            side: "CREDIT",
+            amount: leg.amount,
+            narration: `Office income ${voucherNo}: ${leg.narrTail}`,
+          });
+        }
       }
       await postLedger(tx, session, entries);
 
