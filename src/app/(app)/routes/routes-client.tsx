@@ -4,6 +4,7 @@ import * as React from "react";
 import { Phone } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { waLink } from "@/lib/phone";
+import { InfoHint } from "@/components/ui/info-hint";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,9 +38,9 @@ export interface RouteRow {
 }
 
 const STATUS_META: Record<RouteRow["status"], { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
-  ALIVE: { label: "🟢 Zinda", variant: "default" },
-  COOLING: { label: "🟠 Thanda", variant: "secondary" },
-  SLEEPING: { label: "🔴 Sota hua", variant: "destructive" },
+  ALIVE: { label: "🟢 Active", variant: "default" },
+  COOLING: { label: "🟠 Slowing", variant: "secondary" },
+  SLEEPING: { label: "🔴 Inactive", variant: "destructive" },
   OCCASIONAL: { label: "Occasional", variant: "outline" },
 };
 
@@ -71,15 +72,17 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
     <div className="space-y-3 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h1 className="page-title">Route Heartbeat</h1>
-          <p className="text-sm text-muted-foreground">
-            Kaun sa lane zinda hai, kaun sota — aakhri trip ke din se. Sote route par click
-            karke us lane ke top parties ko turant call karo, business chhutne se pehle.
-          </p>
+          <h1 className="page-title flex items-center gap-2">
+            Route Activity Monitor
+            <InfoHint>
+              Lane-wise trip activity from the last trip date. Inactive route par click karke us
+              lane ke top parties ko turant call karo, business chhutne se pehle.
+            </InfoHint>
+          </h1>
         </div>
         <ExportButton
           rows={list}
-          fileName="route-heartbeat"
+          fileName="route-activity"
           sheetName="Routes"
           columns={[
             { header: "Route", key: "route", width: 30 },
@@ -102,9 +105,9 @@ export function RoutesClient({ rows }: { rows: RouteRow[] }) {
         {(
           [
             ["ALL", `All (${rows.length})`],
-            ["SLEEPING", `🔴 Sote hue (${counts.SLEEPING})`],
-            ["COOLING", `🟠 Thande (${counts.COOLING})`],
-            ["ALIVE", `🟢 Zinda (${counts.ALIVE})`],
+            ["SLEEPING", `🔴 Inactive (${counts.SLEEPING})`],
+            ["COOLING", `🟠 Slowing (${counts.COOLING})`],
+            ["ALIVE", `🟢 Active (${counts.ALIVE})`],
             ["OCCASIONAL", `Occasional (${counts.OCCASIONAL})`],
           ] as const
         ).map(([s, label]) => (

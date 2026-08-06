@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
 import { FinanceCardsSection } from "./finance-cards";
+import { InfoHint } from "@/components/ui/info-hint";
 
 export const dynamic = "force-dynamic";
 
@@ -139,11 +140,9 @@ export default async function DashboardPage() {
                 <FileCheck2 className="h-6 w-6" />
               </span>
               <span className="min-w-0">
-                <span className="block text-lg font-semibold group-hover:text-primary">
+                <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
                   E-Way Bill (3 Days)
-                </span>
-                <span className="block text-sm text-muted-foreground">
-                  Expiring e-way bills — check &amp; extend from one screen
+                  <InfoHint>Expiring e-way bills — check &amp; extend from one screen</InfoHint>
                 </span>
                 <span className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
                   <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
@@ -168,11 +167,9 @@ export default async function DashboardPage() {
                 <ClipboardCheck className="h-6 w-6" />
               </span>
               <span className="min-w-0">
-                <span className="block text-lg font-semibold group-hover:text-primary">
+                <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
                   Document Registration
-                </span>
-                <span className="block text-sm text-muted-foreground">
-                  Renewal workflow — bulk / individual status
+                  <InfoHint>Renewal workflow — bulk / individual status update</InfoHint>
                 </span>
                 <span className="mt-2 flex flex-wrap gap-1.5 text-xs font-medium">
                   {docTypeCounts.length === 0 ? (
@@ -204,9 +201,9 @@ export default async function DashboardPage() {
                 <IndianRupee className="h-6 w-6" />
               </span>
               <span className="min-w-0">
-                <span className="block text-lg font-semibold group-hover:text-primary">EMI Due</span>
-                <span className="block text-sm text-muted-foreground">
-                  Upcoming loan EMIs — pay from one list
+                <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
+                  EMI Due
+                  <InfoHint>Upcoming loan EMIs — pay from one list</InfoHint>
                 </span>
                 <span className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
                   <span className="rounded bg-blue-500/10 px-2 py-0.5 text-blue-600">
@@ -230,25 +227,26 @@ export default async function DashboardPage() {
                 <MapIcon className="h-6 w-6" />
               </span>
               <span className="min-w-0">
-                <span className="block text-lg font-semibold group-hover:text-primary">
-                  Route Heartbeat
-                </span>
-                <span className="block text-sm text-muted-foreground">
-                  Kaun sa lane zinda hai, kaun sota — parties ko time par jagao
+                <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
+                  Route Activity Monitor
+                  <InfoHint>
+                    Lane-wise trip activity from the last trip date — reconnect with parties on
+                    inactive routes before they go cold
+                  </InfoHint>
                 </span>
                 <span className="mt-2 flex flex-wrap gap-2 text-xs font-medium">
                   {laneSleeping > 0 && (
                     <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
-                      🔴 Sote: {laneSleeping}
+                      🔴 Inactive: {laneSleeping}
                     </span>
                   )}
                   {laneCooling > 0 && (
                     <span className="rounded bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-500">
-                      🟠 Thande: {laneCooling}
+                      🟠 Slowing: {laneCooling}
                     </span>
                   )}
                   <span className="rounded bg-emerald-500/10 px-2 py-0.5 text-emerald-600">
-                    🟢 Zinda: {laneAlive}
+                    🟢 Active: {laneAlive}
                   </span>
                 </span>
               </span>
@@ -263,9 +261,9 @@ export default async function DashboardPage() {
                 <UserSearch className="h-6 w-6" />
               </span>
               <span className="min-w-0">
-                <span className="block text-lg font-semibold group-hover:text-primary">Party 360°</span>
-                <span className="block text-sm text-muted-foreground">
-                  Party ka phone aaya? Poora chittha ek screen par — position, bills, bhav
+                <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
+                  Party 360°
+                  <InfoHint>Party ka poora chittha ek screen par — position, bills, bhav</InfoHint>
                 </span>
               </span>
             </CardContent>
@@ -279,9 +277,9 @@ export default async function DashboardPage() {
                 <Truck className="h-6 w-6" />
               </span>
               <span className="min-w-0">
-                <span className="block text-lg font-semibold group-hover:text-primary">Vehicle 360°</span>
-                <span className="block text-sm text-muted-foreground">
-                  Gaadi ki poori kahani — kamai, kharcha, EMI, documents, driver
+                <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
+                  Vehicle 360°
+                  <InfoHint>Gaadi ki poori kahani — kamai, kharcha, EMI, documents, driver</InfoHint>
                 </span>
               </span>
             </CardContent>
