@@ -11,11 +11,13 @@ import { Picker360 } from "../party-360/picker";
 
 export const dynamic = "force-dynamic";
 
-/** every refType the vehicle module writes to the ledger (same list the
- *  Vehicle Operational P&L uses) */
-const VEHICLE_REF_TYPES = [
-  "VEHICLE_EXPENSE",
-  "VEH_EXP_ALLOC",
+/**
+ * Vehicle-stamped ledger refTypes (urea, driver costs). Vehicle EXPENSE
+ * vouchers are deliberately NOT here: their head legs carry no vehicle stamp —
+ * the per-vehicle share lives in the allocation items, which are read
+ * separately below.
+ */
+const STAMPED_REF_TYPES = [
   "ADBLUE",
   "TRIP_UREA",
   "DRIVER_ADVANCE",
@@ -48,7 +50,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
     if (!vehicle) return { vehicles, view: null };
 
     const scope = { firmId: session.firmId, fyId: session.fyId };
-    const [chalans, slips, headSums, heads, loans, docs, assignments, drivers, works] =
+    const [chalans, slips, headSums, expenseItems, heads, loans, docs, assignments, drivers, works] =
       await Promise.all([
         tx.chalan.findMany({
           where: { ...scope, deletedAt: null, cancelledAt: null, vehicleId },
@@ -69,8 +71,17 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
         }),
         tx.ledgerEntry.groupBy({
           by: ["accountHeadId", "side"],
-          where: { ...scope, vehicleId, accountHeadId: { not: null }, refType: { in: VEHICLE_REF_TYPES } },
+          where: { ...scope, vehicleId, accountHeadId: { not: null }, refType: { in: STAMPED_REF_TYPES } },
           _sum: { amount: true },
+        }),
+        // this vehicle's share of every expense bill (the head leg itself is
+        // never vehicle-stamped — the allocation items carry the split)
+        tx.vehicleExpenseItem.findMany({
+          where: {
+            vehicleId,
+            voucher: { ...scope, deletedAt: null, txnType: "EXPENSE" },
+          },
+          include: { voucher: { include: { lines: true } } },
         }),
         tx.accountHead.findMany({ select: { id: true, name: true } }),
         tx.loan.findMany({
@@ -90,7 +101,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
           take: 6,
         }),
       ]);
-    return { vehicles, view: { vehicle, chalans, slips, headSums, heads, loans, docs, assignments, drivers, works } };
+    return { vehicles, view: { vehicle, chalans, slips, headSums, expenseItems, heads, loans, docs, assignments, drivers, works } };
   });
 
   const { vehicles, view } = data;
@@ -102,7 +113,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
   );
 
   if (view) {
-    const { vehicle, chalans, slips, headSums, heads, loans, docs, assignments, drivers, works } = view;
+    const { vehicle, chalans, slips, headSums, expenseItems, heads, loans, docs, assignments, drivers, works } = view;
     const headName = new Map(heads.map((h) => [h.id, h.name]));
     const driverOf = new Map(drivers.map((d) => [d.id, d]));
     const isOwn = vehicle.ownershipType === "OWNER";
@@ -113,7 +124,9 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
     const slipTotal = round2(slips.reduce((s, x) => s + toNum(x.vChalanAmt), 0));
     const earned = round2(chalanTotal + slipTotal);
 
-    // expenses: vehicle-stamped ledger heads, net Dr − Cr
+    // expenses = vehicle-stamped ledger (urea, driver costs) net Dr − Cr,
+    // PLUS this vehicle's share of expense bills from the allocation items —
+    // a multi-head bill's share splits across its lines in proportion
     const perHead = new Map<string, { debit: number; credit: number }>();
     for (const g of headSums) {
       if (!g.accountHeadId) continue;
@@ -122,6 +135,32 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
       if (g.side === "DEBIT") acc.debit = round2(acc.debit + amt);
       else acc.credit = round2(acc.credit + amt);
       perHead.set(g.accountHeadId, acc);
+    }
+    for (const item of expenseItems) {
+      const share = toNum(item.amount);
+      const v = item.voucher;
+      const vTotal = toNum(v.amount);
+      const parts =
+        v.lines.length && vTotal > 0
+          ? v.lines.map((l, idx) => ({
+              headId: l.headId,
+              amount:
+                idx === v.lines.length - 1
+                  ? round2(
+                      share -
+                        v.lines
+                          .slice(0, -1)
+                          .reduce((s, x) => s + round2((share * toNum(x.amount)) / vTotal), 0)
+                    )
+                  : round2((share * toNum(l.amount)) / vTotal),
+            }))
+          : [{ headId: v.headId, amount: share }];
+      for (const p of parts) {
+        if (p.amount <= 0.009) continue;
+        const acc = perHead.get(p.headId) ?? { debit: 0, credit: 0 };
+        acc.debit = round2(acc.debit + p.amount);
+        perHead.set(p.headId, acc);
+      }
     }
     const expenseRows = Array.from(perHead.entries())
       .map(([id, s]) => ({ head: headName.get(id) ?? "", net: round2(s.debit - s.credit) }))
