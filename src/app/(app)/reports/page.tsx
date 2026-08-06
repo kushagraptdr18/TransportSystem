@@ -23,7 +23,6 @@ const SECTIONS: { title: string; links: { label: string; href: string; icon: typ
     title: "Operations",
     links: [
       { label: "LR Register", href: "/reports/browser?src=LR", icon: FileText, desc: "Month-wise bookings, endless scroll" },
-      { label: "Bilty Status", href: "/lr/status", icon: ClipboardCheck, desc: "Track a single LR end to end" },
       { label: "Chalan (Market / Broker)", href: "/reports/browser?src=CHALAN_MARKET", icon: Truck, desc: "Market vehicle chalans and balances" },
       { label: "Chalan (Own / Relative)", href: "/reports/browser?src=CHALAN_OWNREL", icon: Truck, desc: "Own and relative vehicle chalans" },
       { label: "POD Register", href: "/reports/browser?src=POD", icon: ClipboardCheck, desc: "Proof-of-delivery records" },
@@ -55,9 +54,18 @@ const SECTIONS: { title: string; links: { label: string; href: string; icon: typ
   {
     title: "Fleet",
     links: [
-      { label: "Vehicle Profit & Loss", href: "/vehicle/pnl", icon: Wrench, desc: "Vehicle-wise P&L with trip drill-down" },
-      { label: "Trip Expenses", href: "/vehicle/trip-expenses", icon: Truck, desc: "Consolidated trip expense lines" },
-      { label: "Document Renewals", href: "/masters/vehicle-documents?due=30", icon: ClipboardCheck, desc: "Documents expiring in 30 days" },
+      {
+        label: "Vehicle Operational Profit & Loss",
+        href: "/accounts/vehicle-operational-pnl",
+        icon: BarChart3,
+        desc: "Own fleet: trip income vs vehicle costs, driver payments and EMI",
+      },
+      {
+        label: "Trip Profit & Loss with Expenses",
+        href: "/vehicle/pnl",
+        icon: Wrench,
+        desc: "Vehicle-wise trips with expense drill-down",
+      },
     ],
   },
 ];

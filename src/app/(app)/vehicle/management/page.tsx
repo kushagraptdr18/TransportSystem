@@ -19,7 +19,7 @@ const TABS: TabDef[] = [
   { value: "summary", label: "Expense Summary" },
   { value: "finance", label: "Finance" },
   { value: "tracking", label: "Vehicle Tracking" },
-  { value: "pnl", label: "Profit & Loss" },
+  { value: "pnl", label: "Trip Profit & Loss" },
 ];
 
 const SUBTITLE: Record<string, string> = {

@@ -170,11 +170,11 @@ export function VehiclePnlClient({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Vehicle Profit &amp; Loss</h1>
+        <h1 className="text-xl font-semibold">Trip Profit &amp; Loss with Expenses</h1>
         <ExportButton
           rows={rows}
-          fileName="vehicle-pnl"
-          sheetName="Vehicle P&L"
+          fileName="trip-pnl-with-expenses"
+          sheetName="Trip P&L with Expenses"
           columns={[
             { header: "Vehicle No", key: "vehicle" },
             { header: "Ownership", key: "ownership" },
