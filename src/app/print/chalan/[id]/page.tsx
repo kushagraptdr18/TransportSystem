@@ -41,8 +41,32 @@ export default async function ChalanPrintPage({
   const partyName = (id: string) => parties.find((p) => p.id === id)?.name ?? "";
 
   // NOTE: booking freight is intentionally NOT rendered anywhere on the print.
+  const cancelled = !!chalan.cancelledAt;
   const Copy = ({ n }: { n: number }) => (
-    <div className="mx-auto max-w-[190mm] break-after-page border border-black p-4 text-sm">
+    <div className="relative mx-auto max-w-[190mm] break-after-page border border-black p-4 text-sm">
+      {/* a cancelled chalan must scream it on paper — watermark + reason band */}
+      {cancelled && (
+        <>
+          <div
+            className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+            aria-hidden
+          >
+            <span
+              className="rotate-[-28deg] border-8 border-red-600/70 px-10 py-3 text-[64px] font-black tracking-[0.3em] text-red-600/70"
+              style={{ WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }}
+            >
+              CANCELLED
+            </span>
+          </div>
+          <div
+            className="mb-2 border-2 border-red-600 py-1 text-center text-[13px] font-black tracking-widest text-red-600"
+            style={{ WebkitPrintColorAdjust: "exact", printColorAdjust: "exact" }}
+          >
+            CANCELLED{chalan.cancelledAt ? ` on ${formatDate(chalan.cancelledAt)}` : ""}
+            {chalan.cancelReason ? ` — ${chalan.cancelReason}` : ""}
+          </div>
+        </>
+      )}
       {/* firm header */}
       <div className="border-b border-black pb-2 text-center">
         <div className="text-xl font-bold uppercase">{firm?.name}</div>
