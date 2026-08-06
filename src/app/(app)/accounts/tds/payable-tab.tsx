@@ -301,7 +301,6 @@ export async function TdsPayableTab({
           { key: "invoiceAmount", header: "Bill Amount", kind: "money" },
           { key: "tdsPct", header: "TDS %" },
           { key: "tdsAmt", header: "TDS Amount", kind: "money" },
-          { key: "net", header: "Net Payment", kind: "money" },
           { key: "status", header: "TDS Status", kind: "badge" },
           { key: "remarks", header: "Remarks" },
         ]}

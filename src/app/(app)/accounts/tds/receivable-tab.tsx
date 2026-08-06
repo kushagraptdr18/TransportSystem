@@ -213,7 +213,6 @@ export async function TdsReceivableTab({
           { key: "invoiceAmount", header: "Bill Amount", kind: "money" },
           { key: "tdsPct", header: "TDS %" },
           { key: "tdsAmt", header: "TDS Amount", kind: "money" },
-          { key: "net", header: "Net Received", kind: "money" },
           { key: "remarks", header: "Remarks" },
         ]}
         rows={filtered}
