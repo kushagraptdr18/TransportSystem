@@ -3,14 +3,10 @@ services:
     name: transport-tms
     runtime: node
     plan: free
-    # build regenerates the Prisma client; start applies pending migrations
-    # before serving. migrate:prod (prisma migrate deploy) is idempotent, so
-    # running it on every boot is safe and costs nothing when up to date.
-    # Without it a newly added table exists in the schema but not in the
-    # database, and the first query against it fails with a server-side
-    # exception.
+    # build regenerates the Prisma client; start applies migrations (works even
+    # if the dashboard overrides this command with a plain npm build)
     buildCommand: npm ci && npm run build
-    startCommand: npm run migrate:prod && npm start
+    startCommand: npm start
     healthCheckPath: /login
     envVars:
       - key: NODE_VERSION
