@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
-import { ALL_RECEIVABLE_REF_TYPES } from "@/lib/settlement";
+import { ALL_RECEIVABLE_REF_TYPES, settledByRef } from "@/lib/settlement";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport } from "@/components/accounts/simple-report";
 
@@ -70,7 +70,7 @@ export async function OutstandingReceivableTab({
     };
     if (dateWhere) officeWhere.date = dateWhere;
 
-    const [invoices, slips, office, parties, allocations] = await Promise.all([
+    const [invoices, slips, office, parties, settled] = await Promise.all([
       source && source !== "INVOICE"
         ? Promise.resolve([])
         : tx.invoice.findMany({ where: invoiceWhere, orderBy: { invoiceDate: "asc" } }),
@@ -84,32 +84,27 @@ export async function OutstandingReceivableTab({
         where: { ledgerGroup: { in: ["CONSIGNEE_CONSIGNOR", "OWNER_BROKER"] }, isActive: true },
         orderBy: { name: "asc" },
       }),
-      tx.voucherAllocation.findMany({
-        where: {
-          refType: { in: [...ALL_RECEIVABLE_REF_TYPES, "BROKER_ENTRY"] },
-          // only live vouchers of this firm + FY count towards received
-          voucher: { deletedAt: null, firmId: session.firmId, fyId: session.fyId },
-        },
-        select: { refId: true, amount: true, tdsAmt: true, deduction: true, otherAmt: true },
+      // the ONE settlement formula (money + TDS + shortage + other + round-off,
+      // live vouchers of this firm + FY) — the same helper every register and
+      // voucher grid reads, so a rounding or an adjustment can never linger
+      // here as a phantom receivable. BROKER_ENTRY allocations are deliberately
+      // NOT counted: a voucher allocated to a broker slip settles its OWNER
+      // (payable) side; the party side settles only from the slip's own screen.
+      settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ALL_RECEIVABLE_REF_TYPES,
       }),
     ]);
-    return { invoices, slips, office, parties, allocations };
-  }).then(({ invoices, slips, office, parties, allocations }) => {
-    const settledByRef = new Map<string, number>();
-    for (const a of allocations) {
-      // approved deductions (TDS / deduction) settle the bill just like money
-      // received — adjusted amounts never remain outstanding
-      const settled =
-        toNum(String(a.amount)) + toNum(String(a.tdsAmt)) + toNum(String(a.deduction));
-      settledByRef.set(a.refId, (settledByRef.get(a.refId) ?? 0) + settled);
-    }
+    return { invoices, slips, office, parties, settled };
+  }).then(({ invoices, slips, office, parties, settled }) => {
     const partyById = new Map(parties.map((p) => [p.id, p.name]));
     const status = (total: number, outstanding: number) =>
       outstanding <= 0.009 ? "PAID" : outstanding < total - 0.009 ? "PARTLY PAID" : "UNPAID";
 
     const invoiceRows = invoices.map((i) => {
       const net = toNum(String(i.netTotal));
-      const received = (settledByRef.get(i.id) ?? 0) + toNum(String(i.advance));
+      const received = (settled.get(i.id) ?? 0) + toNum(String(i.advance));
       const outstanding = Math.round((net - received) * 100) / 100;
       return {
         refNo: i.invoiceNo,
@@ -124,16 +119,17 @@ export async function OutstandingReceivableTab({
       };
     });
 
-    // broker slip party side: total = pNetAmt; received = advance + settlement
-    // (round-off / shortage written off at settlement count as adjusted)
+    // broker slip party side: total = pNetAmt; received = advance + the slip's
+    // own settlement fields (round-off / shortage written off there count as
+    // adjusted). Voucher allocations do NOT contribute — a voucher allocated
+    // to a slip settles its owner (payable) side, never this one.
     const slipRows = slips.map((s) => {
       const net = toNum(String(s.pNetAmt));
       const received =
         toNum(String(s.pAdvance)) +
         toNum(String(s.pPaidAmount)) +
         toNum(String(s.pRoundOff)) +
-        toNum(String(s.pShortage)) +
-        (settledByRef.get(s.id) ?? 0);
+        toNum(String(s.pShortage));
       const outstanding = Math.round((net - received) * 100) / 100;
       return {
         refNo: s.slipNo,
@@ -150,7 +146,7 @@ export async function OutstandingReceivableTab({
 
     const officeRows = office.map((o) => {
       const net = toNum(String(o.amount));
-      const received = settledByRef.get(o.id) ?? 0;
+      const received = settled.get(o.id) ?? 0;
       const outstanding = Math.round((net - received) * 100) / 100;
       return {
         refNo: o.refNo || o.voucherNo,

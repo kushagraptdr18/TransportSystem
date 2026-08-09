@@ -335,9 +335,11 @@ export function VoucherEntry({
   // ---- live totals ----
   const selected = rows.filter((r) => r.selected);
   const tdsTotal = round2(selected.reduce((s, r) => s + r.tds, 0));
-  // round-off settles the reference exactly like a deduction, so the party is
-  // still settled gross and the ledger stays balanced
-  const dedTotal = round2(selected.reduce((s, r) => s + r.shortage + r.other + r.roundOff, 0));
+  // round-off is NOT part of the header deduction or the gross amount: the
+  // server posts it on its own (party leg + Round Off head) from the
+  // allocation rows, so carrying it here too would settle the party twice
+  // and misfile it under the Shortage ledger
+  const dedTotal = round2(selected.reduce((s, r) => s + r.shortage + r.other, 0));
   const roundOffTotal = round2(selected.reduce((s, r) => s + r.roundOff, 0));
   const allocated = round2(selected.reduce((s, r) => s + r.receive, 0));
   // previously received/paid advances adjusted against today's references —
@@ -423,7 +425,9 @@ export function VoucherEntry({
         creditHeadId: type === "JOURNAL" ? headId(creditLedgerId) : null,
         chequeNo: chequeNo || null,
         chequeDate: chequeDateText ? toIso(chequeDateText) : null,
-        // gross = money moved + TDS + deductions (party settles gross)
+        // gross = money moved + TDS + deductions, WITHOUT round-off — the
+        // server settles the party for the round-off through its own pair of
+        // ledger legs derived from the allocation rows
         amount: isMoney ? gross : money,
         tdsAmt: isMoney ? tdsTotal : 0,
         deduction: isMoney ? dedTotal : 0,
@@ -999,13 +1003,13 @@ export function VoucherEntry({
                   ["Advance Adjusted", advUsed, advUsed > 0.009 ? "text-primary" : ""],
                   ["Allocated to references", allocated, overAllocated ? "text-destructive" : ""],
                   ["TDS", tdsTotal, ""],
-                  ["Shortage + Other Ded.", round2(dedTotal - roundOffTotal), ""],
+                  ["Shortage + Other Ded.", dedTotal, ""],
                   ["Round Off", roundOffTotal, ""],
                   [
                     advanceRemainder > 0.009
                       ? `→ Party Advance (${type === "RECEIPT" ? "received" : "paid"})`
                       : "Gross Settled",
-                    advanceRemainder > 0.009 ? advanceRemainder : gross,
+                    advanceRemainder > 0.009 ? advanceRemainder : round2(gross + roundOffTotal),
                     advanceRemainder > 0.009 ? "text-primary" : "",
                   ],
                 ] as [string, number, string][]

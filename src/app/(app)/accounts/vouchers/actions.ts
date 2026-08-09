@@ -289,7 +289,13 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         }
         for (const [refType, rows] of Array.from(byType.entries())) {
           const refIds = rows.map((r) => r.refId);
-          const already = await allocatedByRef(tx, refType, refIds, data.id);
+          const already = await allocatedByRef(
+            tx,
+            { firmId: session.firmId, fyId: session.fyId },
+            refType,
+            refIds,
+            data.id
+          );
           // gross document value per ref, per module
           const gross = new Map<string, number>();
           if (refType === "BILLING" || refType === "GST_BILLING") {
@@ -507,34 +513,51 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
             });
           }
         }
-        // Per-allocation round-off settles the reference but was never posted,
-        // so the party ledger disagreed with the outstanding register by exactly
-        // the rounding. It posts here to the one common Round Off ledger:
-        // knocked off the payable/receivable => Round Off income, added to it
-        // (a negative round-off) => Round Off expense, same head either way.
+        // Per-allocation round-off settles the reference and posts here — and
+        // ONLY here. The header amount/deduction sent by the entry screen
+        // exclude it, so this pair is the single posting of the rounding:
+        // party (or vehicle) leg settles the counter ledger for it, the mirror
+        // leg goes to the one common Round Off head. Knocked off the
+        // payable/receivable => Round Off income, added to it (a negative
+        // round-off) => Round Off expense, same head either way.
         const allocRoundOff = round2(data.allocations.reduce((s, a) => s + a.roundOff, 0));
-        if (Math.abs(allocRoundOff) > 0.009 && (data.partyId || data.accountHeadId)) {
-          const headId = await ensureAdjustmentHead(tx, session.tenantId, "Round Off", data.type);
+        if (Math.abs(allocRoundOff) > 0.009) {
           const amount = Math.abs(allocRoundOff);
           const partySide = allocRoundOff > 0 ? counterSide : bankSide;
           const headSide = allocRoundOff > 0 ? bankSide : counterSide;
-          entries.push(
-            {
+          const roNarration = `Round off on ${data.type.toLowerCase()} voucher ${data.voucherNo}`;
+          // the counter leg lands wherever the main gross leg went, so the
+          // rounding can never strand a ledger this voucher does not post to
+          const counterLegs: LedgerPostEntry[] = [];
+          if (postParty && (data.partyId || data.accountHeadId)) {
+            counterLegs.push({
               ...common,
               partyId: data.partyId || null,
               accountHeadId: data.partyId ? null : data.accountHeadId,
               side: partySide,
               amount,
-              narration: `Round off on ${data.type.toLowerCase()} voucher ${data.voucherNo}`,
-            },
-            {
+              narration: roNarration,
+            });
+          }
+          if (postVehicle && data.vehicleId) {
+            counterLegs.push({
+              ...common,
+              vehicleId: data.vehicleId,
+              side: partySide,
+              amount,
+              narration: roNarration,
+            });
+          }
+          if (counterLegs.length) {
+            const headId = await ensureAdjustmentHead(tx, session.tenantId, "Round Off", data.type);
+            entries.push(...counterLegs, {
               ...common,
               accountHeadId: headId,
               side: headSide,
               amount,
-              narration: `Round off on ${data.type.toLowerCase()} voucher ${data.voucherNo}`,
-            }
-          );
+              narration: roNarration,
+            });
+          }
         }
       }
 
@@ -809,6 +832,7 @@ export interface AllocationCandidate {
  */
 async function allocatedByRef(
   tx: Tx,
+  scope: { firmId: string; fyId: string },
   refType: ModuleLink,
   refIds: string[],
   excludeVoucherId?: string | null
@@ -819,7 +843,14 @@ async function allocatedByRef(
     where: {
       refType,
       refId: { in: refIds },
-      voucher: { deletedAt: null, ...(excludeVoucherId ? { id: { not: excludeVoucherId } } : {}) },
+      // same firm + FY scope as settledByRef/payableSettlement, so this guard
+      // and the registers can never disagree about what is already settled
+      voucher: {
+        deletedAt: null,
+        firmId: scope.firmId,
+        fyId: scope.fyId,
+        ...(excludeVoucherId ? { id: { not: excludeVoucherId } } : {}),
+      },
     },
     _sum: { amount: true, tdsAmt: true, deduction: true, otherAmt: true, roundOff: true },
   });
@@ -892,7 +923,7 @@ export async function getAllocationCandidates(input: {
         },
         orderBy: { invoiceDate: "asc" },
       });
-      const paid = await allocatedByRef(tx, moduleLink, invoices.map((i) => i.id), voucherId);
+      const paid = await allocatedByRef(tx, scope, moduleLink, invoices.map((i) => i.id), voucherId);
       for (const inv of invoices) {
         const bill = Number(inv.grandTotal);
         const outstanding = round2(bill - Number(inv.advance) - (paid.get(inv.id) ?? 0));
@@ -982,7 +1013,7 @@ export async function getAllocationCandidates(input: {
         where: { ...scope },
         orderBy: { slipDate: "asc" },
       });
-      const paid = await allocatedByRef(tx, moduleLink, slips.map((s) => s.id), voucherId);
+      const paid = await allocatedByRef(tx, scope, moduleLink, slips.map((s) => s.id), voucherId);
       for (const s of slips) {
         const outstanding = round2(Number(s.balance) - (paid.get(s.id) ?? 0));
         if (outstanding > 0)
@@ -1001,7 +1032,7 @@ export async function getAllocationCandidates(input: {
         where: { ...scope, type: "CASH_MEMO", ...(partyId ? { partyId } : {}) },
         orderBy: { delDate: "asc" },
       });
-      const paid = await allocatedByRef(tx, moduleLink, deliveries.map((d) => d.id), voucherId);
+      const paid = await allocatedByRef(tx, scope, moduleLink, deliveries.map((d) => d.id), voucherId);
       for (const d of deliveries) {
         const outstanding = round2(Number(d.total) - (paid.get(d.id) ?? 0));
         if (outstanding > 0)

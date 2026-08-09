@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
+import { payableSettlement } from "@/lib/settlement";
 import { PrintToolbar } from "./print-toolbar";
 
 export const dynamic = "force-dynamic";
@@ -25,18 +26,59 @@ export default async function ChalanPrintPage({
       },
     });
     if (!chalan) return null;
-    const [firm, broker, vehicle, cities, parties] = await Promise.all([
-      tx.firm.findUnique({ where: { id: chalan.firmId } }),
-      tx.party.findUnique({ where: { id: chalan.brokerId } }),
-      tx.vehicle.findUnique({ where: { id: chalan.vehicleId } }),
-      tx.city.findMany(),
-      tx.party.findMany(),
-    ]);
-    return { chalan, firm, broker, vehicle, cities, parties };
+    const [firm, broker, vehicle, cities, parties, positions, voucherAllocations] =
+      await Promise.all([
+        tx.firm.findUnique({ where: { id: chalan.firmId } }),
+        tx.party.findUnique({ where: { id: chalan.brokerId } }),
+        tx.vehicle.findUnique({ where: { id: chalan.vehicleId } }),
+        tx.city.findMany(),
+        tx.party.findMany(),
+        // the SAME live settlement the register / status drawer / voucher grid
+        // read — the print must never fall back to the frozen stored balance
+        payableSettlement(tx, {
+          firmId: chalan.firmId,
+          fyId: chalan.fyId,
+          refType: "FREIGHT_CHALLAN",
+          docs: [
+            {
+              id: chalan.id,
+              balance: toNum(chalan.balance),
+              ownPaid: toNum(chalan.balPaidAmount),
+              ownShortage: toNum(chalan.balShortage),
+              ownRoundOff: toNum(chalan.balRoundOff),
+              ownAdvanceAdjusted: toNum(chalan.balAdvanceAdjusted),
+            },
+          ],
+        }),
+        // per-voucher detail so the settlement block can name each payment
+        tx.voucherAllocation.findMany({
+          where: {
+            refType: "FREIGHT_CHALLAN",
+            refId: chalan.id,
+            voucher: { deletedAt: null, firmId: chalan.firmId, fyId: chalan.fyId },
+          },
+          include: {
+            voucher: {
+              select: { voucherNo: true, voucherDate: true, type: true, bankPartyId: true },
+            },
+          },
+          orderBy: { voucher: { voucherDate: "asc" } },
+        }),
+      ]);
+    return {
+      chalan,
+      firm,
+      broker,
+      vehicle,
+      cities,
+      parties,
+      position: positions.get(chalan.id)!,
+      voucherAllocations,
+    };
   });
 
   if (!data) notFound();
-  const { chalan, firm, broker, vehicle, cities, parties } = data;
+  const { chalan, firm, broker, vehicle, cities, parties, position, voucherAllocations } = data;
   const cityName = (id: string | null) => (id ? cities.find((c) => c.id === id)?.name ?? "" : "");
   const partyName = (id: string) => parties.find((p) => p.id === id)?.name ?? "";
 
@@ -270,7 +312,7 @@ export default async function ChalanPrintPage({
                   {formatMoney(toNum(chalan.advanceTotal))}
                 </td>
               </tr>
-              <tr className="font-bold">
+              <tr>
                 <td colSpan={3} className="border border-black px-1 py-0.5">
                   Balance Payable
                 </td>
@@ -278,24 +320,54 @@ export default async function ChalanPrintPage({
                   {formatMoney(toNum(chalan.balance))}
                 </td>
               </tr>
+              {position.settled > 0.009 && (
+                <tr>
+                  <td colSpan={3} className="border border-black px-1 py-0.5">
+                    Less: Paid / Adjusted
+                  </td>
+                  <td className="border border-black px-1 py-0.5 text-right">
+                    {formatMoney(position.settled)}
+                  </td>
+                </tr>
+              )}
+              {/* always printed, always the LIVE figure — a chalan settled
+                  through a payment voucher must read 0.00 here, never the
+                  frozen balance */}
+              <tr className="font-bold">
+                <td colSpan={3} className="border border-black px-1 py-0.5">
+                  Balance Due
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(position.outstanding)}
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* balance payment settlement */}
-      {chalan.paymentStatus === "PAID" && (
+      {/* balance settlement — chalan-screen payment and payment-voucher
+          settlements alike, from the one shared calculation */}
+      {position.settled > 0.009 && (
         <table className="mt-3 w-full border-collapse text-xs">
           <thead>
             <tr>
-              <th colSpan={6} className="border border-black bg-neutral-100 px-1 py-0.5 text-left">
-                BALANCE PAYMENT — PAID
-                {chalan.balPaymentDate ? ` on ${formatDate(chalan.balPaymentDate)}` : ""}
-                {chalan.balPaymentMode ? ` (${chalan.balPaymentMode.replace("_", "/")})` : ""}
+              <th colSpan={8} className="border border-black bg-neutral-100 px-1 py-0.5 text-left">
+                BALANCE SETTLEMENT —{" "}
+                {position.status === "PAID" ? "FULLY PAID / SETTLED" : position.status}
               </th>
             </tr>
             <tr>
-              {["Balance Amount", "Round Off (−)", "Shortage (−)", "Final Paid Amount", "Paid From", "Remarks"].map((h) => (
+              {[
+                "Date",
+                "Through",
+                "Paid From",
+                "Paid Amount",
+                "Round Off",
+                "Shortage",
+                "TDS / Other",
+                "Advance Adj",
+              ].map((h) => (
                 <th key={h} className="border border-black px-1 py-0.5 text-left">
                   {h}
                 </th>
@@ -303,23 +375,89 @@ export default async function ChalanPrintPage({
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td className="border border-black px-1 py-0.5 text-right">
-                {formatMoney(toNum(chalan.balance))}
+            {position.ownSettled > 0.009 && (
+              <tr>
+                <td className="border border-black px-1 py-0.5">
+                  {chalan.balPaymentDate ? formatDate(chalan.balPaymentDate) : ""}
+                </td>
+                <td className="border border-black px-1 py-0.5">
+                  Chalan payment
+                  {chalan.balPaymentMode ? ` (${chalan.balPaymentMode.replace("_", "/")})` : ""}
+                  {chalan.balRemarks ? ` — ${chalan.balRemarks}` : ""}
+                </td>
+                <td className="border border-black px-1 py-0.5">
+                  {chalan.balPaymentHeadId ? partyName(chalan.balPaymentHeadId) : ""}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(toNum(chalan.balPaidAmount))}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(toNum(chalan.balRoundOff))}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(toNum(chalan.balShortage))}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">-</td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(toNum(chalan.balAdvanceAdjusted))}
+                </td>
+              </tr>
+            )}
+            {voucherAllocations.map((a) => (
+              <tr key={a.id}>
+                <td className="border border-black px-1 py-0.5">
+                  {formatDate(a.voucher.voucherDate)}
+                </td>
+                <td className="border border-black px-1 py-0.5">
+                  {a.voucher.type === "JOURNAL" ? "Journal" : "Payment"} voucher{" "}
+                  {a.voucher.voucherNo}
+                </td>
+                <td className="border border-black px-1 py-0.5">
+                  {a.voucher.bankPartyId ? partyName(a.voucher.bankPartyId) : ""}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(toNum(a.amount))}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(toNum(a.roundOff))}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(toNum(a.deduction))}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">
+                  {formatMoney(toNum(a.tdsAmt) + toNum(a.otherAmt))}
+                </td>
+                <td className="border border-black px-1 py-0.5 text-right">-</td>
+              </tr>
+            ))}
+            <tr className="font-semibold">
+              <td colSpan={3} className="border border-black px-1 py-0.5">
+                Total
               </td>
               <td className="border border-black px-1 py-0.5 text-right">
-                {formatMoney(toNum(chalan.balRoundOff))}
+                {formatMoney(toNum(chalan.balPaidAmount) + position.voucherPaid)}
               </td>
               <td className="border border-black px-1 py-0.5 text-right">
-                {formatMoney(toNum(chalan.balShortage))}
+                {formatMoney(toNum(chalan.balRoundOff) + position.voucherRoundOff)}
               </td>
-              <td className="border border-black px-1 py-0.5 text-right font-bold">
-                {formatMoney(toNum(chalan.balPaidAmount))}
+              <td className="border border-black px-1 py-0.5 text-right">
+                {formatMoney(toNum(chalan.balShortage) + position.voucherShortage)}
               </td>
-              <td className="border border-black px-1 py-0.5">
-                {chalan.balPaymentHeadId ? partyName(chalan.balPaymentHeadId) : ""}
+              <td className="border border-black px-1 py-0.5 text-right">
+                {formatMoney(position.voucherTds + position.voucherOther)}
               </td>
-              <td className="border border-black px-1 py-0.5">{chalan.balRemarks ?? ""}</td>
+              <td className="border border-black px-1 py-0.5 text-right">
+                {formatMoney(toNum(chalan.balAdvanceAdjusted))}
+              </td>
+            </tr>
+            <tr className="font-bold">
+              <td colSpan={7} className="border border-black px-1 py-0.5">
+                Total Settled {formatMoney(position.settled)} of {formatMoney(position.balance)} —
+                Balance Due
+              </td>
+              <td className="border border-black px-1 py-0.5 text-right">
+                {formatMoney(position.outstanding)}
+              </td>
             </tr>
           </tbody>
         </table>

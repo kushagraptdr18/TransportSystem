@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
-import { ALL_PAYABLE_REF_TYPES } from "@/lib/settlement";
+import { ALL_PAYABLE_REF_TYPES, settledByRef } from "@/lib/settlement";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { SimpleReport } from "@/components/accounts/simple-report";
 
@@ -126,7 +126,7 @@ export async function OutstandingPayableTab({
     };
     if (dateWhere) adblueWhere.date = dateWhere;
 
-    const [chalans, slips, salaries, office, vehicle, adblue, parties, allocations] =
+    const [chalans, slips, salaries, office, vehicle, adblue, parties, paidByRef] =
       await Promise.all([
       source && source !== "CHALAN"
         ? Promise.resolve([])
@@ -153,29 +153,18 @@ export async function OutstandingPayableTab({
         },
         orderBy: { name: "asc" },
       }),
-      tx.voucherAllocation.findMany({
-        where: {
-          refType: { in: ALL_PAYABLE_REF_TYPES },
-          // only live PAYMENT vouchers of this firm + FY count as paid
-          voucher: {
-            deletedAt: null,
-            firmId: session.firmId,
-            fyId: session.fyId,
-            type: "PAYMENT",
-          },
-        },
-        select: { refId: true, amount: true, tdsAmt: true, deduction: true, otherAmt: true },
+      // the ONE settlement formula (money + TDS + shortage + other + round-off,
+      // live vouchers of this firm + FY, journals included) — the same helper
+      // the chalan register, status drawer and voucher grid read, so this
+      // register can never disagree with them by a round-off or an adjustment
+      settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ALL_PAYABLE_REF_TYPES,
       }),
     ]);
-    return { chalans, slips, salaries, office, vehicle, adblue, parties, allocations };
-  }).then(({ chalans, slips, salaries, office, vehicle, adblue, parties, allocations }) => {
-    const paidByRef = new Map<string, number>();
-    for (const a of allocations) {
-      // approved deductions (TDS / deduction) settle the payable just like
-      // money paid — adjusted amounts never remain outstanding
-      const settled = toNum(a.amount) + toNum(a.tdsAmt) + toNum(a.deduction);
-      paidByRef.set(a.refId, (paidByRef.get(a.refId) ?? 0) + settled);
-    }
+    return { chalans, slips, salaries, office, vehicle, adblue, parties, paidByRef };
+  }).then(({ chalans, slips, salaries, office, vehicle, adblue, parties, paidByRef }) => {
     const partyById = new Map(parties.map((p) => [p.id, p]));
     const status = (total: number, outstanding: number) =>
       outstanding <= 0.009 ? "PAID" : outstanding < total - 0.009 ? "PARTLY PAID" : "UNPAID";
@@ -195,6 +184,9 @@ export async function OutstandingPayableTab({
         toNum(c.balPaidAmount) +
         toNum(c.balRoundOff) +
         toNum(c.balShortage) +
+        // advance vouchers consumed at the balance-payment step settle the
+        // chalan exactly like money paid there
+        toNum(c.balAdvanceAdjusted) +
         (paidByRef.get(c.id) ?? 0);
       const outstanding = Math.round((gross - paid) * 100) / 100;
       return {

@@ -146,6 +146,15 @@ Trial Balance / P&L see one line. Consequences worth knowing:
 - Per-allocation round-off on a voucher now posts (party leg + `Round Off`
   head). It settled the reference before but posted nothing, so the party
   ledger disagreed with the outstanding register by exactly the rounding.
+  **(9 Aug 2026)** the entry screen used to ALSO pack the round-off into the
+  header gross/deduction, so the party was settled for it twice (a phantom
+  balance of exactly the rounding) and the amount was misfiled under the
+  Shortage head besides. The header now excludes round-off — the pair above is
+  its single posting — and `npx tsx scripts/fix-roundoff-postings.ts` repairs
+  vouchers posted the old way (idempotent; `--dry` to preview). The same sweep
+  pointed the Outstanding Payables/Receivables tabs and the chalan PRINT at the
+  shared `settledByRef` / `payableSettlement` helpers, which they had been
+  re-deriving by hand without the round-off/other components.
 - Invoice additional charges each credit their own head instead of being clubbed
   into `Freight Income`; a charge named after a common head joins that ledger.
 - `npx tsx scripts/merge-account-heads.ts` repoints existing history onto the

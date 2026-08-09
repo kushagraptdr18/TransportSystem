@@ -1301,7 +1301,7 @@ export async function getChalanStatus(
     });
     if (!chalan) return { ok: false as const, error: "Chalan not found" };
 
-    const [broker, vehicle, parties, cities, ledger, advUses] = await Promise.all([
+    const [broker, vehicle, parties, cities, ledger, advUses, voucherAllocs] = await Promise.all([
       tx.party.findUnique({ where: { id: chalan.brokerId } }),
       tx.vehicle.findUnique({ where: { id: chalan.vehicleId } }),
       tx.party.findMany(),
@@ -1317,6 +1317,22 @@ export async function getChalanStatus(
         where: { refId: chalanId, refType: { in: [ADV_USE_ADVANCE, ADV_USE_BALANCE] } },
         include: { advance: true },
         orderBy: { date: "asc" },
+      }),
+      // payment-voucher settlements belong in the payment history too — their
+      // ledger entries carry the voucher's id, not the chalan's, so they are
+      // read from the allocations that the settlement position is built from
+      tx.voucherAllocation.findMany({
+        where: {
+          refType: "FREIGHT_CHALLAN",
+          refId: chalanId,
+          voucher: { deletedAt: null },
+        },
+        include: {
+          voucher: {
+            select: { voucherNo: true, voucherDate: true, type: true, bankPartyId: true },
+          },
+        },
+        orderBy: { voucher: { voucherDate: "asc" } },
       }),
     ]);
     const partyName = (id: string | null) =>
@@ -1440,14 +1456,35 @@ export async function getChalanStatus(
         voucherOther: position.voucherOther,
         voucherRoundOff: position.voucherRoundOff,
         balRemarks: chalan.balRemarks ?? "",
-        payments: ledger.map((e) => ({
-          date: e.date.toISOString(),
-          amount: toNum(e.amount),
-          account: partyName(e.partyId),
-          side: e.side,
-          refType: e.refType,
-          narration: e.narration ?? "",
-        })),
+        payments: [
+          ...ledger.map((e) => ({
+            date: e.date.toISOString(),
+            amount: toNum(e.amount),
+            account: partyName(e.partyId),
+            side: e.side as string,
+            refType: e.refType,
+            narration: e.narration ?? "",
+          })),
+          ...voucherAllocs.map((a) => {
+            const extras = [
+              toNum(a.tdsAmt) > 0.009 && `TDS ${formatOpen(toNum(a.tdsAmt))}`,
+              toNum(a.deduction) > 0.009 && `shortage ${formatOpen(toNum(a.deduction))}`,
+              toNum(a.otherAmt) > 0.009 && `other ${formatOpen(toNum(a.otherAmt))}`,
+              Math.abs(toNum(a.roundOff)) > 0.009 &&
+                `round off ${formatOpen(toNum(a.roundOff))}`,
+            ].filter(Boolean);
+            return {
+              date: a.voucher.voucherDate.toISOString(),
+              amount: toNum(a.amount),
+              account: partyName(a.voucher.bankPartyId),
+              side: "DEBIT",
+              refType: "VOUCHER",
+              narration: `${a.voucher.type === "JOURNAL" ? "Journal" : "Payment"} voucher ${a.voucher.voucherNo}${
+                extras.length ? ` (${extras.join(", ")} adjusted)` : ""
+              }`,
+            };
+          }),
+        ].sort((x, y) => x.date.localeCompare(y.date)),
       },
     };
   });
