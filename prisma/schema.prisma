@@ -2785,3 +2785,54 @@ model PartyAdvanceUse {
   @@index([tenantId, refType, refId])
   @@index([advanceId])
 }
+
+/// Audit Challan Register (Reports -> Audit Function).
+///
+/// A deliberately standalone register: rows are typed in or imported from
+/// Excel and are never resolved against Party / Vehicle / City or any other
+/// master. Every descriptive field is plain text so an imported name like
+/// "RAJA TPT" is stored, listed, exported and printed exactly as written even
+/// when no such transport exists anywhere else in the system. Nothing here
+/// touches the ledger, vouchers, balances or the real Chalan table, and
+/// nothing here creates master rows.
+///
+/// Firm-scoped but NOT financial-year-scoped: the register commonly holds
+/// historical reference data (e.g. FY 2025-26 rows entered while working in
+/// 2026-27), so it must stay visible after an FY switch. fyId only records
+/// the context a row was captured in.
+model AuditChalan {
+  id       String @id @default(cuid())
+  tenantId String
+  firmId   String
+  fyId     String
+
+  chalanNo      String
+  chalanDate    DateTime
+  transportName String   @default("")
+  ownerName     String   @default("")
+  panCard       String   @default("")
+  loadingFrom   String   @default("")
+  toLocation    String   @default("")
+
+  actualWt      Decimal @default(0) @db.Decimal(12, 3)
+  chargeWt      Decimal @default(0) @db.Decimal(12, 3)
+  freightRate   Decimal @default(0) @db.Decimal(12, 2)
+  freightAmount Decimal @default(0) @db.Decimal(14, 2)
+
+  tdsAmount   Decimal @default(0) @db.Decimal(14, 2)
+  advanceBank Decimal @default(0) @db.Decimal(14, 2)
+  cash        Decimal @default(0) @db.Decimal(14, 2)
+  diesel      Decimal @default(0) @db.Decimal(14, 2)
+  tyre        Decimal @default(0) @db.Decimal(14, 2)
+  uria        Decimal @default(0) @db.Decimal(14, 2)
+  other       Decimal @default(0) @db.Decimal(14, 2)
+
+  balance Decimal @default(0) @db.Decimal(14, 2)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([tenantId, firmId, chalanDate])
+  @@index([tenantId, firmId, chalanNo])
+}

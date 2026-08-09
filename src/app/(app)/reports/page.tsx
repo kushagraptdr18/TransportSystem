@@ -7,6 +7,7 @@ import {
   Landmark,
   ReceiptText,
   Scale,
+  ShieldCheck,
   Truck,
   Users,
   Wallet,
@@ -49,6 +50,19 @@ const SECTIONS: { title: string; links: { label: string; href: string; icon: typ
       { label: "TDS Payable", href: "/reports/browser?src=TDS_PAY", icon: Scale, desc: "TDS we deducted, month-wise" },
       { label: "TDS Receivable", href: "/reports/browser?src=TDS_RECV", icon: Scale, desc: "TDS deducted from us, month-wise" },
       { label: "Company Operational P&L", href: "/accounts/operational-pnl", icon: BarChart3, desc: "Operational income vs expense" },
+    ],
+  },
+  {
+    // Standalone reference data: imported or typed in, never linked to a
+    // master and never posted to the books.
+    title: "Audit Function",
+    links: [
+      {
+        label: "Audit Challan Register",
+        href: "/reports/audit/chalan-register",
+        icon: ShieldCheck,
+        desc: "Independent register — import Excel, filter, export and bulk print",
+      },
     ],
   },
   {
