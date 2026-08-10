@@ -1101,11 +1101,13 @@ export async function getAllocationCandidates(input: {
       });
       for (const s of salaries) {
         const outstanding = pos.get(s.id)?.outstanding ?? 0;
+        // a malformed month degrades to the entry date rather than throwing
+        const monthDate = new Date(`${s.month}-01T00:00:00`);
         if (outstanding > 0)
           out.push({
             refId: s.id,
             refNo: s.refNo || s.voucherNo || s.month,
-            date: new Date(`${s.month}-01T00:00:00`).toISOString(),
+            date: (Number.isNaN(monthDate.getTime()) ? s.createdAt : monthDate).toISOString(),
             billAmt: Number(s.netSalary),
             outstanding,
             tdsPct: 0,

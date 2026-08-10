@@ -234,9 +234,12 @@ export async function OutstandingPayableTab({
       // outstanding here
       const paid = toNum(s.paidAmount) + (paidByRef.get(s.id) ?? 0);
       const outstanding = Math.round((gross - paid) * 100) / 100;
+      // a malformed month must degrade to the entry date, not throw a
+      // RangeError that 500s the whole register
+      const monthDate = new Date(`${s.month}-01T00:00:00`);
       return {
         refNo: s.refNo || s.voucherNo || `Salary ${s.month}`,
-        date: new Date(`${s.month}-01T00:00:00`).toISOString(),
+        date: (Number.isNaN(monthDate.getTime()) ? s.createdAt : monthDate).toISOString(),
         kind: "SALARY",
         partyType: "Staff",
         party: partyById.get(s.partyId)?.name ?? "",

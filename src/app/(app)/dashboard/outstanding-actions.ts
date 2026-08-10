@@ -326,7 +326,9 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
     docs: salaries.map((s) => ({
       id: s.id,
       original: toNum(String(s.netSalary)),
-      ownSettled: s.paymentStatus === "PAID" ? toNum(String(s.netSalary)) : 0,
+      // the recorded amount, not the status flag — after an edit the two can
+      // differ, and the flag would hide a genuinely open remainder
+      ownSettled: toNum(String(s.paidAmount)),
     })),
   });
   const staffParties = new Map(salaries.map((s) => [s.id, s.partyId]));

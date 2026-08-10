@@ -255,7 +255,9 @@ export async function saveStaffLoan(
 
 const salarySchema = z.object({
   partyId: z.string().min(1, "Staff is required"),
-  month: z.string().regex(/^\d{4}-\d{2}$/, "Month must be YYYY-MM"),
+  // month 01-12 enforced, not just the shape: "2025-00" parses to Invalid Date
+  // in every reader and would 500 the payables register and voucher grid
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Month must be YYYY-MM (month 01-12)"),
   basic: z.number().min(0).default(0),
   allowances: z.number().min(0).default(0),
   overtime: z.number().min(0).default(0),
@@ -363,12 +365,32 @@ export async function processStaffSalary(
         }
       }
 
-      // recoveries must not exceed the open balances
+      // recoveries must not exceed the open balances — and the advance/loan
+      // must belong to THIS staff member in THIS firm+FY, or a stale client
+      // state could recover one employee's advance inside another's salary
       if (d.advanceId && d.advanceRecovery > 0) {
-        const adv = await tx.staffAdvance.findFirst({ where: { id: d.advanceId, deletedAt: null } });
-        if (!adv) return { ok: false as const, error: "Advance not found" };
+        const adv = await tx.staffAdvance.findFirst({
+          where: {
+            id: d.advanceId,
+            partyId: d.partyId,
+            firmId: session.firmId,
+            fyId: session.fyId,
+            deletedAt: null,
+          },
+        });
+        if (!adv) return { ok: false as const, error: "Advance not found for this staff member" };
         const adjusted = await advanceAdjustedTotal(tx, d.advanceId, existing?.id);
-        const balance = round2(toNum(String(adv.amount)) - adjusted);
+        // a receipt voucher may have already settled part of this advance —
+        // that portion is repaid in cash and must not be recovered again
+        const viaVoucher = await settledByRef(tx, {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          refTypes: ["STAFF_ADVANCE"],
+          refIds: [d.advanceId],
+        });
+        const balance = round2(
+          toNum(String(adv.amount)) - adjusted - (viaVoucher.get(d.advanceId) ?? 0)
+        );
         if (d.advanceRecovery > balance + 0.01) {
           return {
             ok: false as const,
@@ -377,8 +399,16 @@ export async function processStaffSalary(
         }
       }
       if (d.loanId && d.loanRecovery > 0) {
-        const loan = await tx.staffLoan.findFirst({ where: { id: d.loanId, deletedAt: null } });
-        if (!loan) return { ok: false as const, error: "Loan not found" };
+        const loan = await tx.staffLoan.findFirst({
+          where: {
+            id: d.loanId,
+            partyId: d.partyId,
+            firmId: session.firmId,
+            fyId: session.fyId,
+            deletedAt: null,
+          },
+        });
+        if (!loan) return { ok: false as const, error: "Loan not found for this staff member" };
         const recovered = await loanRecoveredTotal(tx, d.loanId, existing?.id);
         const balance = round2(toNum(String(loan.amount)) - recovered);
         if (d.loanRecovery > balance + 0.01) {
@@ -408,6 +438,11 @@ export async function processStaffSalary(
         totalDeductions,
         netSalary,
         remarks: d.remarks || null,
+        // payment fields are ALWAYS written, both ways. Leaving them untouched
+        // when markPaid was off kept an edited salary PAID with a stale
+        // paidAmount — the ledger re-posted the new net while the registers
+        // still offered the difference for a second payment (double pay), and
+        // un-paying from the edit form was silently impossible.
         ...(d.markPaid
           ? {
               paymentStatus: "PAID",
@@ -418,7 +453,12 @@ export async function processStaffSalary(
               // and a status cannot be netted against a partial allocation
               paidAmount: netSalary,
             }
-          : {}),
+          : {
+              paymentStatus: "PENDING",
+              paymentDate: null,
+              paymentHeadId: null,
+              paidAmount: 0,
+            }),
       };
 
       let salaryId: string;
@@ -434,35 +474,72 @@ export async function processStaffSalary(
           after: updated,
         });
       } else {
-        // A salary needs a document number of its own before a payment voucher
-        // can point at it — employee + month is not something an allocation can
-        // reference. Blank refNo means "use the voucher number", the same rule
-        // office transactions follow.
-        const salaryNo = await nextSalaryNo(tx, session.firmId, session.fyId);
-        const created = await tx.staffSalary.create({
-          data: {
-            tenantId: session.tenantId,
+        // The (firm, fy, staff, month) unique index counts soft-deleted rows
+        // too, so a month that was deleted must be REVIVED rather than
+        // re-created — a fresh create would die on the constraint and lock
+        // that employee's month out forever. The delete already reversed the
+        // old ledger, so reviving with the new figures posts clean.
+        const deleted = await tx.staffSalary.findFirst({
+          where: {
             firmId: session.firmId,
             fyId: session.fyId,
             partyId: d.partyId,
             month: d.month,
-            voucherNo: salaryNo,
-            refNo: salaryNo,
-            createdById: session.userId,
-            ...values,
+            deletedAt: { not: null },
           },
         });
-        salaryId = created.id;
-        await audit(tx, session, {
-          entity: "StaffSalary",
-          entityId: salaryId,
-          action: "CREATE",
-          after: created,
-        });
+        if (deleted) {
+          const revived = await tx.staffSalary.update({
+            where: { id: deleted.id },
+            data: { ...values, deletedAt: null },
+          });
+          salaryId = revived.id;
+          // the delete already reversed this id's entries; reversing again is a
+          // no-op, and it protects against any stragglers from older data
+          await reverseLedger(tx, "STAFF_SALARY", salaryId);
+          await audit(tx, session, {
+            entity: "StaffSalary",
+            entityId: salaryId,
+            action: "UPDATE",
+            before: deleted,
+            after: revived,
+          });
+        } else {
+          // A salary needs a document number of its own before a payment voucher
+          // can point at it — employee + month is not something an allocation can
+          // reference. Blank refNo means "use the voucher number", the same rule
+          // office transactions follow.
+          const salaryNo = await nextSalaryNo(tx, session.firmId, session.fyId);
+          const created = await tx.staffSalary.create({
+            data: {
+              tenantId: session.tenantId,
+              firmId: session.firmId,
+              fyId: session.fyId,
+              partyId: d.partyId,
+              month: d.month,
+              voucherNo: salaryNo,
+              refNo: salaryNo,
+              createdById: session.userId,
+              ...values,
+            },
+          });
+          salaryId = created.id;
+          await audit(tx, session, {
+            entity: "StaffSalary",
+            entityId: salaryId,
+            action: "CREATE",
+            after: created,
+          });
+        }
       }
 
       await postSalaryLedger(tx, session, salaryId);
       await syncLoanStatus(tx, d.loanId);
+      // an edit that switched (or cleared) the loan re-opens the previous one:
+      // its recovered total just dropped, so CLOSED may no longer be true
+      if (existing?.loanId && existing.loanId !== (d.loanId || null)) {
+        await syncLoanStatus(tx, existing.loanId);
+      }
       revalidatePath(REVALIDATE);
       return { ok: true as const, id: salaryId, netSalary };
     });
@@ -485,7 +562,9 @@ export async function payStaffSalary(input: {
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.staffSalary.findFirstOrThrow({
-        where: { id: input.salaryId, deletedAt: null },
+        // firm+FY scoped like the settlement guard below — an id from another
+        // firm must never get ledger legs posted under this session's scope
+        where: { id: input.salaryId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
       });
       // already settled by a payment voucher => paying here would pay twice
       const settledHere = await settledByRef(tx, {
@@ -631,7 +710,9 @@ export async function deleteStaffAdvance(
   await authorize(session, "vouchers", "delete");
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const adv = await tx.staffAdvance.findFirst({ where: { id, deletedAt: null } });
+      const adv = await tx.staffAdvance.findFirst({
+        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
       if (!adv) return { ok: false as const, error: "Advance not found" };
       const adjusted = await advanceAdjustedTotal(tx, id);
       if (adjusted > 0) {
@@ -670,7 +751,9 @@ export async function deleteStaffLoan(
   await authorize(session, "vouchers", "delete");
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const loan = await tx.staffLoan.findFirst({ where: { id, deletedAt: null } });
+      const loan = await tx.staffLoan.findFirst({
+        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
       if (!loan) return { ok: false as const, error: "Loan not found" };
       const recovered = await loanRecoveredTotal(tx, id);
       if (recovered > 0) {
@@ -699,7 +782,9 @@ export async function deleteStaffSalary(
   await authorize(session, "vouchers", "delete");
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const s = await tx.staffSalary.findFirst({ where: { id, deletedAt: null } });
+      const s = await tx.staffSalary.findFirst({
+        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
       if (!s) return { ok: false as const, error: "Salary not found" };
       const settled = await settledByRef(tx, {
         firmId: session.firmId,
@@ -779,6 +864,10 @@ export interface StaffDetails {
     loanRecovery: number;
     netSalary: number;
     paymentStatus: string;
+    /** settled through payment-voucher allocations (live) */
+    voucherSettled: number;
+    /** fully covered by own payment + voucher settlements */
+    isSettled: boolean;
     paymentDate: string | null;
     paymentHeadId: string | null;
     remarks: string;
@@ -798,6 +887,9 @@ export async function getStaffDetails(
   partyId: string
 ): Promise<{ ok: true; data: StaffDetails } | { ok: false; error: string }> {
   const session = requireSession();
+  // salary history, advances, loans and the party ledger are sensitive —
+  // gated like every other read in this module
+  await authorize(session, "vouchers", "view");
   return withTenant(session.tenantId, async (tx) => {
     const party = await tx.party.findFirst({ where: { id: partyId } });
     if (!party) return { ok: false as const, error: "Staff not found" };
@@ -810,6 +902,24 @@ export async function getStaffDetails(
       tx.ledgerEntry.findMany({
         where: { firmId: session.firmId, fyId: session.fyId, partyId },
         orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+      }),
+    ]);
+
+    // voucher-side settlements: a receipt against an advance repays it in
+    // cash, a payment voucher against a salary pays it — both must show here
+    // or the screen offers balances that no longer exist
+    const [advViaVoucher, salViaVoucher] = await Promise.all([
+      settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["STAFF_ADVANCE"],
+        refIds: advances.map((a) => a.id),
+      }),
+      settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["STAFF_PAYROLL"],
+        refIds: salaries.map((s) => s.id),
       }),
     ]);
 
@@ -862,7 +972,8 @@ export async function getStaffDetails(
           allowances: toNum(String(profile?.allowances ?? 0)),
         },
         advances: advances.map((a) => {
-          const adjusted = advAdjusted.get(a.id) ?? 0;
+          // payroll recoveries + receipt-voucher repayments both consume it
+          const adjusted = round2((advAdjusted.get(a.id) ?? 0) + (advViaVoucher.get(a.id) ?? 0));
           return {
             id: a.id,
             advanceNo: a.advanceNo,
@@ -908,6 +1019,12 @@ export async function getStaffDetails(
           loanRecovery: toNum(String(s.loanRecovery)),
           netSalary: toNum(String(s.netSalary)),
           paymentStatus: s.paymentStatus,
+          voucherSettled: salViaVoucher.get(s.id) ?? 0,
+          // a salary is settled when own payment + voucher allocations cover
+          // the net — a voucher-paid month must not read as Pending forever
+          isSettled:
+            round2(toNum(String(s.paidAmount)) + (salViaVoucher.get(s.id) ?? 0)) >=
+            toNum(String(s.netSalary)) - 0.009,
           paymentDate: s.paymentDate ? s.paymentDate.toISOString() : null,
           paymentHeadId: s.paymentHeadId,
           remarks: s.remarks ?? "",

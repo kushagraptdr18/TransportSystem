@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
+import { settledByRef } from "@/lib/settlement";
 import { StaffPayrollClient, type StaffRow } from "@/components/accounts/staff-payroll-client";
 
 export const dynamic = "force-dynamic";
@@ -9,9 +10,8 @@ export const dynamic = "force-dynamic";
 export async function StaffPayrollTab() {
   const session = requireSession();
 
-  const { staff, profiles, advances, loans, salaries, banks } = await withTenant(
-    session.tenantId,
-    async (tx) => {
+  const { staff, profiles, advances, loans, salaries, banks, salSettled, advSettled } =
+    await withTenant(session.tenantId, async (tx) => {
       const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null };
       const [staff, profiles, advances, loans, salaries, banks] = await Promise.all([
         tx.party.findMany({ where: { ledgerGroup: "STAFF" }, orderBy: { name: "asc" } }),
@@ -24,9 +24,24 @@ export async function StaffPayrollTab() {
           orderBy: { name: "asc" },
         }),
       ]);
-      return { staff, profiles, advances, loans, salaries, banks };
-    }
-  );
+      // voucher-side settlements count too, or a voucher-paid salary reads as
+      // pending and a receipt-repaid advance still shows a balance
+      const [salSettled, advSettled] = await Promise.all([
+        settledByRef(tx, {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          refTypes: ["STAFF_PAYROLL"],
+          refIds: salaries.map((s) => s.id),
+        }),
+        settledByRef(tx, {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          refTypes: ["STAFF_ADVANCE"],
+          refIds: advances.map((a) => a.id),
+        }),
+      ]);
+      return { staff, profiles, advances, loans, salaries, banks, salSettled, advSettled };
+    });
 
   const profileByParty = new Map(profiles.map((p) => [p.partyId, p]));
 
@@ -37,17 +52,24 @@ export async function StaffPayrollTab() {
     const mySalaries = salaries.filter((s) => s.partyId === p.id);
     const advTotal = round2(myAdvances.reduce((s, a) => s + toNum(String(a.amount)), 0));
     const advAdjusted = round2(
-      mySalaries.reduce((s, r) => s + (r.advanceId ? toNum(String(r.advanceRecovery)) : 0), 0)
+      mySalaries.reduce((s, r) => s + (r.advanceId ? toNum(String(r.advanceRecovery)) : 0), 0) +
+        myAdvances.reduce((s, a) => s + (advSettled.get(a.id) ?? 0), 0)
     );
     const loanTotal = round2(myLoans.reduce((s, l) => s + toNum(String(l.amount)), 0));
     const loanRecovered = round2(
       mySalaries.reduce((s, r) => s + (r.loanId ? toNum(String(r.loanRecovery)) : 0), 0)
     );
-    const paidSalaries = mySalaries.filter((s) => s.paymentStatus === "PAID");
+    // settled = own payment + voucher allocations, the payables-register rule
+    const salSettledOf = (r: (typeof mySalaries)[number]) =>
+      round2(toNum(String(r.paidAmount)) + (salSettled.get(r.id) ?? 0));
+    const paidSalaries = mySalaries.filter(
+      (s) => s.paymentStatus === "PAID" || salSettledOf(s) >= toNum(String(s.netSalary)) - 0.009
+    );
     const pendingSalary = round2(
-      mySalaries
-        .filter((s) => s.paymentStatus !== "PAID")
-        .reduce((s, r) => s + toNum(String(r.netSalary)), 0)
+      mySalaries.reduce(
+        (s, r) => s + Math.max(0, round2(toNum(String(r.netSalary)) - salSettledOf(r))),
+        0
+      )
     );
     const lastPaid = paidSalaries
       .filter((s) => s.paymentDate)

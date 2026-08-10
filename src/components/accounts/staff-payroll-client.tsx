@@ -583,8 +583,8 @@ export function StaffPayrollClient({
           <DialogHeader>
             <DialogTitle>New Staff Loan — {loanRow?.name}</DialogTitle>
             <DialogDescription>
-              Loan No is auto-generated; recovery happens via salary processing or vouchers —
-              the original loan entry is never modified.
+              Loan No is auto-generated; recovery happens through salary processing (EMI
+              deductions) — the original loan entry is never modified.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -769,9 +769,18 @@ export function StaffPayrollClient({
                     <span className="tabular-nums font-medium">Net {formatMoney(s.netSalary)}</span>
                     {s.paymentStatus === "PAID" ? (
                       <Badge>Paid{s.paymentDate ? ` ${formatDate(s.paymentDate)}` : ""}</Badge>
+                    ) : s.isSettled ? (
+                      // settled by a payment voucher: not payable again, and a
+                      // Pay button here would only dead-end on the guard
+                      <Badge variant="secondary">Paid via voucher</Badge>
                     ) : (
                       <span className="flex items-center gap-1">
                         <Badge variant="destructive">Pending</Badge>
+                        {s.voucherSettled > 0.009 && (
+                          <span className="text-[10px] text-muted-foreground">
+                            {formatMoney(s.voucherSettled)} via voucher
+                          </span>
+                        )}
                         <Button
                           variant="secondary"
                           size="sm"
