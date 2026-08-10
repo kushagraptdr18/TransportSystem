@@ -39,7 +39,12 @@ export interface QuarterCell {
 }
 
 export interface RateGroup {
-  rate: number;
+  /** numeric rate for challan / broker-slip rows; null for the combined voucher row */
+  rate: number | null;
+  /** "1%" for document rows, "Voucher / Direct" for the combined voucher row */
+  label: string;
+  /** true = payment/journal-voucher TDS: only the TDS amount is shown, never rate/base */
+  direct: boolean;
   cells: QuarterCell[]; // one per quarter
   totalBase: number;
   totalTds: number;
@@ -65,42 +70,64 @@ export interface QuarterlyData {
 
 const zeroCells = (): QuarterCell[] => QUARTERS.map(() => ({ base: 0, tds: 0 }));
 
+/**
+ * Voucher-entered TDS is often a direct lump figure at whatever rate applied
+ * (0.1%, 10%, ...) — per party it collapses into ONE "Voucher / Direct" row
+ * showing only the TDS amount, never a rate or base. Challan and broker-slip
+ * rows keep their recorded rate and base.
+ */
+const DIRECT_MODULES = new Set(["PAYMENT VOUCHER", "JOURNAL VOUCHER"]);
+export const DIRECT_RATE_FILTER = "DIRECT";
+export const DIRECT_LABEL = "Voucher / Direct";
+
 export function buildQuarterlyData(
   rows: TdsPayableRow[],
   filters: { partyName?: string; rate?: string; quarter?: string }
 ): QuarterlyData {
-  const rateOptions = Array.from(new Set(rows.map((r) => r.tdsPct))).sort((a, b) => a - b);
+  const rateOptions = Array.from(
+    new Set(rows.filter((r) => !DIRECT_MODULES.has(r.module)).map((r) => r.tdsPct))
+  ).sort((a, b) => a - b);
 
   let filtered = rows;
   if (filters.partyName) filtered = filtered.filter((r) => r.party === filters.partyName);
   if (filters.rate !== undefined && filters.rate !== "" && filters.rate !== "ALL") {
-    filtered = filtered.filter((r) => String(r.tdsPct) === filters.rate);
+    filtered = filtered.filter((r) =>
+      filters.rate === DIRECT_RATE_FILTER
+        ? DIRECT_MODULES.has(r.module)
+        : !DIRECT_MODULES.has(r.module) && String(r.tdsPct) === filters.rate
+    );
   }
   if (filters.quarter && filters.quarter !== "ALL") {
     const qi = QUARTERS.indexOf(filters.quarter as (typeof QUARTERS)[number]);
     if (qi >= 0) filtered = filtered.filter((r) => quarterIndex(r.date) === qi);
   }
 
-  // party -> rate -> group
-  const byParty = new Map<string, Map<number, RateGroup>>();
+  // party -> rate-key -> group ("DIRECT" pools every voucher/journal row)
+  const byParty = new Map<string, Map<string, RateGroup>>();
   const panByParty = new Map<string, string>();
   for (const r of filtered) {
     const party = r.party || "(No Party)";
     if (r.pan && !panByParty.get(party)) panByParty.set(party, r.pan);
-    const rates = byParty.get(party) ?? new Map<number, RateGroup>();
+    const direct = DIRECT_MODULES.has(r.module);
+    const key = direct ? DIRECT_RATE_FILTER : String(r.tdsPct);
+    const rates = byParty.get(party) ?? new Map<string, RateGroup>();
     const g =
-      rates.get(r.tdsPct) ??
+      rates.get(key) ??
       ({
-        rate: r.tdsPct,
+        rate: direct ? null : r.tdsPct,
+        label: direct ? DIRECT_LABEL : `${r.tdsPct}%`,
+        direct,
         cells: zeroCells(),
         totalBase: 0,
         totalTds: 0,
         details: QUARTERS.map(() => []),
       } as RateGroup);
     const qi = quarterIndex(r.date);
-    g.cells[qi].base = round2(g.cells[qi].base + r.baseAmt);
+    // a direct voucher entry carries only its TDS figure — no base is summed
+    const base = direct ? 0 : r.baseAmt;
+    g.cells[qi].base = round2(g.cells[qi].base + base);
     g.cells[qi].tds = round2(g.cells[qi].tds + r.tdsAmt);
-    g.totalBase = round2(g.totalBase + r.baseAmt);
+    g.totalBase = round2(g.totalBase + base);
     g.totalTds = round2(g.totalTds + r.tdsAmt);
     g.details[qi].push({
       date: r.date,
@@ -114,14 +141,17 @@ export function buildQuarterlyData(
       quarter: QUARTERS[qi],
       status: r.status,
     });
-    rates.set(r.tdsPct, g);
+    rates.set(key, g);
     byParty.set(party, rates);
   }
 
   const parties: PartyGroup[] = Array.from(byParty.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([party, rates]) => {
-      const rateGroups = Array.from(rates.values()).sort((a, b) => a.rate - b.rate);
+      // recorded rates ascending; the combined voucher row always last
+      const rateGroups = Array.from(rates.values()).sort(
+        (a, b) => (a.rate ?? Infinity) - (b.rate ?? Infinity)
+      );
       const cells = zeroCells();
       let totalBase = 0;
       let totalTds = 0;

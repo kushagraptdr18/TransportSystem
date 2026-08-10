@@ -4,7 +4,13 @@ import { withTenant } from "@/lib/db";
 import { buildTdsPayableRows } from "@/app/(app)/accounts/tds/payable-rows";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { InfoHint } from "@/components/ui/info-hint";
-import { buildQuarterlyData, QUARTERS, QUARTER_MONTHS } from "./data";
+import {
+  buildQuarterlyData,
+  DIRECT_LABEL,
+  DIRECT_RATE_FILTER,
+  QUARTERS,
+  QUARTER_MONTHS,
+} from "./data";
 import { TdsQuarterlyClient } from "./quarterly-client";
 
 export const dynamic = "force-dynamic";
@@ -67,7 +73,10 @@ export default async function TdsQuarterlyPage({
       type: "select",
       key: "rate",
       label: "TDS Rate",
-      options: rateValues.map((r) => ({ value: String(r), label: `${r}%` })),
+      options: [
+        ...rateValues.map((r) => ({ value: String(r), label: `${r}%` })),
+        { value: DIRECT_RATE_FILTER, label: DIRECT_LABEL },
+      ],
     },
     {
       type: "select",
@@ -88,8 +97,10 @@ export default async function TdsQuarterlyPage({
         <InfoHint>
           Payable TDS only — TDS our company deducted while making payments (chalan owner side,
           broker slip owner side, payment vouchers, TDS Payable journals). Customer-side /
-          receivable TDS never appears here. Q1 Apr–Jun, Q2 Jul–Sep, Q3 Oct–Dec, Q4 Jan–Mar. Click
-          a quarter figure to see the transactions behind it.
+          receivable TDS never appears here. Chalan and broker-slip rows carry their recorded rate
+          and base amount; voucher/journal TDS shows as one &quot;Voucher / Direct&quot; row per
+          party with the TDS amount only. Q1 Apr–Jun, Q2 Jul–Sep, Q3 Oct–Dec, Q4 Jan–Mar. Click a
+          quarter figure to see the transactions behind it.
         </InfoHint>
         <span className="ml-auto text-sm text-muted-foreground">
           Financial Year: {session.fyLabel ?? ""}

@@ -88,7 +88,7 @@ function exportRows(data: QuarterlyData): ExportRow[] {
   });
   for (const p of data.parties) {
     for (const g of p.rates) {
-      out.push(toRow(p.party, p.pan, `${g.rate}%`, g.cells, g.totalBase, g.totalTds));
+      out.push(toRow(p.party, p.pan, g.label, g.cells, g.totalBase, g.totalTds));
     }
     if (p.rates.length > 1) {
       out.push(toRow(`${p.party} — Total`, p.pan, "", p.cells, p.totalBase, p.totalTds));
@@ -110,10 +110,13 @@ export function TdsQuarterlyClient({ data, fyLabel, printHref }: Props) {
     cells: { base: number; tds: number }[],
     qi: number,
     onClick?: () => void,
-    clickable?: boolean
+    clickable?: boolean,
+    hideBase?: boolean
   ) => (
     <React.Fragment key={QUARTERS[qi]}>
-      <TableCell className="text-right tabular-nums">{money(cells[qi].base)}</TableCell>
+      <TableCell className="text-right tabular-nums">
+        {hideBase ? "-" : money(cells[qi].base)}
+      </TableCell>
       <TableCell className="text-right tabular-nums">
         {clickable ? (
           <button
@@ -187,7 +190,7 @@ export function TdsQuarterlyClient({ data, fyLabel, printHref }: Props) {
             {data.parties.map((p) => (
               <React.Fragment key={p.party}>
                 {p.rates.map((g, gi) => (
-                  <TableRow key={`${p.party}-${g.rate}`}>
+                  <TableRow key={`${p.party}-${g.label}`}>
                     <TableCell className={gi === 0 ? "font-medium" : "text-muted-foreground"}>
                       {gi === 0 ? (
                         <>
@@ -201,7 +204,7 @@ export function TdsQuarterlyClient({ data, fyLabel, printHref }: Props) {
                       )}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline">{g.rate}%</Badge>
+                      <Badge variant={g.direct ? "secondary" : "outline"}>{g.label}</Badge>
                     </TableCell>
                     {QUARTERS.map((q, qi) =>
                       cellPair(
@@ -209,20 +212,21 @@ export function TdsQuarterlyClient({ data, fyLabel, printHref }: Props) {
                         qi,
                         () =>
                           openDetail(
-                            `${p.party} — ${g.rate}% — ${q}`,
+                            `${p.party} — ${g.label} — ${q}`,
                             g.details[qi]
                           ),
-                        g.details[qi].length > 0
+                        g.details[qi].length > 0,
+                        g.direct
                       )
                     )}
                     <TableCell className="text-right font-medium tabular-nums">
-                      {money(g.totalBase)}
+                      {g.direct ? "-" : money(g.totalBase)}
                     </TableCell>
                     <TableCell className="text-right font-medium tabular-nums">
                       <button
                         type="button"
                         onClick={() =>
-                          openDetail(`${p.party} — ${g.rate}% — full year`, g.details.flat())
+                          openDetail(`${p.party} — ${g.label} — full year`, g.details.flat())
                         }
                         className="underline decoration-dotted underline-offset-2 hover:text-primary"
                         title="Show the transactions behind this figure"

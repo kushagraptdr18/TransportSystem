@@ -136,11 +136,11 @@ export default async function TdsQuarterlyPrintPage({
             {data.parties.map((p) => (
               <React.Fragment key={p.party}>
                 {p.rates.map((g, gi) => (
-                  <tr key={`${p.party}-${g.rate}`}>
+                  <tr key={`${p.party}-${g.label}`}>
                     <td className={txt}>
                       {gi === 0 ? `${p.party}${p.pan ? ` (${p.pan})` : ""}` : ""}
                     </td>
-                    <td className={txt}>{g.rate}%</td>
+                    <td className={txt}>{g.label}</td>
                     {QUARTERS.map((q, qi) => (
                       <React.Fragment key={q}>
                         <td className={num}>{money(g.cells[qi].base)}</td>

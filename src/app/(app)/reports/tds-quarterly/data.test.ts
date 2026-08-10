@@ -45,6 +45,13 @@ describe("buildQuarterlyData", () => {
     row({ date: "2026-09-01T00:00:00Z", party: "Party B", baseAmt: 100000, tdsPct: 2, tdsAmt: 2000, refNo: "CH-6" }),
   ];
 
+  // voucher/journal TDS for Party A — must collapse into ONE direct row
+  const voucherRows: TdsPayableRow[] = [
+    row({ date: "2026-05-05T00:00:00Z", module: "PAYMENT VOUCHER", baseAmt: 90000, tdsPct: 0.1, tdsAmt: 90, refNo: "PV-1" }),
+    row({ date: "2026-05-20T00:00:00Z", module: "PAYMENT VOUCHER", baseAmt: 0, tdsPct: 0, tdsAmt: 500, refNo: "PV-2" }),
+    row({ date: "2026-08-10T00:00:00Z", module: "JOURNAL VOUCHER", baseAmt: 0, tdsPct: 0, tdsAmt: 700, refNo: "JV-1" }),
+  ];
+
   it("groups party -> rate -> quarter and totals the year", () => {
     const d = buildQuarterlyData(rows, {});
     const a = d.parties.find((p) => p.party === "Party A")!;
@@ -78,6 +85,36 @@ describe("buildQuarterlyData", () => {
     const byQuarter = buildQuarterlyData(rows, { quarter: "Q3" });
     expect(byQuarter.grand.totalTds).toBe(10000);
     expect(byQuarter.grand.cells[0]).toEqual({ base: 0, tds: 0 });
+  });
+
+  it("collapses voucher/journal TDS into one direct row per party, TDS only", () => {
+    const d = buildQuarterlyData([...rows, ...voucherRows], {});
+    const a = d.parties.find((p) => p.party === "Party A")!;
+    const direct = a.rates.find((r) => r.direct)!;
+    expect(direct.rate).toBeNull();
+    expect(direct.label).toBe("Voucher / Direct");
+    // the recorded 0.1% / base 90,000 must NOT surface — TDS amount only
+    expect(direct.totalBase).toBe(0);
+    expect(direct.cells[0]).toEqual({ base: 0, tds: 590 }); // Q1: 90 + 500
+    expect(direct.cells[1]).toEqual({ base: 0, tds: 700 }); // Q2: journal
+    expect(direct.totalTds).toBe(1290);
+    // the direct row sorts after every rate row
+    expect(a.rates[a.rates.length - 1]).toBe(direct);
+    // party totals: base from documents only, TDS from everything
+    expect(a.totalBase).toBe(3150000);
+    expect(a.totalTds).toBe(32290);
+    // no 0.1% rate group leaks out of the voucher rows
+    expect(a.rates.some((r) => r.rate === 0.1)).toBe(false);
+    expect(d.rateOptions).not.toContain(0.1);
+  });
+
+  it("rate filter DIRECT isolates voucher rows; numeric rates exclude them", () => {
+    const all = [...rows, ...voucherRows];
+    const direct = buildQuarterlyData(all, { rate: "DIRECT" });
+    expect(direct.grand.totalTds).toBe(1290);
+    expect(direct.grand.totalBase).toBe(0);
+    const onePct = buildQuarterlyData(all, { rate: "1" });
+    expect(onePct.grand.totalTds).toBe(31000); // voucher TDS not counted at 1%
   });
 
   it("keeps drill-down details per quarter, matching the cell sums", () => {
