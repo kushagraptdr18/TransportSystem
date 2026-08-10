@@ -128,6 +128,10 @@ const voucherSchema = z.object({
   adjustments: z.array(adjustmentSchema).default([]),
   // open party advances adjusted against this voucher's allocations
   advanceAdjustments: z.array(advanceUseSchema).default([]),
+  // OPPOSITE-direction advances this voucher refunds: a payment returns an
+  // advance RECEIVED from the party, a receipt takes back an advance PAID —
+  // the money moved covers it and the advance closes, no mirror advance forms
+  advanceRefunds: z.array(advanceUseSchema).default([]),
   // chalan-cancel advances this voucher recovers (receipt) or writes off
   // (journal against the broker's credit side)
   cancelAdvanceUses: z.array(advanceUseSchema).default([]),
@@ -192,6 +196,16 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       error: "Advance adjustment is only available on receipt/payment vouchers against a party",
     };
   }
+  // refunds run OPPOSITE to the voucher direction: payment refunds a RECEIVED
+  // advance, receipt takes back a PAID one
+  const refundKind = data.type === "RECEIPT" ? "PAID" : "RECEIVED";
+  const refundTotal = round2(data.advanceRefunds.reduce((s, a) => s + a.amount, 0));
+  if (refundTotal > 0.009 && (!isMoneyType || !data.partyId || data.accountHeadId)) {
+    return {
+      ok: false,
+      error: "Advance refund is only available on receipt/payment vouchers against a party",
+    };
+  }
   const cancelUseTotal = round2(data.cancelAdvanceUses.reduce((s, a) => s + a.amount, 0));
   if (cancelUseTotal > 0.009) {
     if (data.type === "RECEIPT") {
@@ -211,13 +225,20 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
     }
   }
   const pureAdvanceAdjust = isMoneyType && advUseTotal > 0.009;
-  if (data.amount <= 0 && !pureAdvanceAdjust) {
+  // a receipt/payment may also move no money when the selected references are
+  // settled purely by TDS / shortage / other deduction / round-off — the party
+  // is settled gross against the deduction heads and the bank leg drops out
+  const allocAdjustSettle = round2(
+    data.allocations.reduce((s, a) => s + a.tdsAmt + a.deduction + a.otherAmt + a.roundOff, 0)
+  );
+  const pureDeductionSettle = isMoneyType && allocAdjustSettle > 0.009;
+  if (data.amount <= 0 && !pureAdvanceAdjust && !pureDeductionSettle) {
     return { ok: false, error: "Amount is required" };
   }
   if (netAmount < 0) {
     return { ok: false, error: "Deductions + adjustments exceed the voucher amount" };
   }
-  if (netAmount <= 0 && data.type !== "JOURNAL" && !pureAdvanceAdjust) {
+  if (netAmount <= 0 && data.type !== "JOURNAL" && !pureAdvanceAdjust && !pureDeductionSettle) {
     return { ok: false, error: "Net amount must be positive" };
   }
 
@@ -267,9 +288,11 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // ---- validation: never over-settle, never allocate beyond the money
       // moved (net amount = header amount − TDS − deductions)
       const allocatedSum = round2(data.allocations.reduce((s, a) => s + a.amount, 0));
-      if (allocatedSum > round2(netAmount + advUseTotal) + 0.01) {
+      // refunds consume the money moved too — allocations and refunds together
+      // can never exceed what the voucher funds
+      if (round2(allocatedSum + refundTotal) > round2(netAmount + advUseTotal) + 0.01) {
         throw new Error(
-          `Allocated ${allocatedSum} exceeds the received/paid amount ${netAmount}` +
+          `Allocated ${allocatedSum}${refundTotal > 0 ? ` plus advance refund ${refundTotal}` : ""} exceeds the received/paid amount ${netAmount}` +
             (advUseTotal > 0 ? ` plus advance adjusted ${advUseTotal}.` : ".")
         );
       }
@@ -653,10 +676,36 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
           }
         }
       }
+      // ---- advance refund: the opposite-direction advance is returned in
+      // cash — its balance closes against this voucher's money, and the
+      // refunded portion never becomes a mirror advance
+      const refundLines = data.advanceRefunds.filter((l) => l.amount > 0.009);
+      if (refundTotal > 0.009 && data.partyId) {
+        const ownRefund = await tx.partyAdvance.findFirst({
+          where: { voucherId: savedId, id: { in: refundLines.map((l) => l.advanceId) } },
+        });
+        if (ownRefund) throw new Error("A voucher cannot refund the advance it created itself.");
+        const refAdvs = await tx.partyAdvance.findMany({
+          where: { id: { in: refundLines.map((l) => l.advanceId) } },
+        });
+        for (const a of refAdvs) {
+          if (a.kind !== refundKind) {
+            throw new Error(
+              `Voucher ${a.voucherNo ?? a.id} is an advance ${a.kind.toLowerCase()} — it cannot be refunded on a ${data.type.toLowerCase()} voucher`
+            );
+          }
+          if (a.source === "CHALAN_CANCEL") {
+            throw new Error(
+              "Chalan-cancel advances close through the Recover Cancel Advances section, not as a refund"
+            );
+          }
+        }
+      }
       // one combined apply per voucher (the helper releases prior uses itself,
       // so it must never run twice for the same voucher)
       const moneyLines = [
         ...(advUseTotal > 0.009 && data.partyId ? data.advanceAdjustments : []),
+        ...(refundTotal > 0.009 && data.partyId ? refundLines : []),
         ...(data.type === "RECEIPT" ? cancelLines : []),
       ];
       if (moneyLines.length && data.partyId) {
@@ -694,13 +743,20 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         // by adjusted advances are not this voucher's money, and money that
         // recovered a cancel advance is spoken for too
         if (data.type === "RECEIPT" && cancelUseTotal > 0.009) {
-          if (round2(allocatedSum + cancelUseTotal) > round2(netAmount + advUseTotal) + 0.01) {
+          if (
+            round2(allocatedSum + cancelUseTotal + refundTotal) >
+            round2(netAmount + advUseTotal) + 0.01
+          ) {
             throw new Error(
-              "Cancel-advance recovery plus allocations exceed the money received"
+              "Cancel-advance recovery plus allocations and refunds exceed the money received"
             );
           }
         }
-        const unallocated = round2(netAmount + advUseTotal - allocatedSum - cancelUseTotal);
+        // money that refunded an opposite advance is spoken for — it must
+        // never re-emerge as a new advance of this voucher's own direction
+        const unallocated = round2(
+          netAmount + advUseTotal - allocatedSum - cancelUseTotal - refundTotal
+        );
         const existingAdv = await tx.partyAdvance.findFirst({
           where: { voucherId: savedId, deletedAt: null },
         });
@@ -1279,18 +1335,27 @@ export async function getAccountHeadOptions(): Promise<
  * the direction the voucher type may consume (Receipt adjusts advances
  * RECEIVED from the party, Payment adjusts advances PAID to the party), never
  * another party's and never a fully consumed one.
+ *
+ * `refund: true` flips the direction for the Refund Advance grid: a Payment
+ * refunds advances RECEIVED from the party, a Receipt takes back advances
+ * PAID to it. Chalan-cancel advances are excluded there — they close through
+ * their own recovery flow.
  */
 export async function getOpenAdvances(input: {
   partyId: string;
   type: "RECEIPT" | "PAYMENT";
   voucherId?: string | null;
+  refund?: boolean;
 }): Promise<OpenAdvance[]> {
   const session = requireSession();
+  const sameKind = input.type === "RECEIPT" ? "RECEIVED" : "PAID";
+  const oppositeKind = input.type === "RECEIPT" ? "PAID" : "RECEIVED";
   return withTenant(session.tenantId, async (tx) => {
     const rows = await listOpenAdvances(tx, {
       firmId: session.firmId,
       partyId: input.partyId,
-      kinds: [input.type === "RECEIPT" ? "RECEIVED" : "PAID"],
+      kinds: [input.refund ? oppositeKind : sameKind],
+      ...(input.refund ? { excludeSources: ["CHALAN_CANCEL"] } : {}),
       includeRefType: "VOUCHER",
       includeRefId: input.voucherId ?? undefined,
     });

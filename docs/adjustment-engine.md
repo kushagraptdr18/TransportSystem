@@ -307,6 +307,27 @@ No schema change — built on `PartyAdvance` / `PartyAdvanceUse` and
 - Save releases the voucher's previous uses and re-applies inside one
   transaction; delete restores them (`restoreAdvanceUses`).
 
+## 2G. Advance refund & pure-deduction settlement (10 Aug 2026)
+
+No schema change — built on `PartyAdvance`/`PartyAdvanceUse` like 2F.
+
+- **Refund Advance grid** on receipt/payment vouchers, strictly the OPPOSITE
+  direction of the Adjust grid: a Payment refunds advances RECEIVED from the
+  party (work cancelled, money returned), a Receipt takes back advances PAID.
+  The refunded amount consumes the original advance (`PartyAdvanceUse`,
+  refType VOUCHER) and is subtracted from the unallocated remainder, so no
+  mirror advance ever forms — the register closes instead of showing both
+  sides open forever. Ledger posting is unchanged (the party leg at gross
+  already covers the refund money). Guards: refunds ≤ money moved, advance
+  must belong to the party, own-voucher and CHALAN_CANCEL advances excluded
+  (the latter close through their own recovery flow).
+- **Zero-amount receipt/payment** is now also allowed when the selected
+  references are settled purely by TDS / shortage / other deduction /
+  round-off (`pureDeductionSettle`): the party settles gross against the
+  deduction heads and the bank leg drops out. Previously only a pure
+  advance-adjustment voucher could save with no money moved; everything else
+  needed a Journal.
+
 ## 3. Guiding principles (do not regress these)
 
 1. **History is immutable** — corrections are always new vouchers linked to

@@ -174,6 +174,9 @@ export function VoucherEntry({
   // open advances of the selected party, same direction as the voucher type —
   // each may be adjusted (fully or partly) against the pending references
   const [advRows, setAdvRows] = React.useState<(OpenAdvance & { use: number })[]>([]);
+  // opposite-direction advances offered for REFUND (payment returns a received
+  // advance, receipt takes back a paid one)
+  const [refundRows, setRefundRows] = React.useState<(OpenAdvance & { use: number })[]>([]);
   // open chalan-cancel advances of the target party: recovered on a receipt,
   // written off (bad debt) on a journal whose credit side is that party
   const [cancelRows, setCancelRows] = React.useState<(OpenCancelAdvance & { use: number })[]>([]);
@@ -195,6 +198,7 @@ export function VoucherEntry({
       setRows([]);
       setAdvInfo(null);
       setAdvRows([]);
+      setRefundRows([]);
       setCancelRows([]);
     },
     [peekNumbers]
@@ -280,13 +284,18 @@ export function VoucherEntry({
     setPartyId(pid);
     void loadRefs(pid);
     setAdvRows([]);
+    setRefundRows([]);
     setCancelRows([]);
     if (pid) {
       getPartyAdvanceInfo(pid).then(setAdvInfo).catch(() => setAdvInfo(null));
-      if (type === "RECEIPT" || type === "PAYMENT")
+      if (type === "RECEIPT" || type === "PAYMENT") {
         getOpenAdvances({ partyId: pid, type })
           .then((list) => setAdvRows(list.map((a) => ({ ...a, use: 0 }))))
           .catch(() => setAdvRows([]));
+        getOpenAdvances({ partyId: pid, type, refund: true })
+          .then((list) => setRefundRows(list.map((a) => ({ ...a, use: 0 }))))
+          .catch(() => setRefundRows([]));
+      }
       if (type === "RECEIPT")
         getOpenCancelAdvances(pid)
           .then((list) => setCancelRows(list.map((a) => ({ ...a, use: 0 }))))
@@ -319,6 +328,9 @@ export function VoucherEntry({
   const setAdvRow = (i: number, use: number) =>
     setAdvRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, use } : r)));
 
+  const setRefundRow = (i: number, use: number) =>
+    setRefundRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, use } : r)));
+
   const setCancelRow = (i: number, use: number) =>
     setCancelRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, use } : r)));
   const cancelUseTotal = round2(cancelRows.reduce((s, r) => s + r.use, 0));
@@ -345,8 +357,9 @@ export function VoucherEntry({
   // previously received/paid advances adjusted against today's references —
   // they fund allocations alongside the money actually moved
   const advUsed = round2(advRows.reduce((s, r) => s + r.use, 0));
+  const refundUsed = round2(refundRows.reduce((s, r) => s + r.use, 0));
   const funds = round2(money + advUsed);
-  const advanceRemainder = round2(funds - allocated);
+  const advanceRemainder = round2(funds - allocated - refundUsed);
   const gross = round2(money + tdsTotal + dedTotal);
 
   const rowError = (r: SettleRow): string | null => {
@@ -366,8 +379,13 @@ export function VoucherEntry({
     return null;
   };
   const hasAdvErrors = advRows.some((r) => advRowError(r) !== null);
+  const hasRefundErrors = refundRows.some((r) => advRowError(r) !== null);
   // an adjusted advance exists to settle references — it cannot become new money
   const advUnderApplied = advUsed > allocated + 0.01;
+  // refunds come out of the money moved: allocations + refunds ≤ funds
+  const overRefunded = round2(allocated + refundUsed) > funds + 0.01;
+  // pure adjustment: references settled by TDS/shortage/other/round-off alone
+  const deductionSettle = round2(tdsTotal + dedTotal + roundOffTotal);
 
   // distributes ONLY across the rows the user ticked, oldest first —
   // an unticked reference is never touched
@@ -440,6 +458,11 @@ export function VoucherEntry({
               .filter((r) => r.use > 0)
               .map((r) => ({ advanceId: r.id, amount: r.use }))
           : [],
+        advanceRefunds: isMoney
+          ? refundRows
+              .filter((r) => r.use > 0)
+              .map((r) => ({ advanceId: r.id, amount: r.use }))
+          : [],
         cancelAdvanceUses:
           type === "RECEIPT" || type === "JOURNAL"
             ? cancelRows
@@ -473,6 +496,9 @@ export function VoucherEntry({
             advUsed > 0.009 && isMoney
               ? `${formatMoney(advUsed)} adjusted from open advances.`
               : null,
+            refundUsed > 0.009 && isMoney
+              ? `${formatMoney(refundUsed)} advance ${type === "RECEIPT" ? "taken back" : "refunded"} — those advances are closed.`
+              : null,
             advanceRemainder > 0.009 && isMoney
               ? `${formatMoney(advanceRemainder)} stored as party advance (${type === "RECEIPT" ? "received" : "paid"}).`
               : null,
@@ -502,14 +528,16 @@ export function VoucherEntry({
           !overAllocated &&
           !hasCancelErrors
         : // a receipt/payment may move no money at all when it purely adjusts
-          // an open advance against pending references
-          (money > 0 || advUsed > 0) &&
+          // an open advance — or settles references by deductions/round-off alone
+          (money > 0 || advUsed > 0 || deductionSettle > 0) &&
           !!partyId &&
           !!bankPartyId &&
           !hasRowErrors &&
           !hasAdvErrors &&
+          !hasRefundErrors &&
           !hasCancelErrors &&
           !overAllocated &&
+          !overRefunded &&
           !advUnderApplied);
 
   return (
@@ -746,6 +774,71 @@ export function VoucherEntry({
                 Advance adjusted ({formatMoney(advUsed)}) exceeds the amount allocated to
                 references ({formatMoney(allocated)}) — allocate the adjusted amount against
                 pending references below.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ---------- advance refund (opposite direction) ---------- */}
+      {isMoneyType && partyId && refundRows.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Refund Advance {type === "RECEIPT" ? "(Paid — being returned to us)" : "(Received — being returned by us)"}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                {type === "RECEIPT"
+                  ? "advances we PAID to this party — the money received closes them"
+                  : "advances RECEIVED from this party — the money paid returns them and closes the advance"}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Advance Voucher</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Original Amount</TableHead>
+                    <TableHead className="text-right">Already Adjusted</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                    <TableHead className="w-32 text-right">Amount to Refund</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {refundRows.map((r, i) => {
+                    const err = advRowError(r);
+                    return (
+                      <TableRow key={r.id} className={err ? "bg-destructive/5" : undefined}>
+                        <TableCell className="font-medium">{r.voucherNo}</TableCell>
+                        <TableCell className="whitespace-nowrap text-xs">{formatDate(r.date)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatMoney(r.amount)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{formatMoney(r.consumed)}</TableCell>
+                        <TableCell className="text-right font-medium tabular-nums">
+                          {formatMoney(r.available)}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            className="h-8 text-right"
+                            value={r.use ? String(r.use) : ""}
+                            placeholder="0"
+                            onChange={(e) => setRefundRow(i, Number(e.target.value) || 0)}
+                          />
+                          {err && <div className="mt-0.5 text-[11px] text-destructive">{err}</div>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+            {overRefunded && (
+              <p className="mt-2 text-xs font-medium text-destructive">
+                Allocations ({formatMoney(allocated)}) plus refunds ({formatMoney(refundUsed)})
+                exceed the money {type === "RECEIPT" ? "received" : "paid"} (
+                {formatMoney(funds)}) — increase the amount or reduce the refund.
               </p>
             )}
           </CardContent>

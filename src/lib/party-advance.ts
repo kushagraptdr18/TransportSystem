@@ -95,6 +95,8 @@ export async function listOpenAdvances(
     firmId: string;
     partyId: string;
     kinds?: string[];
+    /** e.g. CHALAN_CANCEL advances have their own recovery flow */
+    excludeSources?: string[];
     includeRefType?: string | string[];
     includeRefId?: string;
   }
@@ -105,6 +107,7 @@ export async function listOpenAdvances(
       partyId: opts.partyId,
       deletedAt: null,
       ...(opts.kinds ? { kind: { in: opts.kinds } } : {}),
+      ...(opts.excludeSources ? { source: { notIn: opts.excludeSources } } : {}),
     },
     orderBy: { date: "asc" },
     include: { uses: true },
