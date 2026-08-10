@@ -320,6 +320,42 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       : [];
     const advByVoucher = new Map(advances.map((a) => [a.voucherId ?? "", a]));
 
+    // ---- ADV ADJUSTMENT rows: an advance-settled reference has NO ledger
+    // entry of its own (the advance voucher moved the money earlier), so a
+    // Ref No search would show the bill as never settled. These zero-value
+    // informational rows fill that hole — no debit, no credit, no effect on
+    // the running balance; they only say "this reference was settled from
+    // that advance". Shown on a selected party ledger and on cross-ledger
+    // reference searches; a bank/cash book or head ledger has no advances.
+    const wantAdjRows =
+      !params.groups && !params.headId && !params.side && (!!params.partyId || !!refQuery);
+    const adjUses =
+      wantAdjRows && (!params.refType || params.refType === "ADV ADJUSTMENT")
+        ? await tx.partyAdvanceUse.findMany({
+            where: {
+              advance: {
+                firmId: session.firmId,
+                deletedAt: null,
+                ...(params.partyId ? { partyId: params.partyId } : {}),
+              },
+              ...(params.refNo
+                ? { refNo: { contains: params.refNo.trim(), mode: "insensitive" } }
+                : {}),
+              ...(params.dateFrom || params.dateTo
+                ? {
+                    date: {
+                      ...(params.dateFrom ? { gte: new Date(params.dateFrom + "T00:00:00") } : {}),
+                      ...(params.dateTo ? { lte: new Date(params.dateTo + "T23:59:59") } : {}),
+                    },
+                  }
+                : {}),
+            },
+            include: { advance: true },
+            orderBy: { date: "asc" },
+            take: 1000,
+          })
+        : [];
+
     // a running balance over a content-filtered subset would mislead — track
     // it only when the rows are the ledger's complete story
     const contentFiltered = !!(
@@ -432,6 +468,43 @@ export async function ledgerBookRows(params: BookParams): Promise<{
           : "",
       };
     });
+    // zero-value ADV ADJUSTMENT rows, merged into date order. Balance stays
+    // blank on them — the money was already counted on the advance entry.
+    const adjRows: ReportRow[] = adjUses
+      .filter((u) => matchesRef(u.refNo))
+      .filter(
+        (u) =>
+          !params.narration ||
+          `adjusted from advance ${u.advance.voucherNo ?? ""}`
+            .toLowerCase()
+            .includes(params.narration.trim().toLowerCase())
+      )
+      .filter((u) => {
+        const amt = toNum(String(u.amount));
+        if (params.amtFrom != null && amt < params.amtFrom) return false;
+        if (params.amtTo != null && amt > params.amtTo) return false;
+        return true;
+      })
+      .map((u) => ({
+        date: u.date.toISOString(),
+        party: (u.advance.partyId && nameById.get(u.advance.partyId)) || "",
+        account: `Advance ${u.advance.voucherNo ?? "—"}`,
+        refType: "ADV ADJUSTMENT",
+        refNo: u.refNo,
+        link: "",
+        voucherNo: u.advance.voucherNo ?? "",
+        payment: "",
+        vehicle: "",
+        narration: `₹${toNum(String(u.amount)).toLocaleString("en-IN")} settled from advance ${u.advance.voucherNo ?? "—"} — no ledger movement, money moved with the advance`,
+        adjustments: "",
+        debit: null,
+        credit: null,
+        balance: "",
+      }));
+    const mergedRows = adjRows.length
+      ? [...rows, ...adjRows].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+      : rows;
+
     // a row settling several documents carries them comma-joined — the
     // dropdown offers each individual reference, exact-match ready
     const refNoTokens = Array.from(
@@ -440,7 +513,7 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       )
     ).sort();
     return {
-      rows,
+      rows: mergedRows,
       parties,
       heads,
       vehicles: scopedVehicleIds ? vehicles.filter((v) => scopedVehicleIds.has(v.id)) : vehicles,
