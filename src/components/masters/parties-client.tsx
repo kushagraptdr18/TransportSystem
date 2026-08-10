@@ -183,11 +183,12 @@ export function PartiesClient({
         { name: "bankIfsc", label: "IFSC", type: "text", uppercase: true },
         { name: "isActive", label: "Active", type: "switch" },
       ]}
+      // openingSide has NO default — the user chooses Dr/Cr; the server
+      // rejects an opening amount saved without a chosen side
       defaults={{
         name: "",
         ledgerGroup: "CONSIGNEE_CONSIGNOR",
         openingBalance: 0,
-        openingSide: "DEBIT",
         tdsMode: "TDS_APPLICABLE",
         isActive: true,
       }}

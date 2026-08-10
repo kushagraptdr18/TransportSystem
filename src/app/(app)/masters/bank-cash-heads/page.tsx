@@ -35,6 +35,8 @@ export default async function BankCashHeadsPage({
     bankName: r.bankName,
     bankAccount: r.bankAccount,
     bankIfsc: r.bankIfsc,
+    openingBalance: Number(r.openingBalance),
+    openingSide: r.openingSide,
     isActive: r.isActive,
   }));
 

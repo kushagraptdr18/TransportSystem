@@ -2,6 +2,7 @@
 
 import type { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
+import { formatMoney } from "@/lib/utils";
 import { SimpleMaster, type FormState } from "@/components/masters/simple-master";
 import { saveParty, deleteParty, importParties } from "@/app/(app)/masters/parties/actions";
 
@@ -13,6 +14,8 @@ export interface BankCashHeadRow {
   bankName: string | null;
   bankAccount: string | null;
   bankIfsc: string | null;
+  openingBalance: number;
+  openingSide: string;
   isActive: boolean;
 }
 
@@ -38,6 +41,14 @@ const columns: ColumnDef<BankCashHeadRow, unknown>[] = [
   { accessorKey: "alias", header: "Description" },
   { accessorKey: "bankAccount", header: "A/c No" },
   { accessorKey: "bankIfsc", header: "IFSC" },
+  {
+    accessorKey: "openingBalance",
+    header: "Opening",
+    cell: ({ row }) =>
+      row.original.openingBalance > 0
+        ? `${formatMoney(row.original.openingBalance)} ${row.original.openingSide === "DEBIT" ? "Dr" : "Cr"}`
+        : "",
+  },
   {
     accessorKey: "isActive",
     header: "Status",
@@ -72,6 +83,8 @@ export function BankCashHeadsClient({
         { header: "Bank", key: "bankName" },
         { header: "A/c No", key: "bankAccount" },
         { header: "IFSC", key: "bankIfsc" },
+        { header: "Opening Balance", key: "openingBalance", numeric: true },
+        { header: "Dr/Cr", key: "openingSide" },
         { header: "Active", accessor: (r) => (r.isActive ? "YES" : "NO") },
       ]}
       exportName="bank-cash-heads"
@@ -120,17 +133,36 @@ export function BankCashHeadsClient({
           uppercase: true,
           visibleIf: (f: FormState) => f.ledgerGroup === "BANK",
         },
+        // opening as on the FY start: bank/cash in hand = Dr; an OD/CC account
+        // in use or a credit card's unpaid bill = Cr
+        { name: "openingBalance", label: "Opening Balance (FY start)", type: "number" },
+        {
+          name: "openingSide",
+          label: "Opening Side",
+          type: "radio",
+          options: [
+            { value: "DEBIT", label: "Debit (balance with us)" },
+            { value: "CREDIT", label: "Credit (owed / OD used)" },
+          ],
+        },
         { name: "isActive", label: "Active", type: "switch" },
       ]}
-      defaults={{ name: "", ledgerGroup: "BANK", isActive: true }}
+      // openingSide deliberately has NO default — the user chooses Dr/Cr;
+      // the server rejects an opening amount saved without a chosen side
+      defaults={{
+        name: "",
+        ledgerGroup: "BANK",
+        openingBalance: 0,
+        isActive: true,
+      }}
       toForm={(r) => ({ ...r })}
       getId={(r) => r.id}
       save={saveParty}
       remove={deleteParty}
       importConfig={{
         action: importParties,
-        templateHeaders: ["Name", "Group"],
-        templateExample: ["HDFC BANK", "BANK"],
+        templateHeaders: ["Name", "Group", "Opening Balance", "Opening Side"],
+        templateExample: ["HDFC BANK", "BANK", "340000", "DEBIT"],
         templateName: "bank-cash-heads",
       }}
       canDelete={canDelete}

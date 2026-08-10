@@ -28,7 +28,9 @@ const schema = z.object({
   vendorCode: optStr,
   transportName: optStr,
   openingBalance: z.coerce.number().default(0),
-  openingSide: z.enum(["DEBIT", "CREDIT"]).default("DEBIT"),
+  // no silent default: a form may leave the side unchosen, and an opening
+  // amount without a chosen Dr/Cr is rejected below rather than assumed
+  openingSide: z.enum(["DEBIT", "CREDIT"]).nullish(),
   tdsMode: z.enum(["TDS_APPLICABLE", "DECLARATION"]).nullable().optional(),
   bankName: optStr,
   bankAccount: optStr,
@@ -54,6 +56,8 @@ export async function saveParty(input: unknown): Promise<ActionResult> {
     return { ok: false, error: "Mobile must be a valid 10-digit Indian number." };
   if (data.email && !EMAIL_RE.test(data.email))
     return { ok: false, error: "Invalid email address." };
+  if (data.openingBalance > 0.009 && !data.openingSide)
+    return { ok: false, error: "Select Debit or Credit for the opening balance." };
   await authorize(session, "masters", data.id ? "edit" : "create");
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
@@ -74,7 +78,8 @@ export async function saveParty(input: unknown): Promise<ActionResult> {
         vendorCode: data.vendorCode,
         transportName: data.ledgerGroup === "OWNER_BROKER" ? data.transportName : null,
         openingBalance: data.openingBalance,
-        openingSide: data.openingSide,
+        // zero opening carries no direction — DEBIT is just the storage value
+        openingSide: data.openingSide ?? "DEBIT",
         tdsMode: data.ledgerGroup === "OWNER_BROKER" ? data.tdsMode ?? "TDS_APPLICABLE" : null,
         bankName: data.bankName,
         bankAccount: data.bankAccount,
