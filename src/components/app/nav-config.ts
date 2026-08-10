@@ -166,7 +166,6 @@ export const NAV: NavGroup[] = [
       { label: "LR Register", href: "/lr/register" },
       { label: "Cancelled LR Report", href: "/reports/cancelled-lrs" },
       { label: "Paper Change LR Report", href: "/reports/paper-change-lrs" },
-      { label: "TDS Report – Quarterly Wise", href: "/reports/tds-quarterly" },
     ],
   },
   {
