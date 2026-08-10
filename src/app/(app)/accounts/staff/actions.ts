@@ -55,6 +55,16 @@ function toDate(s: string): Date {
   return new Date(s.includes("T") ? s : `${s}T00:00:00`);
 }
 
+/**
+ * The readable salary reference: "SUNIL KUMAR/08/2026". voucherNo keeps the
+ * PAY-#### sequence; this is what every register and allocation grid shows,
+ * so whose salary it is reads straight off the reference.
+ */
+function salaryRefNo(partyName: string, month: string): string {
+  const [y, m] = month.split("-");
+  return `${partyName.trim().toUpperCase()}/${m}/${y}`;
+}
+
 // ---------------------------------------------------------------- profile
 
 const profileSchema = z.object({
@@ -330,6 +340,8 @@ export async function processStaffSalary(
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
+      const staffParty = await tx.party.findFirst({ where: { id: d.partyId } });
+      if (!staffParty) return { ok: false as const, error: "Staff member not found" };
       const existing = await tx.staffSalary.findFirst({
         where: {
           firmId: session.firmId,
@@ -437,6 +449,9 @@ export async function processStaffSalary(
         grossSalary,
         totalDeductions,
         netSalary,
+        // "SUNIL KUMAR/08/2026" — refreshed on every save so a renamed party
+        // propagates; voucherNo stays the immutable PAY-#### sequence
+        refNo: salaryRefNo(staffParty.name, d.month),
         remarks: d.remarks || null,
         // payment fields are ALWAYS written, both ways. Leaving them untouched
         // when markPaid was off kept an edited salary PAID with a stale
@@ -518,7 +533,6 @@ export async function processStaffSalary(
               partyId: d.partyId,
               month: d.month,
               voucherNo: salaryNo,
-              refNo: salaryNo,
               createdById: session.userId,
               ...values,
             },
@@ -630,7 +644,8 @@ async function postSalaryLedger(
     date: accrualDate,
     refType: "STAFF_SALARY",
     refId: s.id,
-    refNo: `SAL-${s.month}`,
+    // the same readable reference the registers show ("SUNIL KUMAR/08/2026")
+    refNo: s.refNo || `SAL-${s.month}`,
   };
   const payCommon = { ...common, date: s.paymentDate ?? accrualDate };
   const gross = toNum(String(s.grossSalary));
