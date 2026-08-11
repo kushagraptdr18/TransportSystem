@@ -283,6 +283,19 @@ export async function payableSettlement(
   return out;
 }
 
+/**
+ * Live remainder of a SIGNED document (driver +/- settlement) after voucher
+ * allocations settled part of it. A positive row (company owes the driver)
+ * shrinks toward 0 as payments allocate against it; a negative row (driver
+ * owes the company) shrinks toward 0 as receipts do. It never crosses zero —
+ * a voucher can settle a balance, not flip its direction.
+ */
+export function signedRemainder(amount: number, voucherSettled: number): number {
+  return amount >= 0
+    ? Math.max(0, round2(amount - voucherSettled))
+    : Math.min(0, round2(amount + voucherSettled));
+}
+
 export function settlementStatus(total: number, outstanding: number): SettlementStatus {
   if (outstanding <= 0.009) return "PAID";
   return outstanding < total - 0.009 ? "PARTLY PAID" : "UNPAID";

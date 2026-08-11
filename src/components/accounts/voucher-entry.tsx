@@ -445,10 +445,13 @@ export function VoucherEntry({
         chequeDate: chequeDateText ? toIso(chequeDateText) : null,
         // gross = money moved + TDS + deductions, WITHOUT round-off — the
         // server settles the party for the round-off through its own pair of
-        // ledger legs derived from the allocation rows
-        amount: isMoney ? gross : money,
-        tdsAmt: isMoney ? tdsTotal : 0,
-        deduction: isMoney ? dedTotal : 0,
+        // ledger legs derived from the allocation rows.
+        // JOURNAL sends the same header shape as a money voucher: TDS typed on
+        // its allocation rows must reach the "TDS Payable" ledger head (the
+        // TDS register reads journals from that ledger), not vanish at 0.
+        amount: type === "CONTRA" ? money : gross,
+        tdsAmt: type === "CONTRA" ? 0 : tdsTotal,
+        deduction: type === "CONTRA" ? 0 : dedTotal,
         otherAmt: 0,
         remarks:
           type === "JOURNAL" && refNo ? `Ref: ${refNo}${remarks ? " — " + remarks : ""}` : remarks || null,

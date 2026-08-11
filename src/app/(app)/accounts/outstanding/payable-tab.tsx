@@ -88,6 +88,24 @@ export async function OutstandingPayableTab({
       deletedAt: null,
     };
     if (searchParams.party) salaryWhere.partyId = searchParams.party;
+    // month is "YYYY-MM" — string bounds honour the register's date filter,
+    // which every other source already applies
+    if (searchParams.date_from || searchParams.date_to) {
+      salaryWhere.month = {
+        ...(searchParams.date_from ? { gte: searchParams.date_from.slice(0, 7) } : {}),
+        ...(searchParams.date_to ? { lte: searchParams.date_to.slice(0, 7) } : {}),
+      };
+    }
+
+    // hire slips are payable to the (text-named) vehicle owner — the dashboard
+    // tile counts them, so this register must too; they carry no party link,
+    // so a party filter simply excludes them
+    const hireWhere: Prisma.HireSlipWhereInput = {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+    };
+    if (dateWhere) hireWhere.slipDate = dateWhere;
 
     const officeWhere: Prisma.OfficeTransactionWhereInput = {
       firmId: session.firmId,
@@ -126,7 +144,7 @@ export async function OutstandingPayableTab({
     };
     if (dateWhere) adblueWhere.date = dateWhere;
 
-    const [chalans, slips, salaries, office, vehicle, adblue, parties, paidByRef] =
+    const [chalans, slips, salaries, office, vehicle, adblue, hires, parties, paidByRef] =
       await Promise.all([
       source && source !== "CHALAN"
         ? Promise.resolve([])
@@ -146,6 +164,9 @@ export async function OutstandingPayableTab({
       source && source !== "ADBLUE"
         ? Promise.resolve([])
         : tx.adblueTxn.findMany({ where: adblueWhere, orderBy: { date: "asc" } }),
+      (source && source !== "HIRE_SLIP") || searchParams.party
+        ? Promise.resolve([])
+        : tx.hireSlip.findMany({ where: hireWhere, orderBy: { slipDate: "asc" } }),
       tx.party.findMany({
         where: {
           ledgerGroup: { in: ["OWNER_BROKER", "SUPPLIERS", "STAFF", "DRIVER"] },
@@ -163,8 +184,8 @@ export async function OutstandingPayableTab({
         refTypes: ALL_PAYABLE_REF_TYPES,
       }),
     ]);
-    return { chalans, slips, salaries, office, vehicle, adblue, parties, paidByRef };
-  }).then(({ chalans, slips, salaries, office, vehicle, adblue, parties, paidByRef }) => {
+    return { chalans, slips, salaries, office, vehicle, adblue, hires, parties, paidByRef };
+  }).then(({ chalans, slips, salaries, office, vehicle, adblue, hires, parties, paidByRef }) => {
     const partyById = new Map(parties.map((p) => [p.id, p]));
     const status = (total: number, outstanding: number) =>
       outstanding <= 0.009 ? "PAID" : outstanding < total - 0.009 ? "PARTLY PAID" : "UNPAID";
@@ -288,6 +309,26 @@ export async function OutstandingPayableTab({
       };
     });
 
+    // hire slip: payable = total hire (post TDS/SC) − advance − allocations;
+    // same live formula the dashboard tile uses
+    const hireRows = hires.map((h) => {
+      const gross = toNum(h.totalHire);
+      const paid = toNum(h.advance) + (paidByRef.get(h.id) ?? 0);
+      const outstanding = Math.round((gross - paid) * 100) / 100;
+      return {
+        refNo: h.slipNo,
+        date: h.slipDate.toISOString(),
+        kind: "HIRE_SLIP",
+        partyType: "Vehicle Owner",
+        party: h.ownerName || h.brokerName || "",
+        gross,
+        paid,
+        outstanding,
+        status: status(gross, outstanding),
+        link: `hire-slip`,
+      };
+    });
+
     const adblueRows = adblue.map((a) => {
       const gross = toNum(a.amount);
       const paid = paidByRef.get(a.id) ?? 0;
@@ -315,6 +356,7 @@ export async function OutstandingPayableTab({
         ...officeRows,
         ...vehicleRows,
         ...adblueRows,
+        ...hireRows,
       ]
         .filter((r) => r.gross > 0)
         .filter((r) => showClosed || r.outstanding > 0.009)
@@ -344,6 +386,7 @@ export async function OutstandingPayableTab({
         { value: "OFFICE_EXPENSE", label: "Office Expense" },
         { value: "VEHICLE_EXPENSE", label: "Vehicle Expense" },
         { value: "ADBLUE", label: "AdBlue / Urea Purchase" },
+        { value: "HIRE_SLIP", label: "Hire Slip (Lorry Hire)" },
       ],
     },
     {
@@ -358,7 +401,7 @@ export async function OutstandingPayableTab({
     <div className="space-y-4">
       <FilterBar filters={filters} />
       <SimpleReport
-        title={`${rows.length} payable${rows.length === 1 ? "" : "s"} (chalan freight + broker slip owner side + staff salary + office & vehicle expense bills)`}
+        title={`${rows.length} payable${rows.length === 1 ? "" : "s"} (chalan freight + broker slip owner side + hire slips + staff salary + office & vehicle expense bills)`}
         columns={[
           { key: "refNo", header: "Ref No", linkBase: "/", linkParamKey: "link" },
           { key: "date", header: "Date", kind: "date" },

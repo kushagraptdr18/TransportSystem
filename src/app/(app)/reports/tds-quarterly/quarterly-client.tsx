@@ -21,7 +21,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ExportButton, type ExportColumn } from "@/components/data/export-button";
 import { formatDate, formatMoney } from "@/lib/utils";
-import { QUARTERS, type QuarterlyData, type TdsDetailRow } from "./data";
+import { DIRECT_MODULES, QUARTERS, type QuarterlyData, type TdsDetailRow } from "./data";
 
 interface Props {
   data: QuarterlyData;
@@ -295,8 +295,12 @@ export function TdsQuarterlyClient({ data, fyLabel, printHref }: Props) {
                       <Badge variant="outline">{r.module}</Badge>
                     </TableCell>
                     <TableCell>{r.section || "-"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{r.tdsPct}%</TableCell>
-                    <TableCell className="text-right tabular-nums">{money(r.baseAmt)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {DIRECT_MODULES.has(r.module) ? "—" : `${r.tdsPct}%`}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {DIRECT_MODULES.has(r.module) ? "—" : money(r.baseAmt)}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{money(r.tdsAmt)}</TableCell>
                     <TableCell>{r.quarter}</TableCell>
                     <TableCell>
@@ -310,7 +314,14 @@ export function TdsQuarterlyClient({ data, fyLabel, printHref }: Props) {
                   <TableRow className="font-semibold">
                     <TableCell colSpan={6}>Total ({detail.rows.length} transactions)</TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {money(detail.rows.reduce((s, r) => s + r.baseAmt, 0))}
+                      {/* direct (voucher/journal) rows carry no reportable base —
+                          the quarter cells exclude it, so this total must too */}
+                      {money(
+                        detail.rows.reduce(
+                          (s, r) => s + (DIRECT_MODULES.has(r.module) ? 0 : r.baseAmt),
+                          0
+                        )
+                      )}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {money(detail.rows.reduce((s, r) => s + r.tdsAmt, 0))}

@@ -648,7 +648,7 @@ export async function saveInvoice(
       // ledger: debit the customer (receivable), credit freight income —
       // re-posted on every save so edits stay in sync
       await reverseLedger(tx, "INVOICE", invoiceId);
-      if (totals.grandTotal > 0) {
+      if (totals.netTotal > 0) {
         const invoiceDate = new Date(data.invoiceDate);
         const common = {
           date: invoiceDate,
@@ -656,24 +656,43 @@ export async function saveInvoice(
           refId: invoiceId,
           refNo: data.invoiceNo,
         };
+        // the customer owes the FULL bill value, GST included — netTotal, the
+        // same figure invoiceSettlement and the Outstanding register work on.
+        // (For a GST-kind bill netTotal === grandTotal; for PT/FT/MANUAL with
+        // GST it is grandTotal + tax — posting grandTotal left the GST off the
+        // party ledger entirely, a phantom credit once the customer paid.)
         const entries: Parameters<typeof postLedger>[2] = [
           {
             ...common,
             partyId: data.partyId,
             side: "DEBIT",
-            amount: totals.grandTotal,
+            amount: totals.netTotal,
             narration: `Invoice ${data.invoiceNo} (${data.kind.replace(/_/g, " ")})`,
           },
         ];
+        // GST is a statutory liability, not income — it gets its own ledger,
+        // exactly like TDS Payable, whatever the bill kind
+        const gstTotal = round2(totals.cgstAmt + totals.sgstAmt + totals.igstAmt);
+        if (gstTotal > 0.009) {
+          const gstHeadId = await ensureAccountHead(tx, session, "GST Output", "INCOME");
+          entries.push({
+            ...common,
+            accountHeadId: gstHeadId,
+            side: "CREDIT",
+            amount: gstTotal,
+            narration: `GST on invoice ${data.invoiceNo}`,
+          });
+        }
         // Every additional charge credits ITS OWN ledger head — loading,
         // documentation, detention and the rest are separate income lines, not
         // one clubbed "Freight Income" figure. A charge named after a common
         // head (Detention, ODC, ...) lands in that shared ledger.
         const billedCharges = data.charges.filter((c) => round2(c.amount) > 0);
-        // a bill whose charges alone exceed its grand total (heavy credit lines)
-        // cannot be split without unbalancing it — it stays one freight credit
+        // a bill whose charges alone exceed its pre-tax value (heavy credit
+        // lines) cannot be split without unbalancing it — one freight credit
+        const preTax = round2(totals.netTotal - gstTotal);
         const splittable =
-          round2(billedCharges.reduce((s, c) => s + c.amount, 0)) < totals.grandTotal - 0.009;
+          round2(billedCharges.reduce((s, c) => s + c.amount, 0)) < preTax - 0.009;
         let chargesTotal = 0;
         for (const c of splittable ? billedCharges : []) {
           const amount = round2(c.amount);
@@ -687,8 +706,8 @@ export async function saveInvoice(
             narration: `${c.chargeType}${c.description ? ` (${c.description})` : ""} — invoice ${data.invoiceNo}`,
           });
         }
-        // freight (plus GST, which the grand total carries) is the remainder
-        const freight = round2(totals.grandTotal - chargesTotal);
+        // freight income is the pre-tax remainder — GST already has its leg
+        const freight = round2(preTax - chargesTotal);
         if (freight > 0) {
           const incomeHeadId = await ensureAccountHead(tx, session, "Freight Income", "INCOME");
           entries.push({

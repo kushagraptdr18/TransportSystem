@@ -3,6 +3,7 @@ import type { InvoiceKind, Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
+import { invoiceSettlement } from "@/lib/settlement";
 import { Button } from "@/components/ui/button";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import {
@@ -29,7 +30,7 @@ export default async function BillingRegisterPage({
 }) {
   const session = requireSession();
 
-  const { rows, parties } = await withTenant(session.tenantId, async (tx) => {
+  const { rows, parties, settle } = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.InvoiceWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
@@ -58,7 +59,15 @@ export default async function BillingRegisterPage({
         orderBy: { name: "asc" },
       }),
     ]);
-    return { rows: invoices, parties: partyRows };
+    // live settled position — the stored `balance` column is frozen at
+    // creation (netTotal − advance) and never moves when a receipt voucher
+    // settles the bill; the register must show the same figure Outstanding does
+    const settle = await invoiceSettlement(tx, {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      invoices,
+    });
+    return { rows: invoices, parties: partyRows, settle };
   });
 
   const partyById = new Map(parties.map((p) => [p.id, p.name]));
@@ -74,7 +83,7 @@ export default async function BillingRegisterPage({
     gstAmt: toNum(String(i.cgstAmt)) + toNum(String(i.sgstAmt)) + toNum(String(i.igstAmt)),
     netTotal: toNum(String(i.netTotal)),
     advance: toNum(String(i.advance)),
-    balance: toNum(String(i.balance)),
+    balance: settle.get(i.id)?.outstanding ?? toNum(String(i.balance)),
   }));
 
   const filters: FilterDef[] = [

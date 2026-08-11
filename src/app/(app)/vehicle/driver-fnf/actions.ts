@@ -9,6 +9,7 @@ import { audit } from "@/lib/audit";
 import { ensureAccountHead, postLedger, type LedgerPostEntry } from "@/lib/ledger";
 import { resolveRelativeOwner } from "@/lib/relative-owner";
 import { round2 } from "@/lib/calc/tds";
+import { settledByRef, signedRemainder } from "@/lib/settlement";
 import { toNum } from "@/lib/utils";
 
 /**
@@ -64,6 +65,14 @@ export async function getFnfPreview(driverId: string): Promise<FnfPreview | null
       }),
       tx.driverFnf.findFirst({ where: { driverId, deletedAt: null } }),
     ]);
+    // +/- rows net of what Payment/Receipt vouchers already settled — the
+    // preview must show the LIVE balance, not the recorded one
+    const settPaid = await settledByRef(tx, {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      refTypes: ["DRIVER_SETTLEMENT"],
+      refIds: settlements.map((s) => s.id),
+    });
     return {
       driverName: driver.name,
       driverCode: driver.driverCode,
@@ -75,7 +84,12 @@ export async function getFnfPreview(driverId: string): Promise<FnfPreview | null
         shortages.reduce((s, r) => s + toNum(String(r.amount)) - toNum(String(r.adjustedAmount)), 0)
       ),
       advancePending: round2(advances.reduce((s, r) => s + toNum(String(r.amount)), 0)),
-      plusMinusBalance: round2(settlements.reduce((s, r) => s + toNum(String(r.amount)), 0)),
+      plusMinusBalance: round2(
+        settlements.reduce(
+          (s, r) => s + signedRemainder(toNum(String(r.amount)), settPaid.get(r.id) ?? 0),
+          0
+        )
+      ),
       alreadySettled: existing?.settlementNo ?? null,
     };
   });
@@ -150,7 +164,20 @@ export async function finalizeDriverFnf(
         shortages.reduce((s, r) => s + toNum(String(r.amount)) - toNum(String(r.adjustedAmount)), 0)
       );
       const advancePending = round2(advances.reduce((s, r) => s + toNum(String(r.amount)), 0));
-      const plusMinus = round2(settlements.reduce((s, r) => s + toNum(String(r.amount)), 0));
+      // LIVE +/- balance: rows already (partly) settled by voucher allocations
+      // count only for their remainder — never twice
+      const settPaid = await settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["DRIVER_SETTLEMENT"],
+        refIds: settlements.map((s) => s.id),
+      });
+      const plusMinus = round2(
+        settlements.reduce(
+          (s, r) => s + signedRemainder(toNum(String(r.amount)), settPaid.get(r.id) ?? 0),
+          0
+        )
+      );
       const negativeAvailable = plusMinus < 0 ? Math.abs(plusMinus) : 0;
 
       if (d.shortageAdjust > shortagePending) {
@@ -295,28 +322,24 @@ export async function finalizeDriverFnf(
           { ...common, partyId: driver.partyId, side: pay ? "DEBIT" : "CREDIT", amount: abs, narration: `Final settlement ${settlementNo}` }
         );
       }
-      // relative vehicle: F&F payments belong to the relative owner, not the
-      // company — shift the incentive expense and the final payment there
+      // Relative vehicle: ONLY the F&F incentive shifts to the relative owner
+      // here. The salary itself already moved to the owner's ledger at ACCRUAL
+      // (processDriverSalary posts owner-DEBIT gross for every relative-vehicle
+      // month) — that accrual is the single authoritative owner posting for
+      // salary. Shifting the final payment again debited the owner a second
+      // time for the same salary and distorted the driver's ledger with a
+      // mirror credit; the running-salary payment path correctly posts no
+      // owner leg for the same reason.
       const rel = await resolveRelativeOwner(tx, {
         driverId: d.driverId,
         at: d.lastWorkingDate ? new Date(`${d.lastWorkingDate}T00:00:00`) : date,
       });
-      if (rel) {
-        if (d.otherPayments > 0) {
-          const head = await ensureAccountHead(tx, session, "Driver Salary Expense", "EXPENSE");
-          entries.push(
-            { ...common, partyId: rel.ownerId, side: "DEBIT", amount: d.otherPayments, narration: `F&F incentive (${driver.name}, vehicle ${rel.vehicleNo}) — on behalf of relative owner` },
-            { ...common, accountHeadId: head, side: "CREDIT", amount: d.otherPayments, narration: `F&F incentive shifted to relative owner ledger (${rel.vehicleNo})` }
-          );
-        }
-        if (Math.abs(finalPayable) >= 0.01) {
-          const pay = finalPayable > 0;
-          const abs = Math.abs(finalPayable);
-          entries.push(
-            { ...common, partyId: rel.ownerId, side: pay ? "DEBIT" : "CREDIT", amount: abs, narration: `F&F ${settlementNo} (${driver.name}, vehicle ${rel.vehicleNo}) — on behalf of relative owner` },
-            { ...common, partyId: driver.partyId, side: pay ? "CREDIT" : "DEBIT", amount: abs, narration: `F&F transferred to relative owner ledger (${rel.vehicleNo})` }
-          );
-        }
+      if (rel && d.otherPayments > 0) {
+        const head = await ensureAccountHead(tx, session, "Driver Salary Expense", "EXPENSE");
+        entries.push(
+          { ...common, partyId: rel.ownerId, side: "DEBIT", amount: d.otherPayments, narration: `F&F incentive (${driver.name}, vehicle ${rel.vehicleNo}) — on behalf of relative owner` },
+          { ...common, accountHeadId: head, side: "CREDIT", amount: d.otherPayments, narration: `F&F incentive shifted to relative owner ledger (${rel.vehicleNo})` }
+        );
       }
       await postLedger(tx, session, entries);
 

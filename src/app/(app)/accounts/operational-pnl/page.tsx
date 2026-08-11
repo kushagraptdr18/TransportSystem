@@ -80,6 +80,8 @@ const EXCLUDED_HEADS = [
   "Lorry Hire Expense",
   "TDS Payable",
   "TDS Receivable",
+  // GST charged on bills is a statutory liability, not operating income
+  "GST Output",
 ];
 
 export default async function OperationalPnlPage({

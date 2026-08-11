@@ -26,9 +26,17 @@ describe("quarterIndex", () => {
     expect(quarterIndex("2026-07-01T00:00:00Z")).toBe(1); // Jul -> Q2
     expect(quarterIndex("2026-09-15T00:00:00Z")).toBe(1);
     expect(quarterIndex("2026-10-01T00:00:00Z")).toBe(2); // Oct -> Q3
-    expect(quarterIndex("2026-12-31T12:00:00Z")).toBe(2);
+    expect(quarterIndex("2026-12-31T00:00:00Z")).toBe(2);
     expect(quarterIndex("2027-01-05T00:00:00Z")).toBe(3); // Jan -> Q4
     expect(quarterIndex("2027-03-31T00:00:00Z")).toBe(3);
+  });
+  it("boundary dates stored as non-UTC midnights stay in their quarter", () => {
+    // an IST server writes 1 Apr as 31 Mar 18:30 UTC — still Q1, never Q4
+    expect(quarterIndex("2026-03-31T18:30:00Z")).toBe(0);
+    // a UTC-5 server writes 1 Apr as 05:00 UTC — still Q1
+    expect(quarterIndex("2026-04-01T05:00:00Z")).toBe(0);
+    // IST-written 1 Jan (31 Dec 18:30 UTC) belongs to Q4, not Q3
+    expect(quarterIndex("2026-12-31T18:30:00Z")).toBe(3);
   });
 });
 

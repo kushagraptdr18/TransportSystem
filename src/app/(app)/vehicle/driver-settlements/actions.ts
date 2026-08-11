@@ -9,6 +9,8 @@ import { audit } from "@/lib/audit";
 import { postLedger, type LedgerPostEntry } from "@/lib/ledger";
 import { resolveRelativeOwner } from "@/lib/relative-owner";
 import { nextDocNumber } from "@/lib/sequences";
+import { round2 } from "@/lib/calc/tds";
+import { settledByRef, signedRemainder } from "@/lib/settlement";
 import { toNum } from "@/lib/utils";
 
 /**
@@ -93,8 +95,35 @@ export async function settleDriverSettlement(
       });
       if (!s) return { ok: false as const, error: "Settlement not found" };
       if (s.status === "SETTLED") return { ok: false as const, error: "Already settled." };
-      const amount = toNum(String(s.amount));
-      if (amount === 0) return { ok: false as const, error: "Zero balance — nothing to settle." };
+      const recorded = toNum(String(s.amount));
+      if (recorded === 0) return { ok: false as const, error: "Zero balance — nothing to settle." };
+      const date = new Date(`${d.date}T00:00:00`);
+
+      // LIVE outstanding: a Payment/Receipt voucher may already have settled
+      // part (or all) of this row through its allocation grid — paying the
+      // recorded amount again would pay the driver twice
+      const voucherPaid =
+        (
+          await settledByRef(tx, {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            refTypes: ["DRIVER_SETTLEMENT"],
+            refIds: [s.id],
+          })
+        ).get(s.id) ?? 0;
+      const amount = signedRemainder(recorded, voucherPaid);
+      if (amount === 0) {
+        // fully settled by vouchers — close the row instead of paying again
+        await tx.driverSettlement.update({
+          where: { id: s.id },
+          data: { status: "SETTLED", settledDate: date },
+        });
+        revalidatePath(REVALIDATE);
+        return {
+          ok: false as const,
+          error: "Already fully settled through voucher allocation(s) — row closed, nothing to pay.",
+        };
+      }
 
       const driver = await tx.driver.findFirst({ where: { id: s.driverId } });
       if (!driver?.partyId) {
@@ -103,7 +132,6 @@ export async function settleDriverSettlement(
 
       const pay = amount > 0; // company pays driver
       const abs = Math.abs(amount);
-      const date = new Date(`${d.date}T00:00:00`);
       const voucherNo = await nextDocNumber(tx, {
         tenantId: session.tenantId,
         firmId: session.firmId,
@@ -257,8 +285,20 @@ export async function settleDriverRunningBalance(
         orderBy: { date: "asc" },
       });
       if (!pending.length) return { ok: false as const, error: "No pending balance to settle." };
-      const net =
-        Math.round(pending.reduce((s, r) => s + toNum(String(r.amount)), 0) * 100) / 100;
+      // net of the LIVE remainders: voucher allocations already made against
+      // any of these rows must not be paid a second time here
+      const voucherPaid = await settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["DRIVER_SETTLEMENT"],
+        refIds: pending.map((p) => p.id),
+      });
+      const net = round2(
+        pending.reduce(
+          (s, r) => s + signedRemainder(toNum(String(r.amount)), voucherPaid.get(r.id) ?? 0),
+          0
+        )
+      );
       if (net === 0) {
         // pluses and minuses cancel out — close all rows without money movement
         await tx.driverSettlement.updateMany({

@@ -87,7 +87,9 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
       });
     }
     for (const s of slips) {
-      const balance = toNum(String(s.pBalance));
+      // recomputed live — the stored pBalance column can go stale, and the
+      // settlement contract forbids trusting a stored balance
+      const balance = round2(toNum(String(s.pNetAmt)) - toNum(String(s.pAdvance)));
       const own = round2(
         toNum(String(s.pPaidAmount)) + toNum(String(s.pShortage)) + toNum(String(s.pRoundOff))
       );
@@ -143,7 +145,9 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
   }
   const [chalans, slips, hires, brokerVehicles, officeBills, vehicleBills, adblueBills, salaries, driverPay, drivers] =
     await Promise.all([
-      tx.chalan.findMany({ where: { ...scope, deletedAt: null, cancelledAt: null, isFinal: true } }),
+      // draft chalans owe their hire too — the Outstanding register carries
+      // them, so hiding them here made the tile and the register disagree
+      tx.chalan.findMany({ where: { ...scope, deletedAt: null, cancelledAt: null } }),
       tx.brokerSlip.findMany({ where: { ...scope, deletedAt: null } }),
       tx.hireSlip.findMany({ where: { ...scope, deletedAt: null } }),
       tx.vehicle.findMany({ where: { ownershipType: "BROKER" }, select: { id: true } }),
@@ -180,7 +184,8 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
     refType: "FREIGHT_CHALLAN",
     docs: marketChalans.map((c) => ({
       id: c.id,
-      balance: toNum(String(c.balance)),
+      // live: grandTotal − advances, never the stored balance column
+      balance: round2(toNum(String(c.grandTotal)) - toNum(String(c.advanceTotal))),
       ownPaid: toNum(String(c.balPaidAmount)),
       ownShortage: toNum(String(c.balShortage)),
       ownRoundOff: toNum(String(c.balRoundOff)),
@@ -209,7 +214,8 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
     refType: "BROKER_ENTRY",
     docs: marketSlips.map((s) => ({
       id: s.id,
-      balance: toNum(String(s.vBalance)),
+      // live: owner net − owner advance, never the stored vBalance column
+      balance: round2(toNum(String(s.vNetAmt)) - toNum(String(s.vAdvance))),
       ownPaid: toNum(String(s.vPaidAmount)),
       ownShortage: toNum(String(s.vShortage)),
       ownRoundOff: toNum(String(s.vRoundOff)),
@@ -234,7 +240,8 @@ async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: Ou
     refType: "LORRY_HIRE",
     docs: hires.map((h) => ({
       id: h.id,
-      balance: toNum(String(h.balance)),
+      // live: total hire − advance, never the stored balance column
+      balance: round2(toNum(String(h.totalHire)) - toNum(String(h.advance))),
       ownPaid: 0,
       ownShortage: 0,
       ownRoundOff: 0,

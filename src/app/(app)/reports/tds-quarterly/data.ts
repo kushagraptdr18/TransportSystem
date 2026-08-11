@@ -13,7 +13,13 @@ export const QUARTER_MONTHS = ["Apr–Jun", "Jul–Sep", "Oct–Dec", "Jan–Mar
 
 /** Q1 Apr–Jun, Q2 Jul–Sep, Q3 Oct–Dec, Q4 Jan–Mar — from the transaction date. */
 export function quarterIndex(isoDate: string): number {
-  const m = new Date(isoDate).getMonth(); // 0 = Jan
+  // documents store their date as a midnight instant, but WHICH midnight
+  // depends on the timezone of the server that wrote it. Reading the month in
+  // yet another zone can shift a 1st-of-quarter date into the previous
+  // quarter. Nudging to mid-day and reading UTC is stable for any storage
+  // zone within ±11h of UTC — the calendar date can no longer flip.
+  const d = new Date(new Date(isoDate).getTime() + 12 * 60 * 60 * 1000);
+  const m = d.getUTCMonth(); // 0 = Jan
   if (m >= 3 && m <= 5) return 0;
   if (m >= 6 && m <= 8) return 1;
   if (m >= 9 && m <= 11) return 2;
@@ -76,7 +82,7 @@ const zeroCells = (): QuarterCell[] => QUARTERS.map(() => ({ base: 0, tds: 0 }))
  * showing only the TDS amount, never a rate or base. Challan and broker-slip
  * rows keep their recorded rate and base.
  */
-const DIRECT_MODULES = new Set(["PAYMENT VOUCHER", "JOURNAL VOUCHER"]);
+export const DIRECT_MODULES = new Set(["PAYMENT VOUCHER", "JOURNAL VOUCHER"]);
 export const DIRECT_RATE_FILTER = "DIRECT";
 export const DIRECT_LABEL = "Voucher / Direct";
 

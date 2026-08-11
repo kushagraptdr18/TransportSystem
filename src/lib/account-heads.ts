@@ -164,6 +164,9 @@ export function tdsHead(voucherType: "RECEIPT" | "PAYMENT" | "CONTRA" | "JOURNAL
  */
 export const MODULE_HEADS: { name: string; kind: "INCOME" | "EXPENSE" }[] = [
   { name: "Freight Income", kind: "INCOME" }, // billing
+  // GST charged on our bills — a statutory liability ledger like TDS Payable,
+  // never P&L income; the operational P&L excludes it by name
+  { name: "GST Output", kind: "INCOME" },
   { name: "Lorry Hire Expense", kind: "EXPENSE" }, // chalan / broker slip owner side
   { name: "Urea Expense", kind: "EXPENSE" }, // adblue + trip sheet
   { name: "Driver Salary Expense", kind: "EXPENSE" }, // driver salary + F&F

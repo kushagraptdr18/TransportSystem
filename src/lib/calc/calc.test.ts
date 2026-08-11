@@ -49,6 +49,16 @@ describe("GST", () => {
   it("gstin state code", () => {
     expect(stateCodeFromGstin("22AAACJ9096D1ZK")).toBe("22");
   });
+  it("unregistered customer (no recipient state) -> local CGST/SGST, not IGST", () => {
+    expect(
+      gstSplit({ taxableValue: 1000, gstPct: 12, supplierStateCode: "22", recipientStateCode: null })
+    ).toEqual({ cgst: 60, sgst: 60, igst: 0 });
+  });
+  it("intra-state halves reconstruct the rounded total exactly (no paisa drift)", () => {
+    // 333.50 @ 3% = 10.005 -> 10.01 total; halves must sum to 10.01, not 10.02
+    const g = gstSplit({ taxableValue: 333.5, gstPct: 3, supplierStateCode: "22", recipientStateCode: "22" });
+    expect(g.cgst + g.sgst).toBeCloseTo(10.01, 2);
+  });
 });
 
 describe("chalan compute", () => {

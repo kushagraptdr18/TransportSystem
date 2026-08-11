@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
+import { settledByRef, signedRemainder } from "@/lib/settlement";
 import { toNum } from "@/lib/utils";
 import type { DriverSalaryRow } from "@/components/vehicle/driver-salary-client";
 import type { DriverSettlementRow } from "@/components/vehicle/driver-settlement-client";
@@ -134,7 +135,7 @@ export async function loadSalaryTab(filters: DriverFilters) {
 
 export async function loadSettlementTab(filters: DriverFilters) {
   const session = requireSession();
-  const { settlements, drivers, vehicles, banks } = await withTenant(
+  const { settlements, drivers, vehicles, banks, voucherPaid } = await withTenant(
     session.tenantId,
     async (tx) => {
       const where: Prisma.DriverSettlementWhereInput = {
@@ -163,7 +164,16 @@ export async function loadSettlementTab(filters: DriverFilters) {
         tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
         tx.party.findMany({ where: bankWhere, orderBy: { name: "asc" } }),
       ]);
-      return { settlements, drivers, vehicles, banks };
+      // voucher allocations already made against pending rows — the running
+      // balance shown next to Pay/Receive must be the LIVE remainder, exactly
+      // what the settle action will actually pay
+      const voucherPaid = await settledByRef(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refTypes: ["DRIVER_SETTLEMENT"],
+        refIds: settlements.filter((s) => s.status === "PENDING").map((s) => s.id),
+      });
+      return { settlements, drivers, vehicles, banks, voucherPaid };
     }
   );
 
@@ -171,12 +181,15 @@ export async function loadSettlementTab(filters: DriverFilters) {
   const vehicleNo = new Map(vehicles.map((v) => [v.id, v.number]));
 
   // previous / running balance per driver in chronological order — settled
-  // amounts drop out (they never carry to the next trip)
+  // amounts drop out (they never carry to the next trip), and pending rows
+  // count only for what vouchers have not already settled
   const runningByDriver = new Map<string, number>();
   const rows: DriverSettlementRow[] = settlements.map((s) => {
     const amount = toNum(String(s.amount));
+    const live =
+      s.status === "PENDING" ? signedRemainder(amount, voucherPaid.get(s.id) ?? 0) : 0;
     const prev = runningByDriver.get(s.driverId) ?? 0;
-    const running = prev + (s.status === "PENDING" ? amount : 0);
+    const running = prev + live;
     runningByDriver.set(s.driverId, running);
     return {
       id: s.id,

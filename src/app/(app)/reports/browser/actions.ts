@@ -477,7 +477,8 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
               ...scope,
               deletedAt: null,
               cancelledAt: null,
-              isFinal: true,
+              // no isFinal filter — the Outstanding register and the dashboard
+              // count draft chalans too; all three views must agree
               ...dateIn("chalanDate"),
               ...refNoLike("chalanNo"),
               ...(input.partyId ? { brokerId: input.partyId } : {}),
@@ -509,7 +510,8 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
             .filter((c) => brokers.has(c.vehicleId))
             .map((c) => ({
               id: c.id,
-              balance: toNum(c.balance),
+              // live: grandTotal − advances, never the stored balance column
+              balance: round2(toNum(c.grandTotal) - toNum(c.advanceTotal)),
               ownPaid: toNum(c.balPaidAmount),
               ownShortage: toNum(c.balShortage),
               ownRoundOff: toNum(c.balRoundOff),
@@ -531,18 +533,23 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
             href: `/chalan?id=${c.id}`,
           });
         }
+        // owner side is payable only on MARKET (broker) vehicles — the same
+        // rule the payables register and the dashboard apply; a relative
+        // vehicle's slip settles through the owner's ledger, never here
+        const marketSlips = slips.filter((s) => s.vehicleId && brokers.has(s.vehicleId));
         const slipPos = await payableSettlement(tx, {
           ...scope,
           refType: "BROKER_ENTRY",
-          docs: slips.map((s) => ({
+          docs: marketSlips.map((s) => ({
             id: s.id,
-            balance: toNum(s.vBalance),
+            // live: owner net − owner advance, never the stored vBalance
+            balance: round2(toNum(s.vNetAmt) - toNum(s.vAdvance)),
             ownPaid: toNum(s.vPaidAmount),
             ownShortage: toNum(s.vShortage),
             ownRoundOff: toNum(s.vRoundOff),
           })),
         });
-        for (const s of slips) {
+        for (const s of marketSlips) {
           const p = slipPos.get(s.id);
           if (!p || p.outstanding <= 0.009) continue;
           pend.push({
@@ -566,7 +573,14 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         const hirePos = await payableSettlement(tx, {
           ...scope,
           refType: "LORRY_HIRE",
-          docs: myHires.map((h) => ({ id: h.id, balance: toNum(h.balance), ownPaid: 0, ownShortage: 0, ownRoundOff: 0 })),
+          docs: myHires.map((h) => ({
+            id: h.id,
+            // live: total hire − advance, never the stored balance column
+            balance: round2(toNum(h.totalHire) - toNum(h.advance)),
+            ownPaid: 0,
+            ownShortage: 0,
+            ownRoundOff: 0,
+          })),
         });
         for (const h of myHires) {
           const p = hirePos.get(h.id);

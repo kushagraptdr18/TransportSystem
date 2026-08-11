@@ -11,16 +11,20 @@ export function gstSplit(opts: {
   recipientStateCode?: string | null;
 }): { cgst: number; sgst: number; igst: number } {
   const { taxableValue, gstPct, supplierStateCode, recipientStateCode } = opts;
-  const total = (taxableValue * gstPct) / 100;
+  const total = round2((taxableValue * gstPct) / 100);
+  // recipient state unknown (unregistered / B2C customer, no GSTIN): default
+  // to the supplier's own state — a walk-in customer is local, and forcing
+  // IGST on them was wrong. IGST only when BOTH states are known and differ.
   const intra =
     !!supplierStateCode &&
-    !!recipientStateCode &&
-    supplierStateCode === recipientStateCode;
+    (!recipientStateCode || supplierStateCode === recipientStateCode);
   if (intra) {
-    const half = round2(total / 2);
-    return { cgst: half, sgst: half, igst: 0 };
+    // halves must reconstruct the rounded total exactly — 2 × round2(total/2)
+    // can drift a paisa (e.g. 10.01 → 5.01 + 5.00, never 5.01 + 5.01)
+    const cgst = round2(total / 2);
+    return { cgst, sgst: round2(total - cgst), igst: 0 };
   }
-  return { cgst: 0, sgst: 0, igst: round2(total) };
+  return { cgst: 0, sgst: 0, igst: total };
 }
 
 export function stateCodeFromGstin(gstin: string | null | undefined): string | null {

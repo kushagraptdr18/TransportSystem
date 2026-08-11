@@ -31,7 +31,8 @@ export type TdsPayableRow = {
 /**
  * TDS PAYABLE rows — TDS OUR company deducts while MAKING payments.
  * Sources: Chalan (owner payment side), Broker Slip (owner payment side),
- * PAYMENT vouchers, and JOURNAL vouchers that touch the TDS Payable ledger.
+ * Hire Slip (Less: TDS at entry), PAYMENT vouchers, and JOURNAL vouchers
+ * that touch the TDS Payable ledger.
  * Receipt vouchers and everything receivable-side NEVER appear here.
  *
  * This is THE row source for the TDS Payable Register and the quarterly
@@ -56,6 +57,10 @@ export async function buildTdsPayableRows(
   const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null };
   // TDS applies only to hired vehicles. A company-owned vehicle is our own
   // asset — there is no payee to deduct from, so it never belongs here.
+  // RELATIVE vehicles stay IN deliberately, even though the payables register
+  // hides their freight: the government must still be told about TDS deducted
+  // on a relative's chalan — only the PAYMENT of that freight settles through
+  // the relative owner's ledger instead of the payables register.
   const ownVehicleIds = (
     await tx.vehicle.findMany({
       where: { ownershipType: "OWNER" },
@@ -66,7 +71,7 @@ export async function buildTdsPayableRows(
     ? { vehicleId: { notIn: ownVehicleIds } }
     : {};
 
-  const [payVouchers, chalans, slips, parties] = await Promise.all([
+  const [payVouchers, chalans, slips, hireSlips, parties] = await Promise.all([
     // PAYMENT vouchers only — receipts must never appear in TDS Payable
     tx.voucher.findMany({
       where: {
@@ -98,6 +103,18 @@ export async function buildTdsPayableRows(
         ...(dateWhere ? { slipDate: dateWhere } : {}),
         // only slips that actually have an owner side to deduct against
         OR: [{ ownerId: { not: null } }, { vNetAmt: { gt: 0 } }],
+      },
+    }),
+    // hire slips record their TDS at entry ("Less: TDS") — that deduction is
+    // as statutory as a chalan's and must reach the register / Form 26Q
+    tx.hireSlip.findMany({
+      where: {
+        ...scope,
+        ...(dateWhere ? { slipDate: dateWhere } : {}),
+        // vehicleId is optional here; a missing vehicle cannot be ruled out
+        ...(ownVehicleIds.length
+          ? { OR: [{ vehicleId: null }, { vehicleId: { notIn: ownVehicleIds } }] }
+          : {}),
       },
     }),
     tx.party.findMany({ select: { id: true, name: true, pan: true } }),
@@ -143,6 +160,17 @@ export async function buildTdsPayableRows(
       })
     : [];
   const journalById = new Map(journals.map((v) => [v.id, v]));
+
+  // TDS taken at PAYMENT time against a document (voucher allocation), keyed
+  // by the document id — a chalan/slip whose own tdsAmt is 0 but whose TDS was
+  // deducted on the payment voucher is DEDUCTED, not a missed deduction
+  const voucherTdsByRef = new Map<string, number>();
+  for (const v of payVouchers)
+    for (const a of v.allocations) {
+      const tds = toNum(String(a.tdsAmt));
+      if (tds > 0.009)
+        voucherTdsByRef.set(a.refId, round2((voucherTdsByRef.get(a.refId) ?? 0) + tds));
+    }
 
   const out: TdsPayableRow[] = [];
   for (const e of tdsLedger) {
@@ -221,8 +249,22 @@ export async function buildTdsPayableRows(
       });
     }
   }
+  // when a document's own TDS is 0 but the deduction happened on its payment
+  // voucher, the document row is DEDUCTED (the voucher row carries the amount)
+  // — before this, the register's "without TDS" count sent an auditor chasing
+  // deductions that had in fact been taken at payment
+  const docStatus = (ownTds: number, refId: string) => {
+    const atPayment = voucherTdsByRef.get(refId) ?? 0;
+    return tdsStatus(round2(ownTds + atPayment));
+  };
+  const docRemarks = (own: string | null | undefined, ownTds: number, refId: string) => {
+    const atPayment = ownTds <= 0.009 && (voucherTdsByRef.get(refId) ?? 0) > 0.009;
+    if (!atPayment) return own ?? "";
+    return own ? `${own} · TDS deducted at payment voucher` : "TDS deducted at payment voucher";
+  };
   for (const c of chalans) {
     const p = partyById.get(c.brokerId);
+    const ownTds = toNum(String(c.tdsAmt));
     out.push({
       date: c.chalanDate.toISOString(),
       module: "CHALLAN (OWNER)",
@@ -234,14 +276,15 @@ export async function buildTdsPayableRows(
       // the chalan's TDS is computed on its total chalan amount
       baseAmt: toNum(String(c.totalChalanAmt)),
       tdsPct: toNum(String(c.tdsPct)),
-      tdsAmt: toNum(String(c.tdsAmt)),
+      tdsAmt: ownTds,
       net: toNum(String(c.grandTotal)),
-      status: tdsStatus(toNum(String(c.tdsAmt))),
-      remarks: c.remarks ?? "",
+      status: docStatus(ownTds, c.id),
+      remarks: docRemarks(c.remarks, ownTds, c.id),
     });
   }
   for (const s of slips) {
     const p = s.ownerId ? partyById.get(s.ownerId) : undefined;
+    const ownTds = toNum(String(s.vTdsAmt));
     out.push({
       date: s.slipDate.toISOString(),
       module: "BROKER SLIP (OWNER)",
@@ -253,10 +296,38 @@ export async function buildTdsPayableRows(
       // the owner-side TDS is computed on the owner-side chalan amount
       baseAmt: toNum(String(s.vChalanAmt)),
       tdsPct: toNum(String(s.vTdsPct)),
-      tdsAmt: toNum(String(s.vTdsAmt)),
+      tdsAmt: ownTds,
       net: toNum(String(s.vNetAmt)),
-      status: tdsStatus(toNum(String(s.vTdsAmt))),
-      remarks: s.vRemarks ?? "",
+      status: docStatus(ownTds, s.id),
+      remarks: docRemarks(s.vRemarks, ownTds, s.id),
+    });
+  }
+  for (const h of hireSlips) {
+    const gross = round2(
+      toNum(String(h.lorryHire)) +
+        toNum(String(h.loadingH)) +
+        toNum(String(h.craneCharge)) +
+        toNum(String(h.unloadingH)) +
+        toNum(String(h.overHeightCharge)) +
+        toNum(String(h.others))
+    );
+    const ownTds = toNum(String(h.lessTds));
+    out.push({
+      date: h.slipDate.toISOString(),
+      module: "HIRE SLIP",
+      section: moduleSection.get("HIRE") ?? "",
+      // the hire slip stores the owner as free text, not a party link
+      party: h.ownerName ?? "",
+      pan: h.ownerPan ?? "",
+      refNo: h.slipNo,
+      invoiceAmount: gross,
+      // "Less: TDS" is deducted from the slip's gross hire (hire + charges)
+      baseAmt: gross,
+      tdsPct: gross > 0 && ownTds > 0.009 ? round2((ownTds * 100) / gross) : 0,
+      tdsAmt: ownTds,
+      net: toNum(String(h.totalHire)),
+      status: docStatus(ownTds, h.id),
+      remarks: docRemarks(h.narration, ownTds, h.id),
     });
   }
   return {

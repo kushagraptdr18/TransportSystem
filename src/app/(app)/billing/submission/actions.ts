@@ -7,6 +7,7 @@ import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { toNum } from "@/lib/utils";
+import { invoiceSettlement } from "@/lib/settlement";
 
 // ---------------------------------------------------------------- types
 
@@ -166,6 +167,25 @@ export async function saveInvoiceSubmission(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const submissionDate = new Date(data.submissionDate + "T00:00:00");
+      // never trust the id list: every invoice must be a live bill of THIS
+      // firm/FY belonging to the submission's party — a stale or foreign id
+      // would otherwise attach someone else's bill and flip its lifecycle
+      const owned = await tx.invoice.findMany({
+        where: {
+          id: { in: data.invoiceIds },
+          firmId: session.firmId,
+          fyId: session.fyId,
+          partyId: data.partyId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (owned.length !== data.invoiceIds.length) {
+        return {
+          ok: false as const,
+          error: "One or more selected invoices no longer exist for this party — refresh and retry.",
+        };
+      }
       const submissionNo = await nextSubmissionNo(tx, session.firmId, session.fyId);
       const created = await tx.invoiceSubmission.create({
         data: {
@@ -187,11 +207,12 @@ export async function saveInvoiceSubmission(
       });
 
       // auto-detect resubmissions: earlier ACTIVE items of these invoices
-      // (in other submissions) become RETURNED, pointing at this submission
+      // (in other submissions of THIS firm) become RETURNED, pointing here
       await tx.invoiceSubmissionItem.updateMany({
         where: {
           invoiceId: { in: data.invoiceIds },
           submissionId: { not: created.id },
+          submission: { firmId: session.firmId },
           status: "SUBMITTED",
         },
         data: {
@@ -350,7 +371,7 @@ export async function getInvoiceSubmissionHistory(
   const session = requireSession();
   return withTenant(session.tenantId, async (tx) => {
     const invoice = await tx.invoice.findFirst({
-      where: { id: invoiceId, firmId: session.firmId },
+      where: { id: invoiceId, firmId: session.firmId, deletedAt: null },
     });
     if (!invoice) return { ok: false as const, error: "Invoice not found" };
     const items = await tx.invoiceSubmissionItem.findMany({
@@ -381,7 +402,16 @@ export async function getInvoiceSubmissionHistory(
         });
       }
     });
-    if (toNum(String(invoice.balance)) <= 0) {
+    // payment status is LIVE and independent of the submission lifecycle: the
+    // stored `balance` column freezes at creation and never moves when receipt
+    // vouchers settle the bill — the same engine as the Outstanding register
+    // decides this step
+    const settle = await invoiceSettlement(tx, {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      invoices: [invoice],
+    });
+    if ((settle.get(invoice.id)?.outstanding ?? toNum(String(invoice.balance))) <= 0.009) {
       steps.push({ label: "Payment Received", detail: "Invoice fully settled", date: null });
     }
     return { ok: true as const, invoiceNo: invoice.invoiceNo, steps };
