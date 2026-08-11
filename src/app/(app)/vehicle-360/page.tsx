@@ -5,8 +5,10 @@ import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { round2 } from "@/lib/calc/tds";
 import { nextDueDate } from "@/lib/loan";
+import { PAYABLE_REF_TYPES, settledByRef, settlementStatus, type SettlementStatus } from "@/lib/settlement";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { PrintButton } from "@/components/app/print-button";
 import { Picker360 } from "../party-360/picker";
 
 export const dynamic = "force-dynamic";
@@ -56,19 +58,35 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
           where: { ...scope, deletedAt: null, cancelledAt: null, vehicleId },
           orderBy: { chalanDate: "desc" },
           select: {
+            id: true,
             chalanNo: true,
             chalanDate: true,
             freight: true,
             totalChalanAmt: true,
             grandTotal: true,
-            paymentStatus: true,
+            advanceTotal: true,
+            balPaidAmount: true,
+            balRoundOff: true,
+            balShortage: true,
+            balAdvanceAdjusted: true,
             lrs: { select: { lr: { select: { lrNo: true } } } },
           },
         }),
         tx.brokerSlip.findMany({
           where: { ...scope, deletedAt: null, vehicleId },
           orderBy: { slipDate: "desc" },
-          select: { slipNo: true, slipDate: true, vChalanAmt: true, lrNo: true },
+          select: {
+            id: true,
+            slipNo: true,
+            slipDate: true,
+            vChalanAmt: true,
+            vNetAmt: true,
+            vAdvance: true,
+            vPaidAmount: true,
+            vRoundOff: true,
+            vShortage: true,
+            lrNo: true,
+          },
         }),
         tx.ledgerEntry.groupBy({
           by: ["accountHeadId", "side"],
@@ -85,8 +103,10 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
           include: { voucher: { include: { lines: true } } },
         }),
         tx.accountHead.findMany({ select: { id: true, name: true } }),
+        // deliberately NOT FY-scoped: a loan taken last year is still owed on
+        // this vehicle today — filtering by fyId made it vanish from this screen
         tx.loan.findMany({
-          where: { ...scope, deletedAt: null, vehicleId, status: "ACTIVE" },
+          where: { firmId: session.firmId, deletedAt: null, vehicleId, status: "ACTIVE" },
           include: { emis: { where: { deletedAt: null }, select: { principal: true } } },
         }),
         tx.vehicleDocument.findMany({
@@ -102,7 +122,20 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
           take: 6,
         }),
       ]);
-    return { vehicles, view: { vehicle, chalans, slips, headSums, expenseItems, heads, loans, docs, assignments, drivers, works } };
+
+    // live hire settlement — only a market/broker vehicle has a payee to owe;
+    // same formula as the Outstanding Payables register (own-screen payments +
+    // voucher allocations, deductions included)
+    const paidByRef =
+      vehicle.ownershipType === "BROKER"
+        ? await settledByRef(tx, {
+            ...scope,
+            refTypes: PAYABLE_REF_TYPES,
+            refIds: [...chalans.map((c) => c.id), ...slips.map((s) => s.id)],
+          })
+        : new Map<string, number>();
+
+    return { vehicles, view: { vehicle, chalans, slips, headSums, expenseItems, heads, loans, docs, assignments, drivers, works, paidByRef } };
   });
 
   const { vehicles, view } = data;
@@ -114,7 +147,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
   );
 
   if (view) {
-    const { vehicle, chalans, slips, headSums, expenseItems, heads, loans, docs, assignments, drivers, works } = view;
+    const { vehicle, chalans, slips, headSums, expenseItems, heads, loans, docs, assignments, drivers, works, paidByRef } = view;
     const headName = new Map(heads.map((h) => [h.id, h.name]));
     const driverOf = new Map(drivers.map((d) => [d.id, d]));
     // own AND relative vehicles run as the fleet's own trips (relative shares
@@ -134,6 +167,53 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
     );
     const slipTotal = round2(uniqueSlips.reduce((s, x) => s + toNum(x.vChalanAmt), 0));
     const earned = round2(chalanTotal + slipTotal);
+
+    // broker vehicle: live paid/pending per trip and total hire still owed
+    const hirePos = new Map<string, { outstanding: number; status: SettlementStatus }>();
+    if (!isOwn) {
+      for (const c of chalans) {
+        const gross = toNum(c.grandTotal);
+        if (gross <= 0) continue;
+        const paid = round2(
+          toNum(c.advanceTotal) +
+            toNum(c.balPaidAmount) +
+            toNum(c.balRoundOff) +
+            toNum(c.balShortage) +
+            toNum(c.balAdvanceAdjusted) +
+            (paidByRef.get(c.id) ?? 0)
+        );
+        const outstanding = round2(gross - paid);
+        hirePos.set(c.id, { outstanding, status: settlementStatus(gross, outstanding) });
+      }
+      for (const s of uniqueSlips) {
+        const gross = toNum(s.vNetAmt);
+        if (gross <= 0) continue;
+        const paid = round2(
+          toNum(s.vAdvance) +
+            toNum(s.vPaidAmount) +
+            toNum(s.vRoundOff) +
+            toNum(s.vShortage) +
+            (paidByRef.get(s.id) ?? 0)
+        );
+        const outstanding = round2(gross - paid);
+        hirePos.set(s.id, { outstanding, status: settlementStatus(gross, outstanding) });
+      }
+    }
+    const hirePending = round2(
+      Array.from(hirePos.values()).reduce((s, p) => s + Math.max(0, p.outstanding), 0)
+    );
+    const pendingTripCount = Array.from(hirePos.values()).filter((p) => p.outstanding > 0.009).length;
+    const hireBadge = (id: string) => {
+      const p = hirePos.get(id);
+      if (!p) return null;
+      return p.status === "PAID" ? (
+        <Badge className="ml-1">Paid</Badge>
+      ) : p.status === "PARTLY PAID" ? (
+        <Badge variant="secondary" className="ml-1">Part Paid</Badge>
+      ) : (
+        <Badge variant="destructive" className="ml-1">Pending</Badge>
+      );
+    };
 
     // expenses = vehicle-stamped ledger (urea, driver costs) net Dr − Cr,
     // PLUS this vehicle's share of expense bills from the allocation items —
@@ -190,6 +270,10 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
       };
     });
     const loanOutstanding = round2(loanRows.reduce((s, l) => s + l.outstanding, 0));
+    // the EMI that falls due soonest across ALL active loans — not just the first
+    const nextEmi = loanRows
+      .filter((l) => l.nextDue)
+      .sort((a, b) => a.nextDue!.getTime() - b.nextDue!.getTime())[0];
 
     const now = new Date();
     const currentAssignment = assignments.find((a) => !a.toDate);
@@ -245,12 +329,18 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
           {(
             [
               [isOwn ? "Earned (chalan + slip)" : "Hire Paid (chalan + slip)", formatMoney(earned), `${chalans.length + uniqueSlips.length} trips`],
-              ["Vehicle Expenses (ledger net)", formatMoney(expenseTotal), ""],
+              isOwn
+                ? ["Vehicle Expenses (ledger net)", formatMoney(expenseTotal), ""]
+                : [
+                    "Hire Pending (dena baaki)",
+                    formatMoney(hirePending),
+                    pendingTripCount ? `${pendingTripCount} trip(s) unsettled` : "sab clear",
+                  ],
               ["Loan Outstanding", formatMoney(loanOutstanding), loanRows.length ? `${loanRows.length} active loan` : "no active loans"],
               [
                 "Next EMI",
-                loanRows.length && loanRows[0].nextDue ? formatDate(loanRows[0].nextDue.toISOString()) : "—",
-                loanRows.length ? formatMoney(loanRows[0].emiAmount) : "",
+                nextEmi?.nextDue ? formatDate(nextEmi.nextDue.toISOString()) : "—",
+                nextEmi ? formatMoney(nextEmi.emiAmount) : "",
               ],
             ] as [string, string, string][]
           ).map(([label, value, sub]) => (
@@ -303,6 +393,15 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
                 <span className="font-medium tabular-nums">{formatMoney(r.net)}</span>
               </div>
             ))}
+            {expenseRows.length > 10 && (
+              <p className="pt-1 text-[11px] text-muted-foreground">+{expenseRows.length - 10} aur heads</p>
+            )}
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Chalan par diya trip diesel / advance yahan nahi ginta — trip-level P&amp;L ke liye{" "}
+              <Link className="text-primary underline" href="/vehicle/pnl">
+                Vehicle P&amp;L →
+              </Link>
+            </p>
           </div>
 
           {/* trips */}
@@ -314,6 +413,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
               <div key={c.chalanNo} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
                 <span>
                   {formatDate(c.chalanDate.toISOString())} · <b>{c.chalanNo}</b>
+                  {hireBadge(c.id)}
                 </span>
                 <span className="tabular-nums">{formatMoney(toNum(c.freight))}</span>
               </div>
@@ -322,6 +422,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
               <div key={s.slipNo} className="flex items-center justify-between border-b py-1 text-xs last:border-0">
                 <span>
                   {formatDate(s.slipDate.toISOString())} · <b>{s.slipNo}</b> (slip)
+                  {hireBadge(s.id)}
                 </span>
                 <span className="tabular-nums">{formatMoney(toNum(s.vChalanAmt))}</span>
               </div>
@@ -373,12 +474,15 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
             Select a vehicle to view earnings, expenses, EMI, documents, drivers and workshop history on one screen.
           </p>
         </div>
-        <Picker360
-          options={vehicles.map((v) => ({ value: v.id, label: `${v.number} (${v.ownershipType})` }))}
-          value={vehicleId}
-          base="/vehicle-360"
-          placeholder="Select vehicle..."
-        />
+        <div className="no-print flex items-center gap-2">
+          <PrintButton />
+          <Picker360
+            options={vehicles.map((v) => ({ value: v.id, label: `${v.number} (${v.ownershipType})` }))}
+            value={vehicleId}
+            base="/vehicle-360"
+            placeholder="Select vehicle..."
+          />
+        </div>
       </div>
       {body}
     </div>
