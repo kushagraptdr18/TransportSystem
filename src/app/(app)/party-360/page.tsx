@@ -110,11 +110,13 @@ export default async function Party360Page({ searchParams }: { searchParams: { i
     ]);
 
     // TDS we deducted while paying this party — read from THE payable row
-    // source (register + quarterly report), never re-derived
+    // source (register + quarterly report), never re-derived. Matched by the
+    // STABLE party id (names can collide or be renamed); rows with no party
+    // link (hire slips' free-text owner) fall back to an exact name match.
     const tdsDeducted = ["OWNER_BROKER", "SUPPLIERS"].includes(party.ledgerGroup)
       ? round2(
           (await buildTdsPayableRows(tx, scope)).rows
-            .filter((r) => r.party === party.name)
+            .filter((r) => (r.partyId ? r.partyId === party.id : r.party === party.name))
             .reduce((s, r) => s + r.tdsAmt, 0)
         )
       : 0;

@@ -16,6 +16,9 @@ export type TdsPayableRow = {
   date: string; // ISO
   module: string;
   section: string;
+  /** stable party link — display/grouping uses the name, but any per-party
+   *  filtering must use this id (names can collide or be renamed) */
+  partyId: string | null;
   party: string;
   pan: string;
   refNo: string;
@@ -186,6 +189,7 @@ export async function buildTdsPayableRows(
       date: e.date.toISOString(),
       module: "JOURNAL VOUCHER",
       section: "",
+      partyId: p?.id ?? null,
       party: p?.name ?? "",
       pan: p?.pan ?? "",
       refNo: v.voucherNo,
@@ -212,6 +216,7 @@ export async function buildTdsPayableRows(
           date: v.voucherDate.toISOString(),
           module: "PAYMENT VOUCHER",
           section: allocSection(a),
+          partyId: p?.id ?? null,
           party: p?.name ?? "",
           pan: p?.pan ?? "",
           // for a chalan / slip the two are the same number; only a voucher
@@ -235,6 +240,7 @@ export async function buildTdsPayableRows(
         date: v.voucherDate.toISOString(),
         module: "PAYMENT VOUCHER",
         section: "",
+        partyId: p?.id ?? null,
         party: p?.name ?? "",
         pan: p?.pan ?? "",
         refNo: v.voucherNo,
@@ -269,6 +275,7 @@ export async function buildTdsPayableRows(
       date: c.chalanDate.toISOString(),
       module: "CHALLAN (OWNER)",
       section: moduleSection.get("CHALAN") ?? "",
+      partyId: c.brokerId,
       party: p?.name ?? "",
       pan: p?.pan ?? "",
       refNo: c.chalanNo,
@@ -289,6 +296,7 @@ export async function buildTdsPayableRows(
       date: s.slipDate.toISOString(),
       module: "BROKER SLIP (OWNER)",
       section: moduleSection.get("BROKER_SLIP") ?? "",
+      partyId: s.ownerId ?? null,
       party: p?.name ?? s.ownerName ?? "",
       pan: p?.pan ?? "",
       refNo: s.slipNo,
@@ -317,6 +325,7 @@ export async function buildTdsPayableRows(
       module: "HIRE SLIP",
       section: moduleSection.get("HIRE") ?? "",
       // the hire slip stores the owner as free text, not a party link
+      partyId: null,
       party: h.ownerName ?? "",
       pan: h.ownerPan ?? "",
       refNo: h.slipNo,

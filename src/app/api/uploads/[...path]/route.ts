@@ -26,17 +26,41 @@ export async function GET(
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const relPath = params.path.join("/");
-  // tenant isolation: only serve files under the session tenant's directory
-  if (!relPath.startsWith(`${session.tenantId}/`)) {
-    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
-  }
+  const forbidden = () =>
+    NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
 
-  const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
-  const absPath = path.resolve(uploadDir, relPath);
-  // path traversal guard
-  if (!absPath.startsWith(path.resolve(uploadDir) + path.sep)) {
-    return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  // Harden every segment BEFORE any path math: decode (twice, to catch
+  // double-encoding), then reject dot-segments, separators, NULs and empties —
+  // an encoded ".." must never survive into the resolved path.
+  const segments: string[] = [];
+  for (const raw of params.path) {
+    let seg = raw;
+    try {
+      for (let i = 0; i < 2; i++) seg = decodeURIComponent(seg);
+    } catch {
+      return forbidden();
+    }
+    if (
+      !seg ||
+      seg === "." ||
+      seg === ".." ||
+      seg.includes("/") ||
+      seg.includes("\\") ||
+      seg.includes("\0")
+    ) {
+      return forbidden();
+    }
+    segments.push(seg);
+  }
+  // tenant isolation: only serve files under the session tenant's directory
+  if (segments[0] !== session.tenantId) return forbidden();
+
+  const uploadRoot = path.resolve(process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads"));
+  const tenantRoot = path.resolve(uploadRoot, session.tenantId);
+  const absPath = path.resolve(uploadRoot, segments.join("/"));
+  // belt and braces: the RESOLVED path must stay inside the TENANT directory
+  if (absPath !== tenantRoot && !absPath.startsWith(tenantRoot + path.sep)) {
+    return forbidden();
   }
 
   try {

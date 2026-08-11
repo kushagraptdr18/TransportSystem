@@ -75,8 +75,12 @@ const allocationSchema = z.object({
   tdsAmt: z.number().min(0).default(0),
   deduction: z.number().min(0).default(0),
   otherAmt: z.number().min(0).default(0),
-  /** round-off may be negative — a little extra paid rather than knocked off */
-  roundOff: z.number().default(0),
+  /** round-off may be negative — a little extra paid rather than knocked off,
+   *  but it is a rounding, never a value channel */
+  roundOff: z
+    .number()
+    .default(0)
+    .refine((v) => Math.abs(v) <= 999.99, "Round-off cannot exceed ₹999.99 either way"),
   amount: z.number().min(0).default(0),
   remarks: z.string().nullish(),
 });
@@ -241,6 +245,27 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
   if (netAmount <= 0 && data.type !== "JOURNAL" && !pureAdvanceAdjust && !pureDeductionSettle) {
     return { ok: false, error: "Net amount must be positive" };
   }
+  // Header figures and allocation rows must tell the same story: the ledger
+  // posts TDS/deductions from the HEADER while settlement reads the ROWS — a
+  // crafted payload that differs between the two would mark documents settled
+  // for money the ledger never saw (or vice versa). Header-only TDS with no
+  // row TDS stays allowed (the "direct TDS" entry).
+  if (data.type !== "CONTRA" && data.allocations.length) {
+    const rowTds = round2(data.allocations.reduce((s, a) => s + a.tdsAmt, 0));
+    const rowDed = round2(data.allocations.reduce((s, a) => s + a.deduction + a.otherAmt, 0));
+    if (rowTds > 0.009 && Math.abs(round2(data.tdsAmt) - rowTds) > 0.02) {
+      return {
+        ok: false,
+        error: `Header TDS (${data.tdsAmt}) must equal the TDS on the allocation rows (${rowTds}).`,
+      };
+    }
+    if (rowDed > 0.009 && Math.abs(round2(data.deduction + data.otherAmt) - rowDed) > 0.02) {
+      return {
+        ok: false,
+        error: `Header deductions (${round2(data.deduction + data.otherAmt)}) must equal the deductions on the allocation rows (${rowDed}).`,
+      };
+    }
+  }
 
   // two operators prefill the same next number: retry a create with a bumped
   // number instead of failing on the unique constraint (edits never renumber)
@@ -319,15 +344,21 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
             refIds,
             data.id
           );
-          // gross document value per ref, per module
+          // gross document value per ref, per module — every lookup is scoped
+          // to THIS firm/FY and live rows only, so a stale, deleted or foreign
+          // document id can never be settled from here
+          const docScope = { id: { in: refIds }, firmId: session.firmId, fyId: session.fyId, deletedAt: null };
           const gross = new Map<string, number>();
           if (refType === "BILLING" || refType === "GST_BILLING") {
-            const invs = await tx.invoice.findMany({ where: { id: { in: refIds } } });
-            invs.forEach((i) => gross.set(i.id, round2(Number(i.grandTotal) - Number(i.advance))));
+            const invs = await tx.invoice.findMany({ where: docScope });
+            // ceiling = the SAME base the Outstanding register settles against:
+            // netTotal (GST included) less the advance — grandTotal excluded
+            // the GST, so a GST bill could never be settled in full
+            invs.forEach((i) => gross.set(i.id, round2(Number(i.netTotal) - Number(i.advance))));
           } else if (refType === "FREIGHT_CHALLAN") {
             // net off what the chalan's own balance-payment screen already
             // settled, else the voucher could pay the same balance twice
-            const cs = await tx.chalan.findMany({ where: { id: { in: refIds } } });
+            const cs = await tx.chalan.findMany({ where: { ...docScope, cancelledAt: null } });
             cs.forEach((c) =>
               gross.set(
                 c.id,
@@ -341,7 +372,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
               )
             );
           } else if (refType === "BROKER_ENTRY") {
-            const ss = await tx.brokerSlip.findMany({ where: { id: { in: refIds } } });
+            const ss = await tx.brokerSlip.findMany({ where: docScope });
             ss.forEach((s) =>
               gross.set(
                 s.id,
@@ -354,29 +385,29 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
               )
             );
           } else if (refType === "LORRY_HIRE") {
-            const hs = await tx.hireSlip.findMany({ where: { id: { in: refIds } } });
+            const hs = await tx.hireSlip.findMany({ where: docScope });
             hs.forEach((h) => gross.set(h.id, Number(h.balance)));
           } else if (refType === "CASH_MEMO") {
-            const ds = await tx.delivery.findMany({ where: { id: { in: refIds } } });
+            const ds = await tx.delivery.findMany({ where: docScope });
             ds.forEach((d2) => gross.set(d2.id, Number(d2.total)));
           } else if (refType === "OFFICE_EXPENSE" || refType === "OFFICE_INCOME") {
-            const ots = await tx.officeTransaction.findMany({ where: { id: { in: refIds } } });
+            const ots = await tx.officeTransaction.findMany({ where: docScope });
             ots.forEach((o) =>
               // an entry already paid at source has nothing left to settle, so
               // its ceiling is zero rather than its amount
               gross.set(o.id, o.paymentMode ? 0 : Number(o.amount))
             );
           } else if (refType === "STAFF_PAYROLL") {
-            const sal = await tx.staffSalary.findMany({ where: { id: { in: refIds } } });
+            const sal = await tx.staffSalary.findMany({ where: docScope });
             sal.forEach((s) =>
               gross.set(s.id, round2(Number(s.netSalary) - Number(s.paidAmount)))
             );
           } else if (refType === "VEHICLE_EXPENSE") {
-            const vex = await tx.vehicleExpenseVoucher.findMany({ where: { id: { in: refIds } } });
+            const vex = await tx.vehicleExpenseVoucher.findMany({ where: docScope });
             // paid at entry = the money already moved; nothing left to settle
             vex.forEach((v) => gross.set(v.id, v.paymentMode ? 0 : Number(v.amount)));
           } else if (refType === "STAFF_ADVANCE") {
-            const advs = await tx.staffAdvance.findMany({ where: { id: { in: refIds } } });
+            const advs = await tx.staffAdvance.findMany({ where: docScope });
             const recovered = await tx.staffSalary.groupBy({
               by: ["advanceId"],
               where: { advanceId: { in: refIds }, deletedAt: null },
@@ -390,25 +421,60 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
               gross.set(a.id, round2(Number(a.amount) - (byAdvance.get(a.id) ?? 0)))
             );
           } else if (refType === "ADBLUE_PURCHASE") {
-            const refills = await tx.adblueTxn.findMany({ where: { id: { in: refIds } } });
+            const refills = await tx.adblueTxn.findMany({ where: docScope });
             // unbilled stock owes nothing yet, and a refill paid at entry is done
             refills.forEach((r) =>
               gross.set(r.id, r.billNo && !r.paymentMode ? Number(r.amount) : 0)
             );
           } else if (refType === "DRIVER_SETTLEMENT") {
-            const sets = await tx.driverSettlement.findMany({ where: { id: { in: refIds } } });
+            const sets = await tx.driverSettlement.findMany({ where: docScope });
             // settling from the driver-settlement screen creates its own voucher
-            // and marks the row SETTLED — it must not be payable twice
-            sets.forEach((s) =>
-              gross.set(s.id, s.status === "SETTLED" ? 0 : Math.abs(Number(s.amount)))
+            // and marks the row SETTLED — it must not be payable twice. The
+            // SIGN carries the direction: a positive row (company owes the
+            // driver) is settleable only by a PAYMENT, a negative row (the
+            // driver owes) only by a RECEIPT — a payment must never "pay out"
+            // a recovery.
+            sets.forEach((s) => {
+              const amt = Number(s.amount);
+              const directionOk =
+                (data.type === "PAYMENT" && amt > 0) || (data.type === "RECEIPT" && amt < 0);
+              gross.set(s.id, s.status === "SETTLED" || !directionOk ? 0 : Math.abs(amt));
+            });
+          }
+          // a handled refType whose document did not survive the scoped lookup
+          // is a stale / deleted / foreign reference — never an open ceiling
+          const scopedTypes: ModuleLink[] = [
+            "BILLING", "GST_BILLING", "FREIGHT_CHALLAN", "BROKER_ENTRY", "LORRY_HIRE",
+            "CASH_MEMO", "OFFICE_EXPENSE", "OFFICE_INCOME", "STAFF_PAYROLL",
+            "VEHICLE_EXPENSE", "STAFF_ADVANCE", "ADBLUE_PURCHASE", "DRIVER_SETTLEMENT",
+          ];
+          if (scopedTypes.includes(refType)) {
+            for (const r of rows) {
+              if (!gross.has(r.refId)) {
+                throw new Error(
+                  `Ref ${r.refNo}: document not found in this firm/financial year (it may be deleted) — refresh and retry.`
+                );
+              }
+            }
+          }
+          // aggregate PER REFERENCE before checking: two rows against the same
+          // document must not each pass the ceiling individually
+          const settlePerRef = new Map<string, number>();
+          for (const r of rows) {
+            settlePerRef.set(
+              r.refId,
+              round2(
+                (settlePerRef.get(r.refId) ?? 0) +
+                  r.amount + r.tdsAmt + r.deduction + r.otherAmt + r.roundOff
+              )
             );
           }
-          for (const r of rows) {
-            const pending = round2((gross.get(r.refId) ?? Infinity) - (already.get(r.refId) ?? 0));
-            const settle = round2(r.amount + r.tdsAmt + r.deduction + r.otherAmt + r.roundOff);
+          for (const [refId, settle] of Array.from(settlePerRef.entries())) {
+            const refNo = rows.find((r) => r.refId === refId)?.refNo ?? refId;
+            const pending = round2((gross.get(refId) ?? Infinity) - (already.get(refId) ?? 0));
             if (settle > pending + 0.01) {
               throw new Error(
-                `Ref ${r.refNo}: adjustment ${settle} exceeds the pending amount ${pending}. Duplicate or over-settlement is not allowed.`
+                `Ref ${refNo}: adjustment ${settle} exceeds the pending amount ${pending}. Duplicate or over-settlement is not allowed.`
               );
             }
           }
@@ -417,10 +483,13 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
 
       let savedId: string;
       if (data.id) {
-        const before = await tx.voucher.findUniqueOrThrow({
-          where: { id: data.id },
+        // scoped to the session's firm/FY: reversing and re-posting under the
+        // wrong scope would silently migrate accounting across firms/years
+        const before = await tx.voucher.findFirst({
+          where: { id: data.id, firmId: session.firmId, fyId: session.fyId },
           include: { allocations: true },
         });
+        if (!before) throw new Error("Voucher not found in this firm/financial year");
         if (before.deletedAt) throw new Error("Voucher has been deleted");
         await tx.voucherAllocation.deleteMany({ where: { voucherId: data.id } });
         const updated = await tx.voucher.update({
@@ -674,6 +743,13 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
               `Voucher ${a.voucherNo ?? a.id} is an advance ${a.kind.toLowerCase()} and cannot be adjusted here`
             );
           }
+          // a cancellation recovery is not an ordinary advance — it closes
+          // only through the Recover Cancel Advances flow, never this grid
+          if (a.source === "CHALAN_CANCEL") {
+            throw new Error(
+              "Chalan-cancel advances close through the Recover Cancel Advances section, not the Adjust Advance grid"
+            );
+          }
         }
       }
       // ---- advance refund: the opposite-direction advance is returned in
@@ -712,6 +788,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         await applyManualAdvanceUses(tx, {
           tenantId: session.tenantId,
           firmId: session.firmId,
+          fyId: session.fyId,
           partyId: data.partyId,
           refType: "VOUCHER",
           refId: savedId,
@@ -725,6 +802,7 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         await applyManualAdvanceUses(tx, {
           tenantId: session.tenantId,
           firmId: session.firmId,
+          fyId: session.fyId,
           partyId: data.bankPartyId,
           refType: "VOUCHER",
           refId: savedId,
@@ -838,7 +916,10 @@ export async function deleteVoucher(
   await authorize(session, "vouchers", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.voucher.findUniqueOrThrow({ where: { id } });
+      const before = await tx.voucher.findFirst({
+        where: { id, firmId: session.firmId, fyId: session.fyId },
+      });
+      if (!before) throw new Error("Voucher not found in this firm/financial year");
       const adv = await tx.partyAdvance.findFirst({ where: { voucherId: id, deletedAt: null } });
       if (adv && Number(adv.consumedAmount) > 0.009) {
         throw new Error(
@@ -1291,9 +1372,16 @@ export async function getAllocationCandidates(input: {
           })
         : [];
       const driverById = new Map(drivers.map((d) => [d.id, d]));
-      const mine = settlements.filter((s) =>
-        partyId ? driverById.get(s.driverId)?.partyId === partyId : true
-      );
+      const mine = settlements.filter((s) => {
+        if (partyId && driverById.get(s.driverId)?.partyId !== partyId) return false;
+        // the sign IS the direction: positive (company owes the driver) only on
+        // a PAYMENT, negative (driver owes the company) only on a RECEIPT — a
+        // payment voucher must never "pay out" a recovery
+        const amt = Number(s.amount);
+        if (input.voucherType === "PAYMENT") return amt > 0;
+        if (input.voucherType === "RECEIPT") return amt < 0;
+        return true;
+      });
       const pos = await refPositions(tx, {
         firmId: session.firmId,
         fyId: session.fyId,
@@ -1353,9 +1441,12 @@ export async function getOpenAdvances(input: {
   return withTenant(session.tenantId, async (tx) => {
     const rows = await listOpenAdvances(tx, {
       firmId: session.firmId,
+      fyId: session.fyId,
       partyId: input.partyId,
       kinds: [input.refund ? oppositeKind : sameKind],
-      ...(input.refund ? { excludeSources: ["CHALAN_CANCEL"] } : {}),
+      // cancellation recoveries never appear as ordinary advances — adjust OR
+      // refund; they close only through their own recovery flow
+      excludeSources: ["CHALAN_CANCEL"],
       includeRefType: "VOUCHER",
       includeRefId: input.voucherId ?? undefined,
     });
@@ -1408,7 +1499,7 @@ export async function getPartyAdvanceInfo(
   const session = requireSession();
   const { partyAdvanceBalance } = await import("@/lib/party-advance");
   return withTenant(session.tenantId, async (tx) => ({
-    received: await partyAdvanceBalance(tx, session.firmId, partyId, "RECEIVED"),
-    paid: await partyAdvanceBalance(tx, session.firmId, partyId, "PAID"),
+    received: await partyAdvanceBalance(tx, session.firmId, partyId, "RECEIVED", session.fyId),
+    paid: await partyAdvanceBalance(tx, session.firmId, partyId, "PAID", session.fyId),
   }));
 }

@@ -444,7 +444,10 @@ export async function deleteTrip(id: string): Promise<{ ok: true } | { ok: false
   await authorize(session, "trips", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.trip.findUniqueOrThrow({ where: { id } });
+      const before = await tx.trip.findFirst({
+        where: { id, firmId: session.firmId, fyId: session.fyId },
+      });
+      if (!before) throw new Error("Trip not found in this firm/financial year");
       await tx.trip.update({ where: { id }, data: { deletedAt: new Date() } });
       // release consumed driver advances; drop the pending settlement row
       await tx.driverAdvance.updateMany({

@@ -129,7 +129,8 @@ export async function saveLoan(
       let id: string;
       if (d.id) {
         const before = await tx.loan.findFirstOrThrow({
-          where: { id: d.id, deletedAt: null },
+          // firm-scoped: a loan id from another firm must not be editable here
+          where: { id: d.id, firmId: session.firmId, deletedAt: null },
           include: { emis: { where: { deletedAt: null } } },
         });
         const repaid = round2(
@@ -141,7 +142,17 @@ export async function saveLoan(
             error: `${repaid} of principal is already repaid — the loan cannot be reduced to ${d.amount}.`,
           };
         }
-        const updated = await tx.loan.update({ where: { id: d.id }, data: values });
+        const updated = await tx.loan.update({
+          where: { id: d.id },
+          data: {
+            ...values,
+            // status re-syncs with the edited amount: raising a CLOSED loan's
+            // amount above what is repaid REOPENS it (else it would be
+            // invisible on EMI-due and unpayable forever), and an amount now
+            // fully covered closes it
+            status: d.amount > repaid + 0.009 ? "ACTIVE" : "CLOSED",
+          },
+        });
         id = updated.id;
         await audit(tx, session, {
           entity: "Loan",
@@ -215,7 +226,7 @@ export async function deleteLoan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const before = await tx.loan.findFirstOrThrow({
-        where: { id, deletedAt: null },
+        where: { id, firmId: session.firmId, deletedAt: null },
         include: { emis: { where: { deletedAt: null } } },
       });
       if (before.emis.length) {
@@ -279,7 +290,9 @@ export async function payLoanEmi(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const loan = await tx.loan.findFirstOrThrow({
-        where: { id: d.loanId, deletedAt: null },
+        // firm-scoped: paying an EMI on another firm's loan would post the
+        // voucher and ledger legs into the wrong firm's books
+        where: { id: d.loanId, firmId: session.firmId, deletedAt: null },
         include: { emis: { where: { deletedAt: null } } },
       });
       if (loan.status === "CLOSED") {
@@ -500,7 +513,9 @@ export async function deleteLoanEmi(
   await authorize(session, "vouchers", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.loanEmi.findFirstOrThrow({ where: { id, deletedAt: null } });
+      const before = await tx.loanEmi.findFirstOrThrow({
+        where: { id, deletedAt: null, loan: { firmId: session.firmId } },
+      });
       await tx.loanEmi.update({ where: { id }, data: { deletedAt: new Date() } });
       if (before.voucherId) {
         await tx.voucher.update({
@@ -532,7 +547,7 @@ export async function getEmiSuggestion(loanId: string): Promise<
   const session = requireSession();
   return withTenant(session.tenantId, async (tx) => {
     const loan = await tx.loan.findFirst({
-      where: { id: loanId, deletedAt: null },
+      where: { id: loanId, firmId: session.firmId, deletedAt: null },
       include: { emis: { where: { deletedAt: null } } },
     });
     if (!loan) return null;
@@ -610,7 +625,7 @@ export async function saveFinanceTxn(
       let voucherId: string | null;
       if (d.id) {
         const before = await tx.financeTxn.findFirstOrThrow({
-          where: { id: d.id, deletedAt: null },
+          where: { id: d.id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
         });
         voucherNo = before.voucherNo;
         voucherId = before.voucherId;
@@ -747,7 +762,9 @@ export async function deleteFinanceTxn(
   await authorize(session, "vouchers", "delete");
   try {
     await withTenant(session.tenantId, async (tx: Tx) => {
-      const before = await tx.financeTxn.findFirstOrThrow({ where: { id, deletedAt: null } });
+      const before = await tx.financeTxn.findFirstOrThrow({
+        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
       await tx.financeTxn.update({ where: { id }, data: { deletedAt: new Date() } });
       if (before.voucherId) {
         await tx.voucher.update({

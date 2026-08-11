@@ -6,6 +6,7 @@ import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
 import { round2 } from "@/lib/calc/tds";
 import { audit } from "@/lib/audit";
+import { authorize } from "@/lib/authz";
 
 /**
  * TDS Threshold Monitor — supplier-wise FY totals per TDS section (heads are
@@ -230,10 +231,15 @@ export async function recordTdsDeduction(input: {
   remarks?: string | null;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = requireSession();
+  // a TDS deduction is a financial write — same permission gate as vouchers,
+  // never UI-only
+  await authorize(session, "vouchers", "create");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return { ok: false, error: "Valid date is required" };
   if (!(input.amount > 0)) return { ok: false, error: "Amount must be positive" };
   try {
     await withTenant(session.tenantId, async (tx) => {
+      const party = await tx.party.findFirst({ where: { id: input.partyId }, select: { id: true } });
+      if (!party) throw new Error("Party not found");
       const created = await tx.tdsDeduction.create({
         data: {
           tenantId: session.tenantId,
@@ -269,9 +275,13 @@ export async function deleteTdsDeduction(
   if (session.role !== "ADMIN" && session.role !== "OWNER") {
     return { ok: false, error: "Only Admin/Owner may delete deduction records" };
   }
+  await authorize(session, "vouchers", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.tdsDeduction.findUniqueOrThrow({ where: { id } });
+      const before = await tx.tdsDeduction.findFirst({
+        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
+      if (!before) throw new Error("Deduction record not found in this firm/financial year");
       await tx.tdsDeduction.update({ where: { id }, data: { deletedAt: new Date() } });
       await audit(tx, session, { entity: "TdsDeduction", entityId: id, action: "DELETE", before });
     });

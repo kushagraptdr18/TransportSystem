@@ -230,10 +230,12 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
 
       let savedId: string;
       if (data.id) {
-        const before = await tx.lr.findUniqueOrThrow({
-          where: { id: data.id },
+        // scoped: an id from another firm/FY must not be editable here
+        const before = await tx.lr.findFirst({
+          where: { id: data.id, firmId: session.firmId, fyId: session.fyId },
           include: { items: true },
         });
+        if (!before) throw new Error("LR not found in this firm/financial year");
         if (before.deletedAt) throw new Error("LR has been deleted");
         await tx.lrItem.deleteMany({ where: { lrId: data.id } });
         const updated = await tx.lr.update({
@@ -307,8 +309,32 @@ export async function deleteLr(id: string): Promise<{ ok: true } | { ok: false; 
   await authorize(session, "lr", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.lr.findUniqueOrThrow({ where: { id } });
-      // cascade: detach from every dependent module so the LR vanishes there too
+      const before = await tx.lr.findFirst({
+        where: { id, firmId: session.firmId },
+        include: {
+          invoiceLrs: { include: { invoice: { select: { invoiceNo: true, deletedAt: true } } } },
+          chalanLrs: { include: { chalan: { select: { chalanNo: true, deletedAt: true, cancelledAt: true } } } },
+        },
+      });
+      if (!before) throw new Error("LR not found in this firm");
+      // an LR woven into financial documents must not vanish: the invoice's
+      // totals/ledger and the chalan's hire were computed WITH this LR — the
+      // dependent document must go first, never the LR under it
+      const liveBill = before.invoiceLrs.find((l) => !l.invoice.deletedAt);
+      if (liveBill) {
+        throw new Error(
+          `LR ${before.lrNo} is billed on invoice ${liveBill.invoice.invoiceNo} — delete that bill first.`
+        );
+      }
+      const liveChalan = before.chalanLrs.find(
+        (l) => !l.chalan.deletedAt && !l.chalan.cancelledAt
+      );
+      if (liveChalan) {
+        throw new Error(
+          `LR ${before.lrNo} is loaded on chalan ${liveChalan.chalan.chalanNo} — remove it from that chalan (or delete the chalan) first.`
+        );
+      }
+      // cascade: only stale links to deleted/cancelled documents remain now
       await tx.chalanLr.deleteMany({ where: { lrId: id } });
       await tx.invoiceLr.deleteMany({ where: { lrId: id } });
       await tx.pod.deleteMany({ where: { lrId: id } });
@@ -565,6 +591,15 @@ export async function saveLrBatch(
       return { ok: true as const, lrNos };
     });
   } catch (err) {
+    // two clerks saving batches at the same moment can race the MAX+1 number
+    // scan — surface a retryable message, not a raw constraint error
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return {
+        ok: false,
+        error:
+          "An LR number in this batch was just taken by another entry — save again to get fresh numbers.",
+      };
+    }
     return { ok: false, error: err instanceof Error ? err.message : "Batch save failed" };
   }
 }

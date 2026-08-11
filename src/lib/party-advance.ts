@@ -19,12 +19,30 @@ export async function restoreAdvanceUses(tx: Tx, refType: string, refId: string)
   if (uses.length) await tx.partyAdvanceUse.deleteMany({ where: { refType, refId } });
 }
 
+/**
+ * Guarded, concurrency-safe consumption: the increment applies only while the
+ * advance still has that much open — two simultaneous documents racing for the
+ * same balance cannot push consumedAmount past amount (the SQL condition is
+ * evaluated atomically on the row). Returns false when the balance was gone.
+ */
+async function consumeAtomically(tx: Tx, advanceId: string, take: number): Promise<boolean> {
+  const updated = await tx.$executeRaw`
+    UPDATE "PartyAdvance"
+    SET "consumedAmount" = "consumedAmount" + ${take}
+    WHERE "id" = ${advanceId}
+      AND "deletedAt" IS NULL
+      AND "consumedAmount" + ${take} <= "amount" + 0.009`;
+  return updated > 0;
+}
+
 /** FIFO-consume up to `amount` from a party's open advances; returns consumed. */
 export async function consumeAdvances(
   tx: Tx,
   opts: {
     tenantId: string;
     firmId: string;
+    /** advances never cross a financial year without an explicit carry-forward */
+    fyId?: string;
     partyId: string;
     amount: number;
     refType: string;
@@ -38,6 +56,7 @@ export async function consumeAdvances(
   const advances = await tx.partyAdvance.findMany({
     where: {
       firmId: opts.firmId,
+      ...(opts.fyId ? { fyId: opts.fyId } : {}),
       partyId: opts.partyId,
       kind: opts.kind ?? "RECEIVED",
       deletedAt: null,
@@ -51,12 +70,11 @@ export async function consumeAdvances(
     const open = round2(Number(adv.amount) - Number(adv.consumedAmount));
     if (open <= 0) continue;
     const take = round2(Math.min(open, left));
+    // a concurrent transaction may have eaten this balance between the read
+    // and now — the guarded update simply skips to the next advance then
+    if (!(await consumeAtomically(tx, adv.id, take))) continue;
     left = round2(left - take);
     consumed = round2(consumed + take);
-    await tx.partyAdvance.update({
-      where: { id: adv.id },
-      data: { consumedAmount: { increment: take } },
-    });
     await tx.partyAdvanceUse.create({
       data: {
         tenantId: opts.tenantId,
@@ -93,6 +111,8 @@ export async function listOpenAdvances(
   tx: Tx,
   opts: {
     firmId: string;
+    /** advances never cross a financial year without an explicit carry-forward */
+    fyId?: string;
     partyId: string;
     kinds?: string[];
     /** e.g. CHALAN_CANCEL advances have their own recovery flow */
@@ -104,6 +124,7 @@ export async function listOpenAdvances(
   const advances = await tx.partyAdvance.findMany({
     where: {
       firmId: opts.firmId,
+      ...(opts.fyId ? { fyId: opts.fyId } : {}),
       partyId: opts.partyId,
       deletedAt: null,
       ...(opts.kinds ? { kind: { in: opts.kinds } } : {}),
@@ -152,6 +173,8 @@ export async function applyManualAdvanceUses(
   opts: {
     tenantId: string;
     firmId: string;
+    /** advances never cross a financial year without an explicit carry-forward */
+    fyId?: string;
     partyId: string;
     refType: string;
     refId: string;
@@ -174,9 +197,15 @@ export async function applyManualAdvanceUses(
   }
   for (const [advanceId, amount] of Array.from(merged.entries())) {
     const adv = await tx.partyAdvance.findFirst({
-      where: { id: advanceId, firmId: opts.firmId, partyId: opts.partyId, deletedAt: null },
+      where: {
+        id: advanceId,
+        firmId: opts.firmId,
+        ...(opts.fyId ? { fyId: opts.fyId } : {}),
+        partyId: opts.partyId,
+        deletedAt: null,
+      },
     });
-    if (!adv) throw new Error("Advance voucher not found for this party");
+    if (!adv) throw new Error("Advance voucher not found for this party in this financial year");
     if (opts.kinds && !opts.kinds.includes(adv.kind)) {
       throw new Error(
         `Voucher ${adv.voucherNo ?? advanceId} is an advance ${adv.kind.toLowerCase()} and cannot be adjusted here`
@@ -188,10 +217,13 @@ export async function applyManualAdvanceUses(
         `Adjustment ${amount} exceeds available balance ${open} of voucher ${adv.voucherNo ?? advanceId}`
       );
     }
-    await tx.partyAdvance.update({
-      where: { id: advanceId },
-      data: { consumedAmount: { increment: amount } },
-    });
+    // guarded increment: a concurrent voucher racing for the same balance
+    // makes this fail instead of over-consuming
+    if (!(await consumeAtomically(tx, advanceId, amount))) {
+      throw new Error(
+        `Advance ${adv.voucherNo ?? advanceId} no longer has ${amount} available — it was just consumed elsewhere. Refresh and retry.`
+      );
+    }
     await tx.partyAdvanceUse.create({
       data: {
         tenantId: opts.tenantId,
@@ -213,10 +245,11 @@ export async function partyAdvanceBalance(
   tx: Tx,
   firmId: string,
   partyId: string,
-  kind: "RECEIVED" | "PAID" = "RECEIVED"
+  kind: "RECEIVED" | "PAID" = "RECEIVED",
+  fyId?: string
 ): Promise<number> {
   const advances = await tx.partyAdvance.findMany({
-    where: { firmId, partyId, kind, deletedAt: null },
+    where: { firmId, partyId, kind, deletedAt: null, ...(fyId ? { fyId } : {}) },
     select: { amount: true, consumedAmount: true },
   });
   return round2(

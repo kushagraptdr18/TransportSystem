@@ -17,7 +17,8 @@ import {
   restoreAdvanceUses,
   type OpenAdvance,
 } from "@/lib/party-advance";
-import { invoiceSettlement, payableSettlement } from "@/lib/settlement";
+import { invoiceSettlement, payableSettlement, settledByRef } from "@/lib/settlement";
+import { round2 } from "@/lib/calc/tds";
 import { recoverShortage, releaseShortage, releaseShortageRecoveries } from "@/lib/shortage";
 
 /** Money figure for error messages. */
@@ -54,6 +55,7 @@ export async function getBrokerAdvances(
   return withTenant(session.tenantId, (tx) =>
     listOpenAdvances(tx, {
       firmId: session.firmId,
+      fyId: session.fyId,
       partyId: brokerId,
       kinds: ["PAID"],
       includeRefType: section === "ADVANCE" ? ADV_USE_ADVANCE : ADV_USE_BALANCE,
@@ -190,7 +192,22 @@ async function recomputeAndStore(
   data: z.infer<typeof chalanSchema>,
   advances: number[]
 ) {
-  const lrs = await tx.lr.findMany({ where: { id: { in: data.lrIds } }, include: { items: true } });
+  // never trust client LR ids: every LR must be a live document of THIS
+  // firm/FY — a stale, deleted or foreign id must fail loudly, not load
+  const lrs = await tx.lr.findMany({
+    where: {
+      id: { in: data.lrIds },
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+    },
+    include: { items: true },
+  });
+  if (lrs.length !== new Set(data.lrIds).size) {
+    throw new Error(
+      "One or more selected LRs no longer exist in this firm/financial year — refresh and reselect."
+    );
+  }
   const blocked = lrs.find((l) => l.lrType === "CANCELLED" || l.lrType === "PAPER_CHANGE");
   if (blocked) {
     throw new Error(
@@ -293,8 +310,11 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
     return await withTenant(session.tenantId, async (tx) => {
       const existing = data.id
         ? await tx.chalan.findFirst({
-            where: { id: data.id, deletedAt: null },
-            include: { advances: true },
+            where: { id: data.id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+            include: {
+              advances: true,
+              lrs: { include: { lr: { include: { invoiceLrs: true, pods: true } } } },
+            },
           })
         : null;
       if (data.id && !existing) return { ok: false as const, error: "Chalan not found" };
@@ -318,9 +338,95 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
       if (clash) {
         return { ok: false as const, error: `Chalan No ${data.chalanNo} already exists — use a different number.` };
       }
+      // the DB unique constraint counts soft-deleted chalans too — surface a
+      // clear message instead of a raw constraint error at insert time
+      const deletedHolder = await tx.chalan.findFirst({
+        where: {
+          firmId: session.firmId,
+          fyId: session.fyId,
+          chalanNo: data.chalanNo,
+          deletedAt: { not: null },
+          ...(data.id ? { id: { not: data.id } } : {}),
+        },
+        select: { id: true },
+      });
+      if (deletedHolder) {
+        return {
+          ok: false as const,
+          error: `Chalan No ${data.chalanNo} belongs to a deleted chalan and cannot be reused — use a different number.`,
+        };
+      }
+
+      // an LR can ride only ONE live chalan — a second link would accrue the
+      // same hire twice
+      if (data.lrIds.length) {
+        const otherLinks = await tx.chalanLr.findMany({
+          where: {
+            lrId: { in: data.lrIds },
+            ...(data.id ? { chalanId: { not: data.id } } : {}),
+          },
+          include: {
+            chalan: { select: { chalanNo: true, deletedAt: true, cancelledAt: true } },
+            lr: { select: { lrNo: true } },
+          },
+        });
+        const live = otherLinks.find((l) => !l.chalan.deletedAt && !l.chalan.cancelledAt);
+        if (live) {
+          return {
+            ok: false as const,
+            error: `LR ${live.lr.lrNo} is already loaded on chalan ${live.chalan.chalanNo} — one LR rides one chalan.`,
+          };
+        }
+      }
 
       const advances = existing?.advances.map((a) => toNum(a.amount)) ?? [];
       const { fields } = await recomputeAndStore(tx, session, data, advances);
+
+      // a financially settled chalan's money story is frozen: with a balance
+      // payment or voucher allocation against it, changing the totals would
+      // strand the recorded settlement against figures that no longer exist
+      if (existing) {
+        const ownSettled = round2(
+          toNum(existing.balPaidAmount) +
+            toNum(existing.balShortage) +
+            toNum(existing.balRoundOff) +
+            toNum(existing.balAdvanceAdjusted)
+        );
+        const voucherSettled =
+          (
+            await settledByRef(tx, {
+              firmId: session.firmId,
+              fyId: session.fyId,
+              refTypes: ["FREIGHT_CHALLAN"],
+              refIds: [existing.id],
+            })
+          ).get(existing.id) ?? 0;
+        if (
+          round2(ownSettled + voucherSettled) > 0.009 &&
+          round2(fields.grandTotal) !== round2(toNum(existing.grandTotal))
+        ) {
+          return {
+            ok: false as const,
+            error:
+              "This chalan already has payments/settlements recorded against it — its amounts cannot be changed. Reverse the payment (or delete the settling voucher) first.",
+          };
+        }
+      }
+
+      // LRs removed by this edit must not stay ON_CHALAN forever — a billed
+      // one cannot leave at all, the rest return to their correct status
+      const removedLrs = existing
+        ? existing.lrs.filter((l) => !data.lrIds.includes(l.lrId))
+        : [];
+      const removedBilled = removedLrs.find(
+        (l) => l.lr.invoiceLrs.length > 0 || l.lr.status === "BILLED"
+      );
+      if (removedBilled) {
+        return {
+          ok: false as const,
+          error: `LR ${removedBilled.lr.lrNo} is already billed — delete its bill before removing it from this chalan.`,
+        };
+      }
 
       let id: string;
       if (existing) {
@@ -342,6 +448,23 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
       if (data.lrIds.length) {
         await tx.chalanLr.createMany({
           data: data.lrIds.map((lrId) => ({ tenantId: session.tenantId, chalanId: id, lrId })),
+        });
+      }
+      // removed LRs leave the chalan properly: back to PENDING (or DELIVERED
+      // when a POD exists) instead of being stranded ON_CHALAN with no chalan
+      for (const l of removedLrs) {
+        if (l.lr.lrType === "CANCELLED" || l.lr.lrType === "PAPER_CHANGE") continue;
+        await tx.lr.update({
+          where: { id: l.lrId },
+          data: { status: l.lr.pods.length ? "DELIVERED" : "PENDING" },
+        });
+      }
+      // an already-final chalan keeps its LR set consistent — LRs added by
+      // this edit go ON_CHALAN now (finalize only runs once)
+      if (existing?.isFinal && data.lrIds.length) {
+        await tx.lr.updateMany({
+          where: { id: { in: data.lrIds } },
+          data: { status: "ON_CHALAN" },
         });
       }
       // ledger accrual: hire expense vs broker/owner payable — the advances and
@@ -457,10 +580,40 @@ export async function saveChalanAdvances(
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const chalan = await tx.chalan.findFirst({ where: { id: chalanId, deletedAt: null } });
+      const chalan = await tx.chalan.findFirst({
+        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
       if (chalan.cancelledAt) {
         return { ok: false as const, error: "This chalan is cancelled — advances cannot be edited." };
+      }
+      // once the balance is settled (own payment or voucher), changing the
+      // advances would move the balance under a frozen settlement
+      const newAdvTotal = round2(rows.reduce((s, r) => s + r.amount, 0));
+      const ownBalSettled = round2(
+        toNum(chalan.balPaidAmount) +
+          toNum(chalan.balShortage) +
+          toNum(chalan.balRoundOff) +
+          toNum(chalan.balAdvanceAdjusted)
+      );
+      const voucherBalSettled =
+        (
+          await settledByRef(tx, {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            refTypes: ["FREIGHT_CHALLAN"],
+            refIds: [chalanId],
+          })
+        ).get(chalanId) ?? 0;
+      if (
+        round2(ownBalSettled + voucherBalSettled) > 0.009 &&
+        newAdvTotal !== round2(toNum(chalan.advanceTotal))
+      ) {
+        return {
+          ok: false as const,
+          error:
+            "This chalan's balance is already settled — advances cannot be changed now. Reverse the balance payment / settling voucher first.",
+        };
       }
 
       // manual advance-voucher adjustments: every ADVANCE_ADJ row must name the
@@ -473,6 +626,7 @@ export async function saveChalanAdvances(
       const applied = await applyManualAdvanceUses(tx, {
         tenantId: session.tenantId,
         firmId: chalan.firmId,
+        fyId: chalan.fyId,
         partyId: chalan.brokerId,
         kinds: ["PAID"],
         refType: ADV_USE_ADVANCE,
@@ -605,7 +759,7 @@ export async function finalizeChalan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: chalanId, deletedAt: null },
+        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
         include: { lrs: true },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
@@ -643,7 +797,7 @@ export async function deleteChalan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: chalanId, deletedAt: null },
+        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
         include: { lrs: { include: { lr: { include: { invoiceLrs: true } } } } },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
@@ -656,6 +810,40 @@ export async function deleteChalan(
         return {
           ok: false as const,
           error: `LR ${billed.lr.lrNo} is already billed. Delete its bill before deleting this chalan.`,
+        };
+      }
+
+      // a chalan settled through a Payment Voucher must NEVER be deleted: the
+      // voucher's debit and allocation would survive against a document that
+      // no longer exists, driving the broker's ledger permanently negative
+      const voucherSettled =
+        (
+          await settledByRef(tx, {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            refTypes: ["FREIGHT_CHALLAN"],
+            refIds: [chalanId],
+          })
+        ).get(chalanId) ?? 0;
+      if (voucherSettled > 0.009) {
+        return {
+          ok: false as const,
+          error:
+            "This chalan has already been settled through a voucher and cannot be deleted. Delete/reverse that voucher first.",
+        };
+      }
+
+      // a cancelled chalan whose CHALAN_CANCEL advance was already consumed
+      // (adjusted against another chalan / recovered) is part of the money
+      // trail now — deleting it would orphan that consumption
+      const cancelAdv = await tx.partyAdvance.findFirst({
+        where: { source: "CHALAN_CANCEL", sourceRefId: chalanId, deletedAt: null },
+      });
+      if (cancelAdv && Number(cancelAdv.consumedAmount) > 0.009) {
+        return {
+          ok: false as const,
+          error:
+            "The cancellation advance of this chalan is already adjusted/recovered — remove that adjustment first.",
         };
       }
 
@@ -675,6 +863,15 @@ export async function deleteChalan(
       // undo everything this chalan raised or recovered in the shortage register
       await releaseShortage(tx, "CHALAN", chalanId);
       await releaseShortage(tx, "CHALAN", `${chalanId}:BAL`);
+      // an unconsumed cancellation advance dies with its chalan — otherwise a
+      // phantom credit (backed by ledger legs this delete just reversed) would
+      // stay adjustable against the broker's next chalan
+      if (cancelAdv) {
+        await tx.partyAdvance.update({
+          where: { id: cancelAdv.id },
+          data: { deletedAt: new Date() },
+        });
+      }
       await tx.chalan.update({ where: { id: chalanId }, data: { deletedAt: new Date() } });
 
       // every associated LR returns to PENDING so it can be re-loaded onto a
@@ -721,7 +918,7 @@ export async function cancelChalan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: chalanId, deletedAt: null },
+        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
         include: { lrs: { include: { lr: { include: { invoiceLrs: true } } } }, advances: true },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
@@ -748,7 +945,8 @@ export async function cancelChalan(
       ) {
         return {
           ok: false as const,
-          error: "Balance payment is already recorded on this chalan — delete the chalan instead, or reverse that payment first.",
+          error:
+            "Balance payment is already recorded on this chalan — reverse that payment (Balance Payment screen) first, then cancel. A settled chalan must never be deleted.",
         };
       }
       const settled = await payableSettlement(tx, {
@@ -1088,6 +1286,7 @@ export async function saveBalancePayment(
       await applyManualAdvanceUses(tx, {
         tenantId: session.tenantId,
         firmId: chalan.firmId,
+        fyId: chalan.fyId,
         partyId: chalan.brokerId,
         kinds: ["PAID"],
         refType: ADV_USE_BALANCE,

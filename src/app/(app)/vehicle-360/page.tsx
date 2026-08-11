@@ -185,7 +185,10 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
         const outstanding = round2(gross - paid);
         hirePos.set(c.id, { outstanding, status: settlementStatus(gross, outstanding) });
       }
-      for (const s of uniqueSlips) {
+      // ALL slips settle here — including one deduped from the earnings list
+      // because its LR rode a chalan: its unpaid hire is still owed, and this
+      // screen must agree with the Outstanding Payables register
+      for (const s of slips) {
         const gross = toNum(s.vNetAmt);
         if (gross <= 0) continue;
         const paid = round2(
@@ -312,7 +315,7 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
             </div>
             <div className="text-right">
               <div className="text-xs text-muted-foreground">
-                {isOwn ? "Net (earnings − expenses, FY)" : "Hire paid to this vehicle (FY)"}
+                {isOwn ? "Net (earnings − expenses, FY)" : "Hire charged by this vehicle (FY)"}
               </div>
               <div
                 className={`text-2xl font-black tabular-nums ${
@@ -328,7 +331,9 @@ export default async function Vehicle360Page({ searchParams }: { searchParams: {
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {(
             [
-              [isOwn ? "Earned (chalan + slip)" : "Hire Paid (chalan + slip)", formatMoney(earned), `${chalans.length + uniqueSlips.length} trips`],
+              // "charged", not "paid" — this is the gross hire billed by the
+              // vehicle; what is actually settled lives in Hire Pending
+              [isOwn ? "Earned (chalan + slip)" : "Hire Charged (chalan + slip)", formatMoney(earned), `${chalans.length + uniqueSlips.length} trips`],
               isOwn
                 ? ["Vehicle Expenses (ledger net)", formatMoney(expenseTotal), ""]
                 : [

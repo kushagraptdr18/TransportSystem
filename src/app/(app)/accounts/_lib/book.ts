@@ -105,13 +105,14 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       : params.partyId
         ? { partyId: params.partyId }
         : null;
+    // no take-limit: a distinct list of one ledger's reference numbers is
+    // small, and a silent cap hid valid references beyond the first 1000
     const refNoRows = ledgerOnly
       ? await tx.ledgerEntry.findMany({
           where: { firmId: session.firmId, fyId: session.fyId, ...ledgerOnly },
           select: { refNo: true },
           distinct: ["refNo"],
           orderBy: { refNo: "asc" },
-          take: 1000,
         })
       : [];
     // vehicle filter options: ONLY vehicles that appear in the selected
@@ -182,10 +183,13 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         ...(params.amtTo != null ? { lte: params.amtTo } : {}),
       };
     }
+    // every matching entry is fetched: a cap here silently dropped the NEWEST
+    // rows of a busy ledger and reported a wrong closing balance. The `id`
+    // tie-breaker keeps same-timestamp rows (createMany legs) in a stable
+    // order across page loads.
     const fetched = await tx.ledgerEntry.findMany({
       where,
-      orderBy: [{ date: "asc" }, { createdAt: "asc" }],
-      take: 2000,
+      orderBy: [{ date: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     });
     const entries = refQuery ? fetched.filter((e) => matchesRef(e.refNo)) : fetched;
     const nameById = new Map(allParties.map((p) => [p.id, p.name]));
@@ -335,6 +339,9 @@ export async function ledgerBookRows(params: BookParams): Promise<{
             where: {
               advance: {
                 firmId: session.firmId,
+                // FY-scoped like the ledger entries around these rows —
+                // another year's adjustments never merge into this book
+                fyId: session.fyId,
                 deletedAt: null,
                 ...(params.partyId ? { partyId: params.partyId } : {}),
               },
@@ -352,7 +359,6 @@ export async function ledgerBookRows(params: BookParams): Promise<{
             },
             include: { advance: true },
             orderBy: { date: "asc" },
-            take: 1000,
           })
         : [];
 
@@ -464,7 +470,7 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         debit,
         credit,
         balance: trackRunning
-          ? `${Math.abs(Math.round(running * 100) / 100).toLocaleString("en-IN")} ${running >= 0 ? "Dr" : "Cr"}`
+          ? `${Math.abs(Math.round(running * 100) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${running >= 0 ? "Dr" : "Cr"}`
           : "",
       };
     });

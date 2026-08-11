@@ -95,7 +95,7 @@ export async function getPartyBillingDetails(partyId: string): Promise<PartyBill
 export async function getPartyAdvanceBalance(partyId: string): Promise<number> {
   const session = requireSession();
   return withTenant(session.tenantId, (tx) =>
-    partyAdvanceBalance(tx, session.firmId, partyId)
+    partyAdvanceBalance(tx, session.firmId, partyId, "RECEIVED", session.fyId)
   );
 }
 
@@ -637,6 +637,7 @@ export async function saveInvoice(
         await consumeAdvances(tx, {
           tenantId: session.tenantId,
           firmId: session.firmId,
+          fyId: session.fyId,
           partyId: data.partyId,
           amount: data.advance,
           refType: "INVOICE",

@@ -70,6 +70,7 @@ export async function getBrokerSlipAdvances(
   return withTenant(session.tenantId, (tx) =>
     listOpenAdvances(tx, {
       firmId: session.firmId,
+      fyId: session.fyId,
       partyId,
       kinds: side === "P" ? ["RECEIVED"] : ["PAID"],
       includeRefType: side === "P" ? ADV_USE_P : ADV_USE_V,
@@ -356,6 +357,7 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
         const applied = await applyManualAdvanceUses(tx, {
           tenantId: session.tenantId,
           firmId: session.firmId,
+          fyId: session.fyId,
           partyId,
           kinds: side === "P" ? ["RECEIVED"] : ["PAID"],
           refType,

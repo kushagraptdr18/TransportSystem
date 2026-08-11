@@ -6,6 +6,7 @@ const row = (over: Partial<TdsPayableRow>): TdsPayableRow => ({
   date: "2026-05-10T00:00:00.000Z",
   module: "CHALLAN (OWNER)",
   section: "194C",
+  partyId: null,
   party: "Party A",
   pan: "ABCPP1234F",
   refNo: "CH-1",

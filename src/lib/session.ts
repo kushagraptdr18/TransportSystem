@@ -2,7 +2,24 @@ import { cookies } from "next/headers";
 import jwt from "jsonwebtoken";
 
 const COOKIE = "tms_session";
-const SECRET = process.env.AUTH_SECRET || "dev-secret";
+
+/**
+ * The JWT signing secret. In production a missing/empty AUTH_SECRET is fatal:
+ * a publicly-known fallback would let anyone forge an OWNER session for any
+ * tenant, defeating RLS entirely. Resolved lazily so the error surfaces as a
+ * clear crash on first use rather than being papered over.
+ */
+function getSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "AUTH_SECRET is not set. Refusing to sign/verify sessions with a known fallback secret — configure AUTH_SECRET in the environment."
+    );
+  }
+  // development only — never reachable in production
+  return "dev-secret";
+}
 
 export interface Session {
   userId: string;
@@ -27,7 +44,7 @@ export function createSessionToken(s: Session): string {
   void iat;
   void exp;
   void nbf;
-  return jwt.sign(payload, SECRET, { expiresIn: "12h" });
+  return jwt.sign(payload, getSecret(), { expiresIn: "12h" });
 }
 
 export function setSessionCookie(s: Session) {
@@ -48,7 +65,7 @@ export function getSession(): Session | null {
   const token = cookies().get(COOKIE)?.value;
   if (!token) return null;
   try {
-    return jwt.verify(token, SECRET) as Session;
+    return jwt.verify(token, getSecret()) as Session;
   } catch {
     return null;
   }

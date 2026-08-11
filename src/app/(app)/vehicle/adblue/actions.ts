@@ -12,6 +12,7 @@ import {
   reverseLedger,
   type LedgerPostEntry,
 } from "@/lib/ledger";
+import { settledByRef } from "@/lib/settlement";
 import { toNum } from "@/lib/utils";
 
 /**
@@ -219,7 +220,25 @@ export async function deleteAdblueTxn(
   await authorize(session, "maintenance", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.adblueTxn.findFirstOrThrow({ where: { id, deletedAt: null } });
+      const before = await tx.adblueTxn.findFirstOrThrow({
+        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
+      // a refill already settled by a Payment Voucher must not vanish — the
+      // voucher's allocation would keep paying a bill that no longer exists
+      const settled =
+        (
+          await settledByRef(tx, {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            refTypes: ["ADBLUE_PURCHASE"],
+            refIds: [id],
+          })
+        ).get(id) ?? 0;
+      if (settled > 0.009) {
+        throw new Error(
+          "This AdBlue bill is already settled through a voucher — delete/reverse that voucher first."
+        );
+      }
       await tx.adblueTxn.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "ADBLUE", id);
       await audit(tx, session, { entity: "AdblueTxn", entityId: id, action: "DELETE", before });
