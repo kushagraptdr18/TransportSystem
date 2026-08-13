@@ -254,16 +254,52 @@ export async function finalizeDriverFnf(
           },
         });
       }
-      // advances FIFO — whole rows consumed while the adjustment covers them
+      // advances FIFO — partial adjustments split the row: the adjusted part
+      // closes and the REMAINDER survives as its own PENDING row, so exactly
+      // what was deducted from the driver is what stops being recoverable.
+      // (Before this, a partially covered advance stayed fully PENDING and
+      // the same money could be recovered a second time later.)
       let advLeft = d.advanceAdjust;
       for (const adv of advances) {
+        if (advLeft <= 0.009) break;
         const amt = toNum(String(adv.amount));
-        if (advLeft < amt || amt <= 0) continue;
-        advLeft = round2(advLeft - amt);
+        if (amt <= 0) continue;
+        const take = round2(Math.min(amt, advLeft));
+        advLeft = round2(advLeft - take);
         await tx.driverAdvance.update({
           where: { id: adv.id },
-          data: { status: "ADJUSTED", adjustedDate: date },
+          data: {
+            status: "ADJUSTED",
+            adjustedDate: date,
+            ...(take < amt - 0.009
+              ? {
+                  remarks: `${adv.remarks ? adv.remarks + " · " : ""}₹${take} adjusted in F&F ${settlementNo}; ₹${round2(amt - take)} carried to a new pending row`,
+                }
+              : {}),
+          },
         });
+        if (take < amt - 0.009) {
+          // remainder row: bookkeeping only — the ORIGINAL advance's ledger
+          // posting already carries the money, so nothing posts again here
+          await tx.driverAdvance.create({
+            data: {
+              tenantId: session.tenantId,
+              firmId: adv.firmId,
+              fyId: adv.fyId,
+              date: adv.date,
+              driverId: adv.driverId,
+              vehicleId: adv.vehicleId,
+              tripRef: adv.tripRef,
+              amount: round2(amt - take),
+              paymentMode: adv.paymentMode,
+              bankPartyId: adv.bankPartyId,
+              voucherRef: adv.voucherRef,
+              status: "PENDING",
+              remarks: `Remainder of advance dated ${adv.date.toISOString().slice(0, 10)} after F&F ${settlementNo} (₹${take} adjusted of ₹${amt})`,
+              createdById: session.userId,
+            },
+          });
+        }
       }
       // +/- rows: settle all, re-open the unadjusted remainder as one row
       if (settlements.length) {

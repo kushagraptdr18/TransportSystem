@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
+import { round2 } from "@/lib/calc/tds";
+import { payableSettlement } from "@/lib/settlement";
 import { Button } from "@/components/ui/button";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { BrokerRegisterTable, type BrokerRegisterRow } from "@/components/broker/register-table";
@@ -26,7 +28,7 @@ export default async function BrokerRegisterPage({
 }) {
   const session = requireSession();
 
-  const { rows, vehicles, brokers, cityById, partyById, vehicleById, userById } = await withTenant(
+  const { rows, vPos, vehicles, brokers, cityById, partyById, vehicleById, userById } = await withTenant(
     session.tenantId,
     async (tx) => {
       const where: Record<string, unknown> = {
@@ -46,8 +48,8 @@ export default async function BrokerRegisterPage({
       if (searchParams.pod) where.podAttached = searchParams.pod === "yes";
       if (searchParams.pstatus)
         where.pPaymentStatus = searchParams.pstatus === "received" ? "RECEIVED" : "PENDING";
-      if (searchParams.vstatus)
-        where.vPaymentStatus = searchParams.vstatus === "paid" ? "PAID" : "PENDING";
+      // vstatus filters on the LIVE settled position (below), not the stored
+      // column — a slip settled by a payment voucher is genuinely paid
       if (searchParams.party) {
         if (searchParams.side === "PARTY") where.partyId = searchParams.party;
         else if (searchParams.side === "OWNER") {
@@ -69,8 +71,25 @@ export default async function BrokerRegisterPage({
         tx.user.findMany({ select: { id: true, name: true } }),
       ]);
 
+      // LIVE owner-side settlement — the stored vBalance/vPaymentStatus never
+      // move when a Payment Voucher settles the slip; this register must show
+      // the same figures the Outstanding Payables register does
+      const vPos = await payableSettlement(tx, {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        refType: "BROKER_ENTRY",
+        docs: slips.map((s) => ({
+          id: s.id,
+          balance: round2(Number(s.vNetAmt) - Number(s.vAdvance)),
+          ownPaid: Number(s.vPaidAmount),
+          ownShortage: Number(s.vShortage),
+          ownRoundOff: Number(s.vRoundOff),
+        })),
+      });
+
       return {
         rows: slips,
+        vPos,
         vehicles: vehicleRows,
         brokers: partyRows.filter((p) => p.ledgerGroup === "OWNER_BROKER" || p.ledgerGroup === "RELATIVE"),
         cityById: new Map(cityRows.map((c) => [c.id, c.name])),
@@ -81,7 +100,7 @@ export default async function BrokerRegisterPage({
     }
   );
 
-  const data: BrokerRegisterRow[] = rows.map((s) => ({
+  const allRows: BrokerRegisterRow[] = rows.map((s) => ({
     id: s.id,
     slipNo: s.slipNo,
     slipDate: s.slipDate.toISOString(),
@@ -97,7 +116,8 @@ export default async function BrokerRegisterPage({
     vFreight: Number(s.vFreight),
     vNetAmt: Number(s.vNetAmt),
     vAdvance: Number(s.vAdvance),
-    vBalance: Number(s.vBalance),
+    // live outstanding (own payments + voucher allocations), never stored
+    vBalance: vPos.get(s.id)?.outstanding ?? Number(s.vBalance),
     pAdvance: Number(s.pAdvance),
     pNetAmt: Number(s.pNetAmt),
     podAttached: s.podAttached,
@@ -109,7 +129,8 @@ export default async function BrokerRegisterPage({
     pRoundOff: Number(s.pRoundOff),
     pShortage: Number(s.pShortage),
     pPaymentDate: s.pPaymentDate ? s.pPaymentDate.toISOString() : null,
-    vPaymentStatus: s.vPaymentStatus,
+    vPaymentStatus:
+      (vPos.get(s.id)?.outstanding ?? Number(s.vBalance)) <= 0.009 ? "PAID" : "PENDING",
     vPaidAmount: Number(s.vPaidAmount),
     vRoundOff: Number(s.vRoundOff),
     vShortage: Number(s.vShortage),
@@ -118,6 +139,12 @@ export default async function BrokerRegisterPage({
     createdAt: s.createdAt.toISOString(),
     createdBy: (s.createdById && userById.get(s.createdById)) || "",
   }));
+  // owner-balance filter runs on the LIVE position computed above
+  const data = searchParams.vstatus
+    ? allRows.filter((r) =>
+        searchParams.vstatus === "paid" ? r.vBalance <= 0.009 : r.vBalance > 0.009
+      )
+    : allRows;
 
   const filters: FilterDef[] = [
     { type: "text", key: "q", label: "Slip No..." },

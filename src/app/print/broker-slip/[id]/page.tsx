@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
+import { round2 } from "@/lib/calc/tds";
+import { settledByRef } from "@/lib/settlement";
 import { brokerBalanceStatus } from "@/lib/broker-status";
 import type { BrokerAdvance } from "@/components/broker/broker-calc";
 import { PrintToolbar } from "@/app/print/chalan/[id]/print-toolbar";
@@ -22,17 +24,25 @@ export default async function BrokerSlipPrintPage({
   const data = await withTenant(session.tenantId, async (tx) => {
     const slip = await tx.brokerSlip.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!slip) return null;
-    const [firm, parties, cities, vehicles] = await Promise.all([
+    const [firm, parties, cities, vehicles, vAlloc] = await Promise.all([
       tx.firm.findUnique({ where: { id: slip.firmId } }),
       tx.party.findMany(),
       tx.city.findMany(),
       tx.vehicle.findMany(),
+      // owner-side settlements made through Payment Vouchers — the stored
+      // vPaidAmount/vPaymentStatus never see them, but the printed slip must
+      settledByRef(tx, {
+        firmId: slip.firmId,
+        fyId: slip.fyId,
+        refTypes: ["BROKER_ENTRY"],
+        refIds: [slip.id],
+      }),
     ]);
-    return { slip, firm, parties, cities, vehicles };
+    return { slip, firm, parties, cities, vehicles, vSettled: vAlloc.get(slip.id) ?? 0 };
   });
 
   if (!data) notFound();
-  const { slip, firm, parties, cities, vehicles } = data;
+  const { slip, firm, parties, cities, vehicles, vSettled } = data;
   const partyName = (id: string | null) => (id ? parties.find((p) => p.id === id)?.name ?? "" : "");
   const cityName = (id: string | null) => (id ? cities.find((c) => c.id === id)?.name ?? "" : "");
   const vehicleNo = (id: string | null) =>
@@ -54,13 +64,20 @@ export default async function BrokerSlipPrintPage({
     shortage: toNum(slip.pShortage),
     balance: toNum(slip.pBalance),
   });
+  // live owner-side position: own-screen payment PLUS voucher allocations,
+  // against the recomputed payable (never the stored vBalance column)
+  const vLiveBalance = round2(toNum(slip.vNetAmt) - toNum(slip.vAdvance));
+  const vLivePaid = round2(toNum(slip.vPaidAmount) + vSettled);
   const vStatus = brokerBalanceStatus({
     side: "V",
-    paymentStatus: slip.vPaymentStatus,
-    paidAmount: toNum(slip.vPaidAmount),
+    paymentStatus:
+      vLivePaid + toNum(slip.vRoundOff) + toNum(slip.vShortage) > 0.009
+        ? "PAID"
+        : slip.vPaymentStatus,
+    paidAmount: vLivePaid,
     roundOff: toNum(slip.vRoundOff),
     shortage: toNum(slip.vShortage),
-    balance: toNum(slip.vBalance),
+    balance: vLiveBalance,
   });
 
   const brokerParty = parties.find((p) => p.id === (slip.transporterId ?? slip.partyId));
@@ -166,9 +183,9 @@ export default async function BrokerSlipPrintPage({
         ];
     const sideAdvances = advances.filter((a) => a.side === side);
     const advanceTotal = isP ? toNum(slip.pAdvance) : toNum(slip.vAdvance);
-    const balance = isP ? toNum(slip.pBalance) : toNum(slip.vBalance);
+    const balance = isP ? toNum(slip.pBalance) : vLiveBalance;
     const status = isP ? pStatus : vStatus;
-    const paid = isP ? toNum(slip.pPaidAmount) : toNum(slip.vPaidAmount);
+    const paid = isP ? toNum(slip.pPaidAmount) : vLivePaid;
     const paymentDate = isP ? slip.pPaymentDate : slip.vPaymentDate;
     // deducted at settlement — shown so the printed balance reconciles
     const shortage = isP ? toNum(slip.pShortage) : toNum(slip.vShortage);

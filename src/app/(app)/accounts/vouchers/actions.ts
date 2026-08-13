@@ -586,11 +586,33 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         }
         // Header deductions post to the COMMON ledger head for each concept —
         // TDS to the statutory payable/receivable ledger (never a "TDS
-        // Adjustment" head), a deduction to the one Shortage ledger the chalan
+        // Adjustment" head), shortage to the one Shortage ledger the chalan
         // and broker slip also use.
+        //
+        // TWO fixes live here:
+        //  1. The shortage REGISTER (recoverShortage/raiseShortage below)
+        //     posts the single Shortage-head leg for money vouchers against a
+        //     party. Posting it from the header TOO doubled the Shortage head
+        //     and broke the trial balance by exactly the shortage — only the
+        //     remainder the register will NOT record posts directly.
+        //  2. A per-row "Other Ded." is a deduction that belongs to the Other
+        //     Charges ledger — it used to be misfiled under Shortage because
+        //     the entry screen folds it into the header deduction.
+        const rowShortage = round2(data.allocations.reduce((s, a) => s + a.deduction, 0));
+        const rowOther = round2(data.allocations.reduce((s, a) => s + a.otherAmt, 0));
+        const registeredShortage =
+          data.partyId && (data.type === "PAYMENT" || data.type === "RECEIPT")
+            ? rowShortage
+            : 0;
+        const directShortage = round2(
+          Math.max(0, data.deduction - rowOther - registeredShortage)
+        );
         const legacy: [string, number, "bank" | "counter"][] = [
           [tdsHead(data.type), data.tdsAmt, "bank"],
-          ["Shortage", data.deduction, "bank"],
+          ["Shortage", directShortage, "bank"],
+          // row-level other deductions reduce what moves — deduction side
+          ["Other Charges", rowOther, "bank"],
+          // header otherAmt is the opposite concept: charges ADDED to the net
           ["Other Charges", data.otherAmt, "counter"],
         ];
         for (const [name, amt, dir] of legacy) {
@@ -671,8 +693,9 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // from what we hand over, so it is RECOVERED; a RECEIPT means the party
       // paid us less, so the company bears it — an EXPENSE. Those are the only
       // two voucher cases that touch the shortage ledger.
-      // The money leg is already posted above via the header deduction, so the
-      // register only records the document side.
+      // The register's single Shortage-head leg IS the posting for this
+      // shortage — the header block above deliberately leaves it out (posting
+      // both doubled the head and unbalanced the books).
       await releaseShortage(tx, "VOUCHER", savedId);
       const allocShortage = round2(
         data.allocations.reduce((s, a) => s + a.deduction, 0)
