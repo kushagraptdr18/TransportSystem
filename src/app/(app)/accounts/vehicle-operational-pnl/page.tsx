@@ -2,7 +2,6 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatMoney, toNum } from "@/lib/utils";
-import { settledByRef } from "@/lib/settlement";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoHint } from "@/components/ui/info-hint";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
@@ -28,8 +27,13 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  *    less the advances adjusted inside those salaries (the advance cash is
  *    already counted below — the same rupee must not count twice).
  *  - Driver advances paid (own-vehicle drivers).
- *  - Driver settlements LIVE: actually paid to / received from the driver —
- *    settle-screen vouchers AND payment-voucher allocations both count.
+ *  - Driver settlements on ACCRUAL: every +/- row counts on its OWN (trip)
+ *    date — company-owes-driver as expense, driver-owes-company as a minus —
+ *    whether or not it is paid yet. Settling later moves no P&L figure: the
+ *    row's recorded amount never changes, only its status does. This matches
+ *    the income side, which also accrues when the chalan is made. (F&F
+ *    carry-forward rows are excluded — they duplicate the original rows'
+ *    unrecovered remainder.)
  *  - Urea from the trip settlements of own vehicles (both driver- and
  *    company-borne: driver-borne urea already reduced the settlement paid,
  *    so adding it here completes the trip's true cost).
@@ -132,19 +136,20 @@ export default async function VehicleOperationalPnlPage({
           },
           select: { driverId: true, vehicleId: true, date: true, amount: true },
         }),
-        // ALL live settlement rows — what was actually paid/received is
-        // derived per row (screen voucher OR payment-voucher allocations)
+        // ACCRUAL: every live +/- row on its own date — pending or settled
         tx.driverSettlement.findMany({
-          where: { ...scope, deletedAt: null },
+          where: {
+            ...scope,
+            deletedAt: null,
+            ...(dateWhere ? { date: dateWhere } : {}),
+          },
           select: {
             id: true,
             driverId: true,
             vehicleId: true,
             date: true,
-            settledDate: true,
-            status: true,
-            voucherId: true,
             amount: true,
+            remarks: true,
           },
         }),
         tx.driverAssignment.findMany(),
@@ -175,13 +180,6 @@ export default async function VehicleOperationalPnlPage({
         }),
       ]);
 
-    // live voucher-allocation settlements against the pending/partial rows
-    const settledAlloc = await settledByRef(tx, {
-      ...scope,
-      refTypes: ["DRIVER_SETTLEMENT"],
-      refIds: settlements.filter((s) => !(s.status === "SETTLED" && s.voucherId)).map((s) => s.id),
-    });
-
     return {
       ownIds,
       ownCount: ownIds.length,
@@ -192,7 +190,6 @@ export default async function VehicleOperationalPnlPage({
       salaries,
       advances,
       settlements,
-      settledAlloc,
       assignments,
       trips,
       emis,
@@ -209,7 +206,6 @@ export default async function VehicleOperationalPnlPage({
     salaries,
     advances,
     settlements,
-    settledAlloc,
     assignments,
     trips,
     emis,
@@ -336,31 +332,24 @@ export default async function VehicleOperationalPnlPage({
       .reduce((sum, a) => sum + toNum(String(a.amount)), 0)
   );
 
-  // ---- driver settlements LIVE: actually paid / received ----
-  // settle-screen rows carry a voucherId for the full amount; rows settled
-  // (fully or partly) through Payment-Voucher allocations count for exactly
-  // what those allocations settled — before this, allocation-settled rows
-  // never appeared here and the report under-counted driver payments
-  let settlementPaid = 0;
-  let settlementReceived = 0;
+  // ---- driver settlements on ACCRUAL: every row on its own date ----
+  // company-owes-driver (+) is an expense the moment the trip books it;
+  // driver-owes-company (−) reduces the expense the same way. Paying later
+  // moves nothing here — the recorded amount never changes, only the status.
+  // F&F "balance carried forward" rows are duplicates of the original rows'
+  // unrecovered remainder and must not count twice.
+  let settlementPayable = 0;
+  let settlementReceivable = 0;
   for (const st of settlements) {
-    const at = st.settledDate ?? st.date;
-    if (dateWhere) {
-      if (dateWhere.gte && at < dateWhere.gte) continue;
-      if (dateWhere.lte && at > dateWhere.lte) continue;
-    }
-    if (!isCompanyDriverTxn({ driverId: st.driverId, vehicleId: st.vehicleId, at })) continue;
+    if (st.remarks?.startsWith("Balance carried forward after final settlement")) continue;
+    if (!isCompanyDriverTxn({ driverId: st.driverId, vehicleId: st.vehicleId, at: st.date })) continue;
     const amt = toNum(String(st.amount));
-    const settled =
-      st.status === "SETTLED" && st.voucherId
-        ? Math.abs(amt)
-        : Math.min(Math.abs(amt), settledAlloc.get(st.id) ?? 0);
-    if (settled <= 0.009) continue;
-    if (amt > 0) settlementPaid = r2(settlementPaid + settled);
-    else settlementReceived = r2(settlementReceived + settled);
+    if (Math.abs(amt) <= 0.009) continue;
+    if (amt > 0) settlementPayable = r2(settlementPayable + amt);
+    else settlementReceivable = r2(settlementReceivable + Math.abs(amt));
   }
   const driverTotal = r2(
-    salaryBooked - advAdjustedInSalary + advancePaid + settlementPaid - settlementReceived
+    salaryBooked - advAdjustedInSalary + advancePaid + settlementPayable - settlementReceivable
   );
 
   // ---- urea from own-vehicle trip settlements ----
@@ -396,8 +385,9 @@ export default async function VehicleOperationalPnlPage({
           excluded. Income is the operational grand total of FleetOps chalans and broker-slip
           owner side. Expenses come from the source documents: own-vehicle bill allocations,
           booked driver salary (own-vehicle drivers, net of salary-adjusted advances), driver
-          advances, LIVE driver settlements (paid / received, voucher allocations included),
-          urea from own-vehicle trip settlements, and full vehicle-loan EMIs.
+          advances, driver settlements on ACCRUAL (every +/- balance counts on its trip date,
+          paid or not — paying later changes nothing here), urea from own-vehicle trip
+          settlements, and full vehicle-loan EMIs.
         </InfoHint>
       </h1>
       <FilterBar filters={filters} />
@@ -496,8 +486,8 @@ export default async function VehicleOperationalPnlPage({
               {line("Driver Salary (booked, gross)", salaryBooked)}
               {line("Less: Advance adjusted in salary", advAdjustedInSalary, { less: true })}
               {line("Driver Advances Paid", advancePaid)}
-              {line("Driver Settlements Paid (live)", settlementPaid)}
-              {line("Less: Settlements Received (driver returned)", settlementReceived, { less: true })}
+              {line("Driver Settlements (company owes driver, booked)", settlementPayable)}
+              {line("Less: Settlements (driver owes company, booked)", settlementReceivable, { less: true })}
               {line("Total Driver Expenses", driverTotal, { strong: true })}
             </div>
             <div>
