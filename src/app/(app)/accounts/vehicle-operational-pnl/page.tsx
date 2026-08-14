@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatMoney, toNum } from "@/lib/utils";
+import { settledByRef } from "@/lib/settlement";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InfoHint } from "@/components/ui/info-hint";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
@@ -19,27 +20,21 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  * freight + detention + ODC + fine slip + other − LD − commission − mamool
  * − courier / payment charge. Relative and broker vehicles never appear.
  *
- * Expenses: every ledger head the Vehicle Module posts to (diesel, tyres,
- * repairs, driver costs, AdBlue, trip urea...), each taken at its FULL ledger
- * net balance (Dr − Cr across every refType and vehicle stamp) — recoveries
- * and relative/broker transfers credit the same head, so the net that remains
- * is the own fleet's real cost. Plus the full EMI of VEHICLE-type loans on own
- * vehicles (from the Finance module, on payment date).
+ * Expenses come from the SOURCE DOCUMENTS, not ledger-head nets (a shared
+ * head like Shortage would drag the whole firm's balance in):
+ *  - Vehicle expenses: each bill's own-vehicle allocation share
+ *    (VehicleExpenseItem, on its allocation date), split per head.
+ *  - Driver salary BOOKED (gross) for drivers assigned to own vehicles,
+ *    less the advances adjusted inside those salaries (the advance cash is
+ *    already counted below — the same rupee must not count twice).
+ *  - Driver advances paid (own-vehicle drivers).
+ *  - Driver settlements LIVE: actually paid to / received from the driver —
+ *    settle-screen vouchers AND payment-voucher allocations both count.
+ *  - Urea from the trip settlements of own vehicles (both driver- and
+ *    company-borne: driver-borne urea already reduced the settlement paid,
+ *    so adding it here completes the trip's true cost).
+ *  - Full EMI of VEHICLE-type loans on own vehicles, on payment date.
  */
-
-/** every refType the vehicle module writes to the ledger */
-const VEHICLE_REF_TYPES = [
-  "VEHICLE_EXPENSE",
-  "VEH_EXP_ALLOC",
-  "ADBLUE",
-  "TRIP_UREA",
-  "DRIVER_ADVANCE",
-  "DRIVER_FNF",
-  "DRIVER_SALARY",
-  "DRIVER_SALARY_PAY",
-  "DRIVER_SHORTAGE",
-];
-
 export default async function VehicleOperationalPnlPage({
   searchParams,
 }: {
@@ -55,6 +50,14 @@ export default async function VehicleOperationalPnlPage({
           ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
         }
       : undefined;
+  // salary months are "YYYY-MM" strings — the date range maps to month bounds
+  const monthWhere =
+    searchParams.date_from || searchParams.date_to
+      ? {
+          ...(searchParams.date_from ? { gte: searchParams.date_from.slice(0, 7) } : {}),
+          ...(searchParams.date_to ? { lte: searchParams.date_to.slice(0, 7) } : {}),
+        }
+      : undefined;
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const scope = { firmId: session.firmId, fyId: session.fyId };
@@ -62,140 +65,155 @@ export default async function VehicleOperationalPnlPage({
       await tx.vehicle.findMany({ where: { ownershipType: "OWNER" }, select: { id: true } })
     ).map((v) => v.id);
 
-    // the heads the vehicle module posts to — the report then takes each
-    // head's FULL ledger net (every refType, every vehicle stamp), because the
-    // transfers do the separation themselves: a relative vehicle's expense is
-    // debited and transferred out (credit) in the same head, netting zero, and
-    // urea/diesel taken by a broker vehicle credits the head via its chalan
-    // advance. What remains net IS the own fleet's cost.
-    const autoVehicleHeadIds = (
-      await tx.ledgerEntry.findMany({
-        where: { ...scope, refType: { in: VEHICLE_REF_TYPES }, accountHeadId: { not: null } },
-        distinct: ["accountHeadId"],
-        select: { accountHeadId: true },
-      })
-    ).map((e) => e.accountHeadId as string);
-    // P&L Head Mapping: VEHICLE-mapped heads join even if the vehicle module
-    // never posted to them; COMPANY/EXCLUDE-mapped heads leave this report
-    const scopedHeads = await tx.accountHead.findMany({ select: { id: true, pnlScope: true } });
-    const scopeOf = new Map(scopedHeads.map((h) => [h.id, h.pnlScope]));
-    const vehicleHeadIds = Array.from(
-      new Set([
-        ...autoVehicleHeadIds.filter((id) => {
-          const s = scopeOf.get(id);
-          return s !== "COMPANY" && s !== "EXCLUDE";
-        }),
-        ...scopedHeads.filter((h) => h.pnlScope === "VEHICLE").map((h) => h.id),
-      ])
-    );
-
-    const [chalans, slips, heads, headSums, advances, settlements, assignments, emis] =
+    const [chalans, slips, heads, expenseItems, salaries, advances, settlements, assignments, trips, emis] =
       await Promise.all([
-      tx.chalan.aggregate({
-        where: {
-          ...scope,
-          deletedAt: null,
-          cancelledAt: null,
-          vehicleId: { in: ownIds },
-          ...(dateWhere ? { chalanDate: dateWhere } : {}),
-        },
-        _sum: {
-          freight: true,
-          detention: true,
-          odcAmt: true,
-          fineSlip: true,
-          otherAmt: true,
-          ldCharge: true,
-          commissionAmt: true,
-          mamool: true,
-          courierCharge: true,
-        },
-      }),
-      tx.brokerSlip.aggregate({
-        where: {
-          ...scope,
-          deletedAt: null,
-          vehicleId: { in: ownIds },
-          ...(dateWhere ? { slipDate: dateWhere } : {}),
-        },
-        _sum: {
-          vFreight: true,
-          vDetention: true,
-          vOdcAmt: true,
-          vFineAmt: true,
-          vLdCharge: true,
-          vCommAmt: true,
-          vMamool: true,
-          vPaymentAmt: true,
-        },
-      }),
-      tx.accountHead.findMany({ select: { id: true, name: true } }),
-      // every ledger the vehicle module posted for own vehicles (entries with
-      // no vehicle stamp — e.g. some driver costs — stay in: they belong to
-      // the fleet, and relative-vehicle shares were transferred out anyway)
-      tx.ledgerEntry.groupBy({
-        by: ["accountHeadId", "side"],
-        where: {
-          ...scope,
-          accountHeadId: { in: vehicleHeadIds },
-          ...(dateWhere ? { date: dateWhere } : {}),
-        },
-        _sum: { amount: true },
-      }),
-      // company-driver payments: advances given and settlements actually
-      // paid/received — a driver counts as a COMPANY driver when the vehicle
-      // on the transaction (or his assignment on that date) is OWN
-      tx.driverAdvance.findMany({
-        where: {
-          ...scope,
-          deletedAt: null,
-          ...(dateWhere ? { date: dateWhere } : {}),
-        },
-        select: { driverId: true, vehicleId: true, date: true, amount: true },
-      }),
-      tx.driverSettlement.findMany({
-        where: {
-          ...scope,
-          deletedAt: null,
-          status: "SETTLED",
-          voucherId: { not: null },
-          ...(dateWhere ? { settledDate: dateWhere } : {}),
-        },
-        select: { driverId: true, vehicleId: true, settledDate: true, date: true, amount: true },
-      }),
-      tx.driverAssignment.findMany(),
-      // full EMI of vehicle loans on own vehicles, on payment date — the same
-      // figure the Vehicle P&L and the Vehicle EMI Expense ledger carry
-      tx.loanEmi.findMany({
-        where: {
-          deletedAt: null,
-          ...(dateWhere ? { payDate: dateWhere } : {}),
-          loan: {
+        tx.chalan.aggregate({
+          where: {
             ...scope,
             deletedAt: null,
-            loanType: "VEHICLE",
+            cancelledAt: null,
             vehicleId: { in: ownIds },
+            ...(dateWhere ? { chalanDate: dateWhere } : {}),
           },
-        },
-        select: { total: true },
-      }),
-    ]);
+          _sum: {
+            freight: true,
+            detention: true,
+            odcAmt: true,
+            fineSlip: true,
+            otherAmt: true,
+            ldCharge: true,
+            commissionAmt: true,
+            mamool: true,
+            courierCharge: true,
+          },
+        }),
+        tx.brokerSlip.aggregate({
+          where: {
+            ...scope,
+            deletedAt: null,
+            vehicleId: { in: ownIds },
+            ...(dateWhere ? { slipDate: dateWhere } : {}),
+          },
+          _sum: {
+            vFreight: true,
+            vDetention: true,
+            vOdcAmt: true,
+            vFineAmt: true,
+            vLdCharge: true,
+            vCommAmt: true,
+            vMamool: true,
+            vPaymentAmt: true,
+          },
+        }),
+        tx.accountHead.findMany({ select: { id: true, name: true } }),
+        // each expense bill's OWN-vehicle share, on the allocation date —
+        // relative/broker shares live on other vehicles' items and never enter
+        tx.vehicleExpenseItem.findMany({
+          where: {
+            vehicleId: { in: ownIds },
+            ...(dateWhere ? { allocDate: dateWhere } : {}),
+            voucher: { ...scope, deletedAt: null, txnType: "EXPENSE" },
+          },
+          include: { voucher: { include: { lines: true } } },
+        }),
+        // BOOKED salary months (own-vehicle drivers filtered below)
+        tx.driverSalary.findMany({
+          where: {
+            ...scope,
+            deletedAt: null,
+            ...(monthWhere ? { month: monthWhere } : {}),
+          },
+        }),
+        tx.driverAdvance.findMany({
+          where: {
+            ...scope,
+            deletedAt: null,
+            ...(dateWhere ? { date: dateWhere } : {}),
+          },
+          select: { driverId: true, vehicleId: true, date: true, amount: true },
+        }),
+        // ALL live settlement rows — what was actually paid/received is
+        // derived per row (screen voucher OR payment-voucher allocations)
+        tx.driverSettlement.findMany({
+          where: { ...scope, deletedAt: null },
+          select: {
+            id: true,
+            driverId: true,
+            vehicleId: true,
+            date: true,
+            settledDate: true,
+            status: true,
+            voucherId: true,
+            amount: true,
+          },
+        }),
+        tx.driverAssignment.findMany(),
+        // urea consumed on own-vehicle trips (driver- and company-borne)
+        tx.trip.findMany({
+          where: {
+            ...scope,
+            deletedAt: null,
+            vehicleId: { in: ownIds },
+            ...(dateWhere ? { tripDate: dateWhere } : {}),
+            ureaAmount: { gt: 0 },
+          },
+          select: { ureaAmount: true },
+        }),
+        // full EMI of vehicle loans on own vehicles, on payment date
+        tx.loanEmi.findMany({
+          where: {
+            deletedAt: null,
+            ...(dateWhere ? { payDate: dateWhere } : {}),
+            loan: {
+              ...scope,
+              deletedAt: null,
+              loanType: "VEHICLE",
+              vehicleId: { in: ownIds },
+            },
+          },
+          select: { total: true },
+        }),
+      ]);
+
+    // live voucher-allocation settlements against the pending/partial rows
+    const settledAlloc = await settledByRef(tx, {
+      ...scope,
+      refTypes: ["DRIVER_SETTLEMENT"],
+      refIds: settlements.filter((s) => !(s.status === "SETTLED" && s.voucherId)).map((s) => s.id),
+    });
+
     return {
       ownIds,
       ownCount: ownIds.length,
       chalans,
       slips,
       heads,
-      headSums,
+      expenseItems,
+      salaries,
       advances,
       settlements,
+      settledAlloc,
       assignments,
+      trips,
       emis,
     };
   });
 
-  const { ownIds, ownCount, chalans, slips, heads, headSums, advances, settlements, assignments, emis } =
-    data;
+  const {
+    ownIds,
+    ownCount,
+    chalans,
+    slips,
+    heads,
+    expenseItems,
+    salaries,
+    advances,
+    settlements,
+    settledAlloc,
+    assignments,
+    trips,
+    emis,
+  } = data;
   const n = (v: unknown) => r2(toNum(String(v ?? 0)));
 
   // ---- FleetOps income (own vehicles) ----
@@ -235,50 +253,46 @@ export default async function VehicleOperationalPnlPage({
 
   const totalVehicleIncome = r2(fleetTotal + slipTotal);
 
-  // ---- vehicle module ledgers, DR = expense / CR = income ----
+  // ---- vehicle expenses: own-vehicle bill shares, split per head ----
+  // a multi-head bill's share splits across its lines in proportion, exactly
+  // like Vehicle 360 — so both screens always tell the same story
   const headName = new Map(heads.map((h) => [h.id, h.name]));
-  const perHead = new Map<string, { debit: number; credit: number }>();
-  for (const g of headSums) {
-    if (!g.accountHeadId) continue;
-    const acc = perHead.get(g.accountHeadId) ?? { debit: 0, credit: 0 };
-    const amt = toNum(String(g._sum.amount ?? 0));
-    if (g.side === "DEBIT") acc.debit = r2(acc.debit + amt);
-    else acc.credit = r2(acc.credit + amt);
-    perHead.set(g.accountHeadId, acc);
+  const perHead = new Map<string, number>();
+  for (const item of expenseItems) {
+    const share = toNum(String(item.amount));
+    if (share <= 0.009) continue;
+    const v = item.voucher;
+    const vTotal = toNum(String(v.amount));
+    const parts =
+      v.lines.length && vTotal > 0
+        ? v.lines.map((l, idx) => ({
+            headId: l.headId,
+            amount:
+              idx === v.lines.length - 1
+                ? r2(
+                    share -
+                      v.lines
+                        .slice(0, -1)
+                        .reduce((sum, x) => sum + r2((share * toNum(String(x.amount))) / vTotal), 0)
+                  )
+                : r2((share * toNum(String(l.amount))) / vTotal),
+          }))
+        : [{ headId: v.headId, amount: share }];
+    for (const p of parts) {
+      if (p.amount <= 0.009) continue;
+      perHead.set(p.headId, r2((perHead.get(p.headId) ?? 0) + p.amount));
+    }
   }
-  const range = [
-    searchParams.date_from ? `date_from=${searchParams.date_from}` : "",
-    searchParams.date_to ? `date_to=${searchParams.date_to}` : "",
-  ]
-    .filter(Boolean)
-    .join("&");
-  const headRows: ReportRow[] = [];
-  let moduleExpense = 0;
-  let moduleIncome = 0;
-  for (const [headId, sums] of Array.from(perHead.entries())) {
-    const balance = r2(sums.debit - sums.credit);
-    if (Math.abs(balance) < 0.009) continue;
-    const isExpense = balance > 0;
-    const net = Math.abs(balance);
-    if (isExpense) moduleExpense = r2(moduleExpense + net);
-    else moduleIncome = r2(moduleIncome + net);
-    headRows.push({
+  const headRows: ReportRow[] = Array.from(perHead.entries())
+    .map(([headId, amount]) => ({
       head: headName.get(headId) ?? "(unknown head)",
-      kind: isExpense ? "EXPENSE" : "INCOME",
-      debit: sums.debit,
-      credit: sums.credit,
-      net,
-      link: `accounts/ledger?party=${encodeURIComponent(`head:${headId}`)}${range ? `&${range}` : ""}`,
-    });
-  }
-  headRows.sort((a, b) =>
-    String(a.kind).localeCompare(String(b.kind)) || String(a.head).localeCompare(String(b.head))
-  );
+      amount,
+    }))
+    .sort((a, b) => Number(b.amount) - Number(a.amount));
+  const vehicleExpTotal = r2(headRows.reduce((sum, rw) => sum + Number(rw.amount), 0));
 
-  // ---- company-driver payments (advances + settled payments, net of
-  // settlement receipts). A driver is a COMPANY driver when the vehicle on
-  // the transaction — or his assignment on that date — is OWN; relative and
-  // broker driver payments never enter this report.
+  // ---- company-driver rule: the vehicle on the transaction — or the
+  // driver's assignment on that date — is OWN
   const ownSet = new Set(ownIds);
   const vehicleAt = (driverId: string, at: Date): string | null => {
     const a = assignments.find(
@@ -288,49 +302,84 @@ export default async function VehicleOperationalPnlPage({
   };
   const isCompanyDriverTxn = (t: { driverId: string; vehicleId: string | null; at: Date }) =>
     t.vehicleId ? ownSet.has(t.vehicleId) : ownSet.has(vehicleAt(t.driverId, t.at) ?? "");
+
+  // ---- driver salary BOOKED (gross) for own-vehicle drivers ----
+  const ownSalaries = salaries.filter((sal) =>
+    isCompanyDriverTxn({
+      driverId: sal.driverId,
+      vehicleId: null,
+      // the assignment in the middle of the salary month decides ownership
+      at: new Date(`${sal.month}-15T00:00:00`),
+    })
+  );
+  const salaryBooked = r2(
+    ownSalaries.reduce(
+      (sum, sal) =>
+        sum +
+        toNum(String(sal.salaryAmount)) +
+        toNum(String(sal.incentive)) +
+        toNum(String(sal.bonus)) +
+        toNum(String(sal.otherAllowance)),
+      0
+    )
+  );
+  // advances adjusted INSIDE those salaries — the advance cash is counted in
+  // the advances line below, so the overlap nets out here (never twice)
+  const advAdjustedInSalary = r2(
+    ownSalaries.reduce((sum, sal) => sum + toNum(String(sal.advanceAdjust)), 0)
+  );
+
+  // ---- driver advances paid (own-vehicle drivers) ----
   const advancePaid = r2(
     advances
       .filter((a) => isCompanyDriverTxn({ driverId: a.driverId, vehicleId: a.vehicleId, at: a.date }))
-      .reduce((s, a) => s + toNum(String(a.amount)), 0)
+      .reduce((sum, a) => sum + toNum(String(a.amount)), 0)
   );
+
+  // ---- driver settlements LIVE: actually paid / received ----
+  // settle-screen rows carry a voucherId for the full amount; rows settled
+  // (fully or partly) through Payment-Voucher allocations count for exactly
+  // what those allocations settled — before this, allocation-settled rows
+  // never appeared here and the report under-counted driver payments
   let settlementPaid = 0;
   let settlementReceived = 0;
   for (const st of settlements) {
     const at = st.settledDate ?? st.date;
+    if (dateWhere) {
+      if (dateWhere.gte && at < dateWhere.gte) continue;
+      if (dateWhere.lte && at > dateWhere.lte) continue;
+    }
     if (!isCompanyDriverTxn({ driverId: st.driverId, vehicleId: st.vehicleId, at })) continue;
     const amt = toNum(String(st.amount));
-    if (amt > 0) settlementPaid = r2(settlementPaid + amt);
-    else settlementReceived = r2(settlementReceived + Math.abs(amt));
+    const settled =
+      st.status === "SETTLED" && st.voucherId
+        ? Math.abs(amt)
+        : Math.min(Math.abs(amt), settledAlloc.get(st.id) ?? 0);
+    if (settled <= 0.009) continue;
+    if (amt > 0) settlementPaid = r2(settlementPaid + settled);
+    else settlementReceived = r2(settlementReceived + settled);
   }
-  const driverPayments = r2(advancePaid + settlementPaid - settlementReceived);
+  const driverTotal = r2(
+    salaryBooked - advAdjustedInSalary + advancePaid + settlementPaid - settlementReceived
+  );
+
+  // ---- urea from own-vehicle trip settlements ----
+  const ureaTotal = r2(trips.reduce((sum, t) => sum + toNum(String(t.ureaAmount)), 0));
 
   // ---- vehicle loan EMIs (full instalment) ----
   const loanExpense = r2(emis.reduce((sum, e) => sum + toNum(String(e.total)), 0));
 
-  const profit = r2(
-    totalVehicleIncome + moduleIncome - moduleExpense - driverPayments - loanExpense
-  );
+  const totalExpenses = r2(vehicleExpTotal + driverTotal + ureaTotal + loanExpense);
+  const profit = r2(totalVehicleIncome - totalExpenses);
 
   const filters: FilterDef[] = [{ type: "daterange", key: "date", label: "Period" }];
   const money = (v: number) => formatMoney(v);
-  const line = (label: string, value: number, opts?: { strong?: boolean; less?: boolean; link?: string }) => (
+  const line = (label: string, value: number, opts?: { strong?: boolean; less?: boolean }) => (
     <div
       key={label}
       className={`flex justify-between py-0.5 ${opts?.strong ? "border-t pt-1 font-semibold" : ""}`}
     >
-      {opts?.link ? (
-        <a
-          href={`/${opts.link}`}
-          target="_blank"
-          rel="noreferrer"
-          className="text-primary underline-offset-2 hover:underline"
-          title="Open this ledger head's complete book (new tab)"
-        >
-          {label}
-        </a>
-      ) : (
-        <span>{label}</span>
-      )}
+      <span>{label}</span>
       <span className="tabular-nums">
         {opts?.less ? "− " : ""}
         {money(Math.abs(value))}
@@ -345,9 +394,10 @@ export default async function VehicleOperationalPnlPage({
         <InfoHint>
           Own vehicles only ({ownCount} in the fleet) — relative and broker vehicles are fully
           excluded. Income is the operational grand total of FleetOps chalans and broker-slip
-          owner side; expenses are every Vehicle-Module ledger (auto-classified by DR/CR, click a
-          head for its book) plus the full EMI of vehicle loans. Head placement follows the
-          P&amp;L Head Mapping (Masters).
+          owner side. Expenses come from the source documents: own-vehicle bill allocations,
+          booked driver salary (own-vehicle drivers, net of salary-adjusted advances), driver
+          advances, LIVE driver settlements (paid / received, voucher allocations included),
+          urea from own-vehicle trip settlements, and full vehicle-loan EMIs.
         </InfoHint>
       </h1>
       <FilterBar filters={filters} />
@@ -358,7 +408,7 @@ export default async function VehicleOperationalPnlPage({
             <CardTitle className="text-sm text-muted-foreground">Total Vehicle Income</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold tabular-nums">
-            {money(r2(totalVehicleIncome + moduleIncome))}
+            {money(totalVehicleIncome)}
           </CardContent>
         </Card>
         <Card>
@@ -366,7 +416,7 @@ export default async function VehicleOperationalPnlPage({
             <CardTitle className="text-sm text-muted-foreground">Total Vehicle Expenses</CardTitle>
           </CardHeader>
           <CardContent className="text-2xl font-bold tabular-nums">
-            {money(r2(moduleExpense + driverPayments + loanExpense))}
+            {money(totalExpenses)}
           </CardContent>
         </Card>
         <Card>
@@ -418,17 +468,7 @@ export default async function VehicleOperationalPnlPage({
               {line("Less: Payment Charge", slip.payment, { less: true })}
               {line("Grand Total Freight (Broker Owner Side)", slipTotal, { strong: true })}
             </div>
-            <div>
-              {line("Total Vehicle Income (freight)", totalVehicleIncome, { strong: true })}
-              {headRows
-                .filter((rw) => rw.kind === "INCOME")
-                .map((rw) =>
-                  line(`Vehicle Module Income: ${rw.head}`, Number(rw.net), {
-                    link: String(rw.link),
-                  })
-                )}
-              {moduleIncome > 0 && line("Total incl. Vehicle Module Income", r2(totalVehicleIncome + moduleIncome), { strong: true })}
-            </div>
+            <div>{line("Total Vehicle Income", totalVehicleIncome, { strong: true })}</div>
           </CardContent>
         </Card>
 
@@ -439,28 +479,38 @@ export default async function VehicleOperationalPnlPage({
           <CardContent className="space-y-3">
             <div>
               <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
-                Vehicle Module Ledgers (DR)
+                Vehicle Expenses (bill allocations)
               </div>
-              {headRows
-                .filter((rw) => rw.kind === "EXPENSE")
-                .map((rw) => line(String(rw.head), Number(rw.net), { link: String(rw.link) }))}
-              {line("Total Vehicle Module Expenses", moduleExpense, { strong: true })}
+              {headRows.slice(0, 12).map((rw) => line(String(rw.head), Number(rw.amount)))}
+              {headRows.length > 12 && (
+                <div className="py-0.5 text-xs text-muted-foreground">
+                  +{headRows.length - 12} more heads — full list in the table below
+                </div>
+              )}
+              {line("Total Vehicle Expenses", vehicleExpTotal, { strong: true })}
             </div>
             <div>
               <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
-                Driver Payments (Company Drivers)
+                Driver Management ({ownSalaries.length} salary month{ownSalaries.length === 1 ? "" : "s"})
               </div>
+              {line("Driver Salary (booked, gross)", salaryBooked)}
+              {line("Less: Advance adjusted in salary", advAdjustedInSalary, { less: true })}
               {line("Driver Advances Paid", advancePaid)}
-              {line("Driver Settlement Payments", settlementPaid)}
-              {line("Less: Settlement Receipts (driver returned)", settlementReceived, { less: true })}
-              {line("Total Driver Payments", driverPayments, { strong: true })}
+              {line("Driver Settlements Paid (live)", settlementPaid)}
+              {line("Less: Settlements Received (driver returned)", settlementReceived, { less: true })}
+              {line("Total Driver Expenses", driverTotal, { strong: true })}
+            </div>
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
+                Urea (Trip Settlements)
+              </div>
+              {line(`Urea on own-vehicle trips (${trips.length} trips)`, ureaTotal)}
             </div>
             <div>
               <div className="mb-1 text-xs font-semibold uppercase text-muted-foreground">
                 Vehicle Loan Expenses
               </div>
               {line(`Vehicle Loan EMIs (${emis.length} instalments, full EMI)`, loanExpense)}
-              {line("Total Vehicle Loan Expenses", loanExpense, { strong: true })}
             </div>
           </CardContent>
         </Card>
@@ -473,10 +523,10 @@ export default async function VehicleOperationalPnlPage({
         <CardContent className="max-w-md text-sm">
           {line("FleetOps Grand Total Freight", fleetTotal)}
           {line("Broker Owner Side Grand Total Freight", slipTotal)}
-          {line("Vehicle Module Income (CR)", moduleIncome)}
-          {line("Vehicle Module Expenses (DR)", moduleExpense, { less: true })}
-          {line("Driver Payments (Company Drivers)", driverPayments, { less: true })}
-          {line("Vehicle Loan Expenses", loanExpense, { less: true })}
+          {line("Vehicle Expenses (bill allocations)", vehicleExpTotal, { less: true })}
+          {line("Driver Expenses (salary + advances + settlements)", driverTotal, { less: true })}
+          {line("Urea (trip settlements)", ureaTotal, { less: true })}
+          {line("Vehicle Loan EMIs", loanExpense, { less: true })}
           <div
             className={`mt-1 flex justify-between border-t pt-1 text-base font-bold ${profit >= 0 ? "text-emerald-600" : "text-destructive"}`}
           >
@@ -487,17 +537,14 @@ export default async function VehicleOperationalPnlPage({
       </Card>
 
       <SimpleReport
-        title="Vehicle-module ledger heads (own vehicles, auto-classified by DR/CR)"
+        title="Vehicle expense heads (own-vehicle bill allocations)"
         columns={[
-          { key: "head", header: "Ledger Head", linkBase: "/", linkParamKey: "link" },
-          { key: "kind", header: "Kind", kind: "badge" },
-          { key: "debit", header: "Debit", kind: "money" },
-          { key: "credit", header: "Credit", kind: "money" },
-          { key: "net", header: "Net", kind: "money" },
+          { key: "head", header: "Ledger Head" },
+          { key: "amount", header: "Own-Vehicle Share", kind: "money" },
         ]}
         rows={headRows}
         fileName="vehicle-operational-pnl-heads"
-        emptyMessage="No vehicle-module ledger activity in this period."
+        emptyMessage="No own-vehicle expense allocations in this period."
       />
     </div>
   );
