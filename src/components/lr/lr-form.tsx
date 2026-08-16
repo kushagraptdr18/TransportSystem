@@ -103,6 +103,8 @@ export interface LrFormProps {
   batchEditing?: boolean;
   /** Batch mode: hands the parent form access so tray rows can be loaded / restored. */
   exposeFormApi?: (api: { getValues: () => LrFormValues; reset: (v: LrFormValues) => void }) => void;
+  /** Dialog mode: called after a successful save instead of navigating to the register. */
+  onSaved?: (lrNo: string) => void;
   isDummy: boolean;
   lrId?: string;
   defaults: LrFormValues;
@@ -367,9 +369,19 @@ export function LrForm(props: LrFormProps) {
     if (props.batchMode && props.onBatchAdd) {
       props.onBatchAdd(payload, structuredClone(values));
       if (!props.batchEditing) {
-        // keep every field for the next LR — bump only the display number
+        // keep route/party/vehicle for the next LR — bump the display number
+        // and blank the per-consignment fields (goods value, e-way, items)
         const n = parseInt(values.lrNo, 10);
         if (!isNaN(n)) setValue("lrNo", String(n + 1));
+        setValue("goodsValue", 0);
+        setValue("ewayBillNo", "");
+        setValue("ewayExpiryText", "");
+        items.replace([emptyLrItem()]);
+        // fresh items: freight re-computes from the rate picked via Rate Setup,
+        // and Charge Wt mirrors Actual Wt again
+        setValue("freight", 0);
+        freightTouched.current = false;
+        chargeWtTouched.current.clear();
       }
       return;
     }
@@ -379,7 +391,8 @@ export function LrForm(props: LrFormProps) {
       const res = await saveLr(payload);
       if (res.ok) {
         toast({ title: `LR ${values.lrNo} saved` });
-        router.push("/lr/register");
+        if (props.onSaved) props.onSaved(values.lrNo);
+        else router.push("/lr/register");
       } else {
         toast({ variant: "destructive", title: res.error });
       }

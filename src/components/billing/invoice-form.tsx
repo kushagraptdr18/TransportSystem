@@ -36,6 +36,7 @@ import { DateInput } from "@/components/data/date-input";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import { PartyCreateDialog } from "@/components/masters/inline-dialogs";
 import {
+  getBillingLrsByIds,
   getPartyAdvanceBalance,
   getPartyBillingDetails,
   getPendingLrsForParty,
@@ -46,6 +47,8 @@ import {
   type InvoiceEditPayload,
   type PartyBillingDetails,
 } from "@/app/(app)/billing/actions";
+import { getLrFormDataById } from "@/app/(app)/lr/actions";
+import { LrForm } from "@/components/lr/lr-form";
 import {
   InvoicePrintView,
   type InvoiceViewData,
@@ -236,6 +239,11 @@ export function InvoiceForm({
     new Set(initial?.lrs.map((l) => l.id) ?? [])
   );
   const [loadingLrs, setLoadingLrs] = React.useState(false);
+  // in-place LR edit from the bill preview (dialog on top of the preview)
+  const [lrEdit, setLrEdit] = React.useState<Awaited<
+    ReturnType<typeof getLrFormDataById>
+  > | null>(null);
+  const [lrEditLoading, setLrEditLoading] = React.useState<string | null>(null);
   const [bulkText, setBulkText] = React.useState("");
   const [bulkBusy, setBulkBusy] = React.useState(false);
   // per-column filters for the pending-LR picker (obdNo = prefix search)
@@ -301,6 +309,36 @@ export function InvoiceForm({
     if (withLrs && initial?.partyId) void loadPending(initial.partyId, initial.lrs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const openLrEdit = async (lrId: string) => {
+    setLrEditLoading(lrId);
+    try {
+      const data = await getLrFormDataById(lrId);
+      if (!data) {
+        toast({ variant: "destructive", title: "LR not found — it may have been deleted" });
+        return;
+      }
+      setLrEdit(data);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to load LR for editing" });
+    } finally {
+      setLrEditLoading(null);
+    }
+  };
+
+  // after an in-place LR edit: re-fetch the selected LRs fresh (they may be
+  // linked to this invoice and absent from the pending query), then reload
+  // the pending list — the open preview re-renders with the updated figures
+  const onLrEdited = async () => {
+    setLrEdit(null);
+    if (!partyId) return;
+    try {
+      const fresh = await getBillingLrsByIds(Array.from(selectedLrIds));
+      await loadPending(partyId, fresh);
+    } catch {
+      toast({ variant: "destructive", title: "Failed to refresh LRs — reload the page" });
+    }
+  };
 
   const toggleLr = (id: string, checked: boolean) => {
     setSelectedLrIds((prev) => {
@@ -1239,15 +1277,15 @@ export function InvoiceForm({
             data={previewData}
             lrActions={(lr) => (
               <span className="flex gap-1">
-                <a
-                  href={`/lr?id=${lr.id}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-primary underline"
-                  title="Edit this LR (opens in a new tab — reload pending LRs after editing)"
+                <button
+                  type="button"
+                  className="text-primary underline disabled:opacity-50"
+                  disabled={lrEditLoading !== null}
+                  title="Edit this LR — the preview updates as soon as you save"
+                  onClick={() => void openLrEdit(lr.id)}
                 >
-                  Edit
-                </a>
+                  {lrEditLoading === lr.id ? "Loading..." : "Edit"}
+                </button>
                 <button
                   type="button"
                   className="text-destructive underline"
@@ -1276,6 +1314,19 @@ export function InvoiceForm({
               {saving ? "Saving..." : "Final Save & Print"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* in-place LR edit — full LR form on top of the preview; saving updates
+          the LR and refreshes the preview without leaving the page */}
+      <Dialog open={!!lrEdit} onOpenChange={(o) => !o && setLrEdit(null)}>
+        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-6xl">
+          <DialogHeader>
+            <DialogTitle>Edit LR {lrEdit?.defaults.lrNo}</DialogTitle>
+          </DialogHeader>
+          {lrEdit && (
+            <LrForm key={lrEdit.lrId} {...lrEdit} onSaved={() => void onLrEdited()} />
+          )}
         </DialogContent>
       </Dialog>
     </div>

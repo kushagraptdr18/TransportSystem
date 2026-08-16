@@ -11,6 +11,7 @@ import { toNum } from "@/lib/utils";
 import { nextLrNumber, syncSequenceTo } from "@/lib/sequences";
 import { stateCodeFromGstin } from "@/lib/calc/gst";
 import { computeLrTotals, itemAmount } from "@/components/lr/lr-calc";
+import { loadLrFormData, type LrFormData } from "./form-data";
 
 const rateBasisSchema = z.enum(["QTY", "ACTUAL_WT", "CHARGE_WT", "FIXED"]);
 const lrTypeSchema = z.enum(["TO_PAY", "TBB", "PAID", "FOC", "CANCELLED", "PAPER_CHANGE"]);
@@ -602,4 +603,20 @@ export async function saveLrBatch(
     }
     return { ok: false, error: err instanceof Error ? err.message : "Batch save failed" };
   }
+}
+
+/**
+ * Full LR-form data for editing an LR inside a dialog (e.g. from the bill
+ * preview) — same payload the /lr edit page loads. Null if the LR is gone.
+ */
+export async function getLrFormDataById(
+  lrId: string
+): Promise<(LrFormData & { isDummy: boolean }) | null> {
+  const data = await loadLrFormData(lrId);
+  if (data.mode !== "edit" || !data.lrId) return null;
+  const session = requireSession();
+  const lr = await withTenant(session.tenantId, (tx) =>
+    tx.lr.findUnique({ where: { id: data.lrId }, select: { isDummy: true } })
+  );
+  return { ...data, isDummy: lr?.isDummy ?? false };
 }

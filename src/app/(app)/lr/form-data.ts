@@ -186,6 +186,11 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
       defaults.ewayBillNo = "";
       defaults.ewayExpiryText = "";
       defaults.printFreight = false; // every new LR defaults to not printing freight
+      // per-consignment cargo starts blank too — the rate comes back from
+      // Rate Setup when a product is picked, and freight recomputes from it
+      defaults.goodsValue = 0;
+      defaults.items = [emptyLrItem()];
+      defaults.freight = 0;
     }
 
     const isCopy = Boolean(existing && copyId && !editId);

@@ -198,6 +198,23 @@ export async function getPendingLrsForParty(
   });
 }
 
+/**
+ * Fresh billing rows for specific LRs by id, regardless of pending status —
+ * used to refresh LRs already selected on a bill after an in-place LR edit.
+ */
+export async function getBillingLrsByIds(ids: string[]): Promise<BillingPendingLr[]> {
+  const session = requireSession();
+  if (ids.length === 0) return [];
+  return withTenant(session.tenantId, async (tx) => {
+    const lrs = await tx.lr.findMany({
+      where: { id: { in: ids }, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      include: { items: true },
+      orderBy: { lrDate: "asc" },
+    });
+    return decorateLrs(tx, lrs);
+  });
+}
+
 export interface BulkLrError {
   lrNo: string;
   reason: string;
