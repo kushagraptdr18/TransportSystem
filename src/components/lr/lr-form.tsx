@@ -62,8 +62,6 @@ export interface LrFormValues {
   consignorId: string;
   consigneeId: string;
   billToId: string;
-  consignorGstText: string;
-  consigneeGstText: string;
   vehicleId: string;
   vehicleText: string;
   invoiceNo: string;
@@ -255,8 +253,8 @@ export function LrForm(props: LrFormProps) {
     otherCharge: toNum(v.otherCharge),
     gstApplicable: v.gstApplicable,
     gstPct: props.gstPct,
-    supplierStateCode: stateCodeFromGstin(v.consignorGstText || consignorDetail?.gstin),
-    recipientStateCode: stateCodeFromGstin(v.consigneeGstText || consigneeDetail?.gstin),
+    supplierStateCode: stateCodeFromGstin(consignorDetail?.gstin),
+    recipientStateCode: stateCodeFromGstin(consigneeDetail?.gstin),
     advance: toNum(v.advance),
   });
 
@@ -526,9 +524,6 @@ export function LrForm(props: LrFormProps) {
               />
             </Field>
             <PartyInfo detail={consignorDetail} />
-            <Field label="Consignor GSTIN (override)">
-              <Input {...register("consignorGstText")} className={inputCls} placeholder={consignorDetail?.gstin || "Optional"} />
-            </Field>
           </div>
           <div className="space-y-2">
             <Field label="Consignee *">
@@ -554,9 +549,6 @@ export function LrForm(props: LrFormProps) {
               />
             </Field>
             <PartyInfo detail={consigneeDetail} />
-            <Field label="Consignee GSTIN (override)">
-              <Input {...register("consigneeGstText")} className={inputCls} placeholder={consigneeDetail?.gstin || "Optional"} />
-            </Field>
           </div>
           <div className="space-y-2">
             <Field label="Billed To">
