@@ -9,6 +9,10 @@ import {
   InvoicePrintView,
   type InvoiceViewData,
 } from "@/components/billing/invoice-print-view";
+import {
+  ManualBillPrintView,
+  type ManualBillViewData,
+} from "@/components/billing/manual-bill-print-view";
 import { PrintToolbar } from "./print-toolbar";
 
 export const dynamic = "force-dynamic";
@@ -166,6 +170,61 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
       : null,
   };
 
+  // Manual bill prints in the firm's own hand-bill format (landscape replica)
+  const manualData: ManualBillViewData | null =
+    invoice.kind === "MANUAL"
+      ? {
+          billNo: invoice.invoiceNo,
+          billDate: formatDate(invoice.invoiceDate),
+          firm: {
+            name: firm?.name ?? "",
+            regdOffice: [firm?.address1, firm?.address2].filter(Boolean).join(", "),
+            mobile: firm?.mobile ?? "",
+            pan: firm?.pan ?? "",
+            msmeNo: firm?.msmeNo ?? "",
+            logoUrl: firmImageUrl(firm, "logo"),
+            sealUrl: firmImageUrl(firm, "seal"),
+          },
+          party: {
+            name: party?.name ?? "",
+            address: [party?.address1, party?.address2].filter(Boolean).join(", "),
+          },
+          rows: invoice.lines.map((l) => ({
+            cnNo: l.cnNo ?? "",
+            date: l.lineDate ? formatDate(l.lineDate) : "",
+            loading: l.loadingStation ?? "",
+            delivery: l.deliveryStation ?? "",
+            invoiceNo: l.invoiceNo ?? "",
+            vehicleNo: l.vehicleNo ?? "",
+            material: l.productName,
+            deliveryDate: l.deliveryDate ? formatDate(l.deliveryDate) : "",
+            wt: toNum(l.wt),
+            gtWt: toNum(l.gtWt),
+            rate: toNum(l.rate),
+            amount: toNum(l.total),
+          })),
+          totalFreight: toNum(invoice.total),
+          otherCharge: round2(toNum(invoice.grandTotal) - toNum(invoice.total)),
+          cgstAmt: toNum(invoice.cgstAmt),
+          sgstAmt: toNum(invoice.sgstAmt),
+          igstAmt: toNum(invoice.igstAmt),
+          totalBilled: toNum(invoice.netTotal),
+          rcmNote: gstTotal === 0,
+          bank: bank
+            ? {
+                // the account is the firm's own — the bank party holds its details
+                accountName: firm?.name ?? "",
+                account: bank.bankAccount ?? "",
+                bankName: bank.bankName ?? bank.name,
+                ifsc: bank.bankIfsc ?? "",
+                branch: bank.bankBranch ?? "",
+              }
+            : null,
+        }
+      : null;
+
+  const landscape = invoice.lrs.length > 0 || invoice.kind === "MANUAL";
+
   return (
     // no padding when printing — every millimetre of height counts toward
     // keeping the bill on one sheet
@@ -173,15 +232,15 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
       {/*
         Landscape, scoped to this route. @page cannot be scoped by selector, so
         putting this in globals.css would rotate the chalan, LR, trip sheet and
-        broker slip prints too. Only the LR-based bill needs it — the Manual /
-        GST layout below has six columns and stays portrait.
+        broker slip prints too. The LR-based bill and the manual hand-bill are
+        landscape — the GST layout below has six columns and stays portrait.
       */}
-      {invoice.lrs.length > 0 && (
-        <style>{"@page { size: A4 landscape; margin: 8mm; }"}</style>
-      )}
-      <PrintToolbar wide={invoice.lrs.length > 0} />
+      {landscape && <style>{"@page { size: A4 landscape; margin: 8mm; }"}</style>}
+      <PrintToolbar wide={landscape} />
       {invoice.lrs.length > 0 ? (
         <InvoicePrintView data={viewData} />
+      ) : manualData ? (
+        <ManualBillPrintView data={manualData} />
       ) : (
         /* lines-based bills (Manual / GST): simple generic layout */
         <div className="mx-auto max-w-[190mm] border border-black p-4 text-sm">

@@ -121,6 +121,21 @@ interface LineRow {
   rate: number;
   discountPct: number;
   gstPct: number;
+  // Manual bill consignment columns (printed in the firm's own bill format)
+  cnNo: string;
+  lineDateText: string; // dd/mm/yyyy
+  loadingStation: string;
+  deliveryStation: string;
+  invoiceNo: string;
+  vehicleNo: string;
+  deliveryDateText: string;
+  wt: number;
+  gtWt: number;
+}
+
+/** Manual bill row: freight = GT WT × Rate; a weightless row bills Qty × Rate. */
+function manualLineAmount(l: LineRow): number {
+  return round2(l.gtWt > 0 ? l.gtWt * l.rate : l.qty * l.rate);
 }
 
 const KIND_TITLES: Record<InvoiceKind, string> = {
@@ -265,7 +280,27 @@ export function InvoiceForm({
   const [charges, setCharges] = React.useState<ChargeRow[]>(
     initial?.charges.map((c) => ({ ...c })) ?? []
   );
-  const [lines, setLines] = React.useState<LineRow[]>(initial?.lines.map((l) => ({ ...l })) ?? []);
+  const [lines, setLines] = React.useState<LineRow[]>(
+    initial?.lines.map((l) => ({
+      productName: l.productName,
+      description: l.description,
+      uom: l.uom,
+      hsnCode: l.hsnCode,
+      qty: l.qty,
+      rate: l.rate,
+      discountPct: l.discountPct,
+      gstPct: l.gstPct,
+      cnNo: l.cnNo,
+      lineDateText: isoToText(l.lineDate),
+      loadingStation: l.loadingStation,
+      deliveryStation: l.deliveryStation,
+      invoiceNo: l.invoiceNo,
+      vehicleNo: l.vehicleNo,
+      deliveryDateText: isoToText(l.deliveryDate),
+      wt: l.wt,
+      gtWt: l.gtWt,
+    })) ?? []
+  );
 
   const [partyDetail, setPartyDetail] = React.useState<PartyBillingDetails | null>(null);
   const partyStateCode = partyDetail?.stateCode || null;
@@ -396,7 +431,25 @@ export function InvoiceForm({
   const addLine = () =>
     setLines((l) => [
       ...l,
-      { productName: "", description: "", uom: "", hsnCode: "", qty: 1, rate: 0, discountPct: 0, gstPct: 0 },
+      {
+        productName: "",
+        description: "",
+        uom: "",
+        hsnCode: "",
+        qty: 1,
+        rate: 0,
+        discountPct: 0,
+        gstPct: 0,
+        cnNo: "",
+        lineDateText: "",
+        loadingStation: "",
+        deliveryStation: "",
+        invoiceNo: "",
+        vehicleNo: "",
+        deliveryDateText: "",
+        wt: 0,
+        gtWt: 0,
+      },
     ]);
   const updateLine = (idx: number, patch: Partial<LineRow>) =>
     setLines((l) => l.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
@@ -468,7 +521,7 @@ export function InvoiceForm({
   } else {
     totals = computeInvoice({
       lrAmounts:
-        kind === "MANUAL" ? lines.map((l) => round2(l.qty * l.rate)) : selectedLrs.map((l) => l.amount),
+        kind === "MANUAL" ? lines.map(manualLineAmount) : selectedLrs.map((l) => l.amount),
       extraCharges: charges.map((c) => c.amount),
       // RCM basis: tax liability is on the recipient — no GST added to the bill
       gstApplicable: gstApplicable && !rcmActive,
@@ -531,7 +584,15 @@ export function InvoiceForm({
               .filter((c) => c.chargeType.trim() || c.amount !== 0)
               .map((c) => ({ ...c, chargeType: c.chargeType.trim() || "OTHER" }))
           : [],
-        lines: withLines ? lines.filter((l) => l.productName.trim()) : [],
+        lines: withLines
+          ? lines
+              .filter((l) => l.productName.trim())
+              .map((l) => ({
+                ...l,
+                lineDate: textToIso(l.lineDateText) || null,
+                deliveryDate: textToIso(l.deliveryDateText) || null,
+              }))
+          : [],
         advance,
         vehicleText,
         placeOfSupply,
@@ -1105,7 +1166,7 @@ export function InvoiceForm({
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center justify-between text-base">
-              <span>Bill Lines</span>
+              <span>{kind === "MANUAL" ? "Bill Rows — printed as-is on the bill" : "Bill Lines"}</span>
               <Button type="button" variant="outline" size="sm" onClick={addLine}>
                 <Plus className="h-3.5 w-3.5" /> Add line
               </Button>
@@ -1113,7 +1174,125 @@ export function InvoiceForm({
           </CardHeader>
           <CardContent className="space-y-2">
             {lines.length === 0 && <p className="text-sm text-muted-foreground">No lines added.</p>}
-            {lines.map((l, idx) => {
+            {kind === "MANUAL" && lines.length > 0 && (
+              <div className="overflow-x-auto">
+                <div className="min-w-[1500px] space-y-1">
+                  <div className="grid grid-cols-[90px_120px_150px_150px_140px_120px_1fr_120px_85px_85px_95px_110px_36px] gap-1 px-1 text-xs font-medium text-muted-foreground">
+                    <div>C. Note</div>
+                    <div>Date</div>
+                    <div>Loading Station</div>
+                    <div>Delivery Station</div>
+                    <div>Invoice No</div>
+                    <div>Vehicle No</div>
+                    <div>Material *</div>
+                    <div>Delivery Date</div>
+                    <div className="text-right">WT</div>
+                    <div className="text-right">GT WT</div>
+                    <div className="text-right">Rate</div>
+                    <div className="text-right">Amount</div>
+                    <div />
+                  </div>
+                  {lines.map((l, idx) => (
+                    <div
+                      key={idx}
+                      className="grid grid-cols-[90px_120px_150px_150px_140px_120px_1fr_120px_85px_85px_95px_110px_36px] items-center gap-1 px-1"
+                    >
+                      <Input
+                        className="h-8"
+                        value={l.cnNo}
+                        onChange={(e) => updateLine(idx, { cnNo: e.target.value })}
+                      />
+                      <DateInput
+                        value={l.lineDateText}
+                        onChange={(t) => updateLine(idx, { lineDateText: t })}
+                        className="h-8"
+                      />
+                      <Input
+                        className="h-8"
+                        value={l.loadingStation}
+                        onChange={(e) => updateLine(idx, { loadingStation: e.target.value })}
+                      />
+                      <Input
+                        className="h-8"
+                        value={l.deliveryStation}
+                        onChange={(e) => updateLine(idx, { deliveryStation: e.target.value })}
+                      />
+                      <Input
+                        className="h-8"
+                        value={l.invoiceNo}
+                        onChange={(e) => updateLine(idx, { invoiceNo: e.target.value })}
+                      />
+                      <Input
+                        className="h-8"
+                        value={l.vehicleNo}
+                        onChange={(e) => updateLine(idx, { vehicleNo: e.target.value })}
+                      />
+                      <Input
+                        className="h-8"
+                        value={l.productName}
+                        onChange={(e) => updateLine(idx, { productName: e.target.value })}
+                        placeholder="e.g. RHS GRADE YST"
+                      />
+                      <DateInput
+                        value={l.deliveryDateText}
+                        onChange={(t) => updateLine(idx, { deliveryDateText: t })}
+                        className="h-8"
+                      />
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        className="h-8 text-right tabular-nums"
+                        value={Number.isFinite(l.wt) ? String(l.wt) : ""}
+                        onChange={(e) => updateLine(idx, { wt: toNum(e.target.value) })}
+                        onFocus={(e) => e.target.select()}
+                      />
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        className="h-8 text-right tabular-nums"
+                        value={Number.isFinite(l.gtWt) ? String(l.gtWt) : ""}
+                        onChange={(e) => updateLine(idx, { gtWt: toNum(e.target.value) })}
+                        onFocus={(e) => e.target.select()}
+                      />
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        className="h-8 text-right tabular-nums"
+                        value={Number.isFinite(l.rate) ? String(l.rate) : ""}
+                        onChange={(e) => updateLine(idx, { rate: toNum(e.target.value) })}
+                        onFocus={(e) => e.target.select()}
+                      />
+                      <div className="flex h-8 items-center justify-end rounded-md border bg-muted/50 px-2 text-sm tabular-nums">
+                        {formatMoney(manualLineAmount(l))}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive"
+                        onClick={() => removeLine(idx)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  <div className="flex justify-end gap-4 px-1 pt-1 text-sm tabular-nums">
+                    <span className="text-xs text-muted-foreground">
+                      Amount = GT WT × Rate (no weight → Rate as lumpsum × Qty)
+                    </span>
+                    <span className="font-medium">
+                      Total Freight:{" "}
+                      {formatMoney(round2(lines.reduce((s, l) => s + manualLineAmount(l), 0)))}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {kind !== "MANUAL" &&
+            lines.map((l, idx) => {
               const lineTotal = round2(l.qty * l.rate);
               const taxable = round2(lineTotal * (1 - l.discountPct / 100));
               return (

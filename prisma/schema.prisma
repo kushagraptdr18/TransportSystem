@@ -1151,6 +1151,17 @@ model InvoiceLine {
   description  String?
   uom          String?
   hsnCode      String?
+  // Manual-bill consignment columns (kind = MANUAL): one row per consignment
+  // note, typed by hand and printed in the firm's own bill format
+  cnNo            String?
+  lineDate        DateTime?
+  loadingStation  String?
+  deliveryStation String?
+  invoiceNo       String?
+  vehicleNo       String?
+  deliveryDate    DateTime?
+  wt              Decimal   @default(0) @db.Decimal(12, 3)
+  gtWt            Decimal   @default(0) @db.Decimal(12, 3)
   qty          Decimal @default(0) @db.Decimal(12, 3)
   rate         Decimal @default(0) @db.Decimal(12, 2)
   total        Decimal @default(0) @db.Decimal(14, 2)

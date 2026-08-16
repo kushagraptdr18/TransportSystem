@@ -295,7 +295,22 @@ const lineSchema = z.object({
   rate: z.number(),
   discountPct: z.number().default(0),
   gstPct: z.number().default(0),
+  // Manual bill consignment columns (kind = MANUAL)
+  cnNo: z.string().optional(),
+  lineDate: z.string().nullable().optional(), // ISO yyyy-mm-dd
+  loadingStation: z.string().optional(),
+  deliveryStation: z.string().optional(),
+  invoiceNo: z.string().optional(),
+  vehicleNo: z.string().optional(),
+  deliveryDate: z.string().nullable().optional(),
+  wt: z.number().default(0),
+  gtWt: z.number().default(0),
 });
+
+/** Manual bill row: freight = GT WT × Rate; a weightless row bills Qty × Rate. */
+function manualLineTotal(l: { qty: number; rate: number; gtWt?: number }): number {
+  return round2((l.gtWt ?? 0) > 0 ? (l.gtWt ?? 0) * l.rate : l.qty * l.rate);
+}
 
 const invoiceSchema = z.object({
   id: z.string().optional(),
@@ -427,22 +442,14 @@ export async function saveInvoice(
         balance: number;
       };
       let tcsAmt = 0;
-      let computedLines: {
-        productName: string;
-        description?: string;
-        uom?: string;
-        hsnCode?: string;
-        qty: number;
-        rate: number;
+      let computedLines: (z.infer<typeof lineSchema> & {
         total: number;
-        discountPct: number;
         taxableValue: number;
-        gstPct: number;
         cgstAmt: number;
         sgstAmt: number;
         igstAmt: number;
         amount: number;
-      }[] = [];
+      })[] = [];
 
       if (data.kind === "GST") {
         computedLines = data.lines.map((l) => {
@@ -486,7 +493,7 @@ export async function saveInvoice(
       } else {
         const baseAmounts =
           data.kind === "MANUAL"
-            ? data.lines.map((l) => round2(l.qty * l.rate))
+            ? data.lines.map(manualLineTotal)
             : lrs.map((lr) => toNum(String(lr.total)));
         // RCM basis (Full Truck, GST-unregistered): tax liability shifts to the
         // recipient, so no GST is added on the bill itself
@@ -503,7 +510,7 @@ export async function saveInvoice(
         });
         if (data.kind === "MANUAL") {
           computedLines = data.lines.map((l) => {
-            const total = round2(l.qty * l.rate);
+            const total = manualLineTotal(l);
             return {
               ...l,
               total,
@@ -643,6 +650,15 @@ export async function saveInvoice(
             sgstAmt: l.sgstAmt,
             igstAmt: l.igstAmt,
             amount: l.amount,
+            cnNo: l.cnNo || null,
+            lineDate: l.lineDate ? new Date(l.lineDate) : null,
+            loadingStation: l.loadingStation || null,
+            deliveryStation: l.deliveryStation || null,
+            invoiceNo: l.invoiceNo || null,
+            vehicleNo: l.vehicleNo || null,
+            deliveryDate: l.deliveryDate ? new Date(l.deliveryDate) : null,
+            wt: l.wt ?? 0,
+            gtWt: l.gtWt ?? 0,
           })),
         });
       }
@@ -841,6 +857,15 @@ export interface InvoiceEditPayload {
     rate: number;
     discountPct: number;
     gstPct: number;
+    cnNo: string;
+    lineDate: string | null;
+    loadingStation: string;
+    deliveryStation: string;
+    invoiceNo: string;
+    vehicleNo: string;
+    deliveryDate: string | null;
+    wt: number;
+    gtWt: number;
   }[];
 }
 
@@ -898,6 +923,15 @@ export async function getInvoiceForEdit(id: string): Promise<InvoiceEditPayload 
         rate: toNum(String(l.rate)),
         discountPct: toNum(String(l.discountPct)),
         gstPct: toNum(String(l.gstPct)),
+        cnNo: l.cnNo ?? "",
+        lineDate: l.lineDate ? l.lineDate.toISOString() : null,
+        loadingStation: l.loadingStation ?? "",
+        deliveryStation: l.deliveryStation ?? "",
+        invoiceNo: l.invoiceNo ?? "",
+        vehicleNo: l.vehicleNo ?? "",
+        deliveryDate: l.deliveryDate ? l.deliveryDate.toISOString() : null,
+        wt: toNum(String(l.wt)),
+        gtWt: toNum(String(l.gtWt)),
       })),
     };
   });
