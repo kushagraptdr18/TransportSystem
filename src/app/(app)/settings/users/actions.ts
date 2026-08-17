@@ -31,6 +31,10 @@ export async function saveUser(input: unknown): Promise<ActionResult> {
   if (!data.id && !data.password?.trim()) {
     return { ok: false, error: "Password is required for a new user." };
   }
+  // only an OWNER may hand out the OWNER role
+  if (data.role === "OWNER" && session.role !== "OWNER") {
+    return { ok: false, error: "Only an Owner may assign the Owner role." };
+  }
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
       const values: Record<string, unknown> = {
@@ -44,6 +48,25 @@ export async function saveUser(input: unknown): Promise<ActionResult> {
       }
       if (data.id) {
         const before = await tx.user.findUniqueOrThrow({ where: { id: data.id } });
+        // an ADMIN can never touch an OWNER account (edit, password reset,
+        // role change or deactivation) — that would let an admin hijack or
+        // silence the tenant's owner
+        if (before.role === "OWNER" && session.role !== "OWNER") {
+          throw new Error("Only an Owner may modify an Owner account.");
+        }
+        // the tenant must always keep at least one active OWNER
+        if (
+          before.role === "OWNER" &&
+          before.isActive &&
+          (data.role !== "OWNER" || !data.isActive)
+        ) {
+          const otherOwners = await tx.user.count({
+            where: { role: "OWNER", isActive: true, id: { not: before.id } },
+          });
+          if (otherOwners === 0) {
+            throw new Error("Cannot demote or deactivate the last active Owner.");
+          }
+        }
         const row = await tx.user.update({ where: { id: data.id }, data: values });
         await audit(tx, session, {
           entity: "User",
@@ -91,6 +114,19 @@ export async function deleteUser(id: string): Promise<ActionResult> {
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.user.findUniqueOrThrow({ where: { id } });
+      // an ADMIN can never deactivate an OWNER account
+      if (before.role === "OWNER" && session.role !== "OWNER") {
+        throw new Error("Only an Owner may deactivate an Owner account.");
+      }
+      // the tenant must always keep at least one active OWNER
+      if (before.role === "OWNER" && before.isActive) {
+        const otherOwners = await tx.user.count({
+          where: { role: "OWNER", isActive: true, id: { not: before.id } },
+        });
+        if (otherOwners === 0) {
+          throw new Error("Cannot deactivate the last active Owner.");
+        }
+      }
       await tx.user.update({ where: { id }, data: { isActive: false } });
       await audit(tx, session, {
         entity: "User",

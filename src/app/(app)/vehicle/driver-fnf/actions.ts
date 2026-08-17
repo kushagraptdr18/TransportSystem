@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
@@ -66,10 +67,12 @@ export async function getFnfPreview(driverId: string): Promise<FnfPreview | null
       tx.driverFnf.findFirst({ where: { driverId, deletedAt: null } }),
     ]);
     // +/- rows net of what Payment/Receipt vouchers already settled — the
-    // preview must show the LIVE balance, not the recorded one
+    // preview must show the LIVE balance, not the recorded one. The pending
+    // rows span financial years, so the allocations must too (fyId: null) —
+    // an FY-scoped lookup made last year's payments invisible here.
     const settPaid = await settledByRef(tx, {
       firmId: session.firmId,
-      fyId: session.fyId,
+      fyId: null,
       refTypes: ["DRIVER_SETTLEMENT"],
       refIds: settlements.map((s) => s.id),
     });
@@ -124,12 +127,14 @@ export async function finalizeDriverFnf(
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const driver = await tx.driver.findFirst({ where: { id: d.driverId, deletedAt: null } });
+      const driver = await tx.driver.findFirst({
+        where: { id: d.driverId, firmId: session.firmId, deletedAt: null },
+      });
       if (!driver?.partyId) return { ok: false as const, error: "Driver (ledger party) not found" };
 
-      // one final settlement per driver, ever
+      // one final settlement per driver, ever (within the firm)
       const existing = await tx.driverFnf.findFirst({
-        where: { driverId: d.driverId, deletedAt: null },
+        where: { driverId: d.driverId, firmId: session.firmId, deletedAt: null },
       });
       if (existing) {
         return {
@@ -165,10 +170,12 @@ export async function finalizeDriverFnf(
       );
       const advancePending = round2(advances.reduce((s, r) => s + toNum(String(r.amount)), 0));
       // LIVE +/- balance: rows already (partly) settled by voucher allocations
-      // count only for their remainder — never twice
+      // count only for their remainder — never twice. The pending rows are not
+      // FY-scoped, so neither may the allocations be (fyId: null): a voucher
+      // from last FY settled the row just as finally as one from this FY.
       const settPaid = await settledByRef(tx, {
         firmId: session.firmId,
-        fyId: session.fyId,
+        fyId: null,
         refTypes: ["DRIVER_SETTLEMENT"],
         refIds: settlements.map((s) => s.id),
       });
@@ -405,6 +412,10 @@ export async function finalizeDriverFnf(
       return { ok: true as const, settlementNo, finalPayable };
     });
   } catch (e) {
+    // unique(driverId): two concurrent F&Fs for one driver — the second loses
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return { ok: false, error: "A final settlement already exists for this driver." };
+    }
     return { ok: false, error: e instanceof Error ? e.message : "Settlement failed" };
   }
 }

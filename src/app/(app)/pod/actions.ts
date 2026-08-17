@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
@@ -60,6 +61,7 @@ export interface PodChalanOption {
  */
 export async function getPendingBalanceChalans(): Promise<PodChalanOption[]> {
   const session = requireSession();
+  await authorize(session, "pod", "view");
   return withTenant(session.tenantId, async (tx) => {
     const chalans = await tx.chalan.findMany({
       where: {
@@ -102,6 +104,7 @@ export async function getPendingBalanceChalans(): Promise<PodChalanOption[]> {
 /** LRs on a chalan that still need a POD. */
 export async function getChalanPodLrs(chalanId: string): Promise<PodPendingLr[]> {
   const session = requireSession();
+  await authorize(session, "pod", "view");
   const lrs = await withTenant(session.tenantId, (tx) =>
     tx.lr.findMany({
       where: {
@@ -122,6 +125,7 @@ export async function getChalanPodLrs(chalanId: string): Promise<PodPendingLr[]>
 /** LRs on a vehicle that have no POD yet. */
 export async function getVehiclePendingPodLrs(vehicleId: string): Promise<PodPendingLr[]> {
   const session = requireSession();
+  await authorize(session, "pod", "view");
   const lrs = await withTenant(session.tenantId, (tx) =>
     tx.lr.findMany({
       where: {
@@ -181,6 +185,7 @@ export async function findLrForPod(
   lrNo: string
 ): Promise<{ ok: true; lr: PodPendingLr } | { ok: false; error: string; alreadyPoded?: boolean }> {
   const session = requireSession();
+  await authorize(session, "pod", "view");
   const lr = await withTenant(session.tenantId, (tx) =>
     tx.lr.findFirst({
       where: {
@@ -241,6 +246,11 @@ const podBatchSchema = z.object({
 
 const MAX_SIZE = 10 * 1024 * 1024;
 
+/** Thrown inside the batch transaction so ANY line failure rolls back the
+ *  whole batch — returning an error object from within `withTenant` would
+ *  commit the lines already written. */
+class PodBatchError extends Error {}
+
 export async function savePodBatch(
   input: unknown
 ): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
@@ -272,12 +282,20 @@ export async function savePodBatch(
           where: { id: line.lrId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
           include: { items: true, pods: true },
         });
-        if (!lr) return { ok: false as const, error: "LR not found." };
+        if (!lr) throw new PodBatchError("LR not found.");
+        // same lifecycle guards as findLrForPod — the save path must never
+        // accept an LR the search path would refuse
+        if (lr.lrType === "CANCELLED") throw new PodBatchError(`LR ${lr.lrNo} is cancelled.`);
+        if (lr.lrType === "PAPER_CHANGE") {
+          throw new PodBatchError(`LR ${lr.lrNo} is a paper-change LR — not operational.`);
+        }
+        if (lr.status === "PENDING") {
+          throw new PodBatchError(
+            `LR ${lr.lrNo} has no chalan yet — create the chalan first.`
+          );
+        }
         if (lr.pods.length > 0) {
-          return {
-            ok: false as const,
-            error: `POD for LR ${lr.lrNo} has already been uploaded`,
-          };
+          throw new PodBatchError(`POD for LR ${lr.lrNo} has already been uploaded`);
         }
         const actualWt = lr.items.reduce((s, it) => s + toNum(String(it.actualWt)), 0);
         const recWt = line.recWt ?? null;
@@ -286,31 +304,43 @@ export async function savePodBatch(
         // one docNo covers the batch; DB uniqueness on docNo requires a suffix
         // for the 2nd row onwards of a multi-LR batch
         const docNo = i === 0 ? data.docNo : `${data.docNo}-${i + 1}`;
-        const pod = await tx.pod.create({
-          data: {
-            tenantId: session.tenantId,
-            firmId: session.firmId,
-            fyId: session.fyId,
-            docNo,
-            docDate: new Date(data.docDate),
-            sourceType: data.sourceType,
-            lrId: lr.id,
-            refNo: data.refNo || null,
-            vehicleId: data.vehicleId || lr.vehicleId,
-            unloadDate: line.unloadDate ? new Date(line.unloadDate) : null,
-            ackNo: line.ackNo || null,
-            actualWt,
-            recWt,
-            shortageWt,
-            poNumber: line.poNumber || null,
-            gateEntryNo: line.gateEntryNo || null,
-            filePath: line.filePath || null,
-            fileSize: line.fileSize ?? null,
-            remarks: line.remarks || null,
-            status: "COMPLETED",
-            createdById: session.userId,
-          },
-        });
+        const pod = await tx.pod
+          .create({
+            data: {
+              tenantId: session.tenantId,
+              firmId: session.firmId,
+              fyId: session.fyId,
+              docNo,
+              docDate: new Date(data.docDate),
+              sourceType: data.sourceType,
+              lrId: lr.id,
+              refNo: data.refNo || null,
+              vehicleId: data.vehicleId || lr.vehicleId,
+              unloadDate: line.unloadDate ? new Date(line.unloadDate) : null,
+              ackNo: line.ackNo || null,
+              actualWt,
+              recWt,
+              shortageWt,
+              poNumber: line.poNumber || null,
+              gateEntryNo: line.gateEntryNo || null,
+              filePath: line.filePath || null,
+              fileSize: line.fileSize ?? null,
+              remarks: line.remarks || null,
+              status: "COMPLETED",
+              createdById: session.userId,
+            },
+          })
+          .catch((e) => {
+            // Pod_lrId_key: a concurrent save won the race for this LR
+            if (
+              e instanceof Prisma.PrismaClientKnownRequestError &&
+              e.code === "P2002" &&
+              String(e.meta?.target ?? "").includes("lrId")
+            ) {
+              throw new PodBatchError(`POD already exists for LR ${lr.lrNo}`);
+            }
+            throw e;
+          });
         await tx.lr.update({
           where: { id: lr.id },
           data: {
@@ -337,6 +367,8 @@ export async function savePodBatch(
       return { ok: true as const, ids };
     });
   } catch (err) {
+    // any line failure lands here and the whole batch has rolled back
+    if (err instanceof PodBatchError) return { ok: false, error: err.message };
     const msg = err instanceof Error ? err.message : "Save failed";
     if (msg.includes("Unique constraint")) {
       return { ok: false, error: `POD document number ${data.docNo} already exists.` };
@@ -430,6 +462,8 @@ export async function deletePod(
       }
       await tx.pod.delete({ where: { id } });
       if (pod.lrId) {
+        // Pod.lrId is unique, so this was the LR's ONLY POD — resetting the
+        // status unconditionally is safe
         await tx.lr.update({ where: { id: pod.lrId }, data: { status: "ON_CHALAN" } });
       }
       await audit(tx, session, { entity: "Pod", entityId: id, action: "DELETE", before: pod });

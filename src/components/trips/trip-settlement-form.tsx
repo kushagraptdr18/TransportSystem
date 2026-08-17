@@ -442,6 +442,10 @@ export function TripSettlementForm({
         // company urea is regenerated server-side; only the driver-borne case
         // needs booking here, or the two would stack
         if (ureaType === "DRIVER") push("UREA", ureaAmount, "Actual urea (auto)");
+        // LOAD-BEARING remark: these rupees come from the vehicle expense
+        // REGISTER, which the vehicle P&L and the 360° trip summary already
+        // sweep — both exclude trip-expense rows carrying exactly this remark
+        // so the money counts once. Change it there too or it doubles again.
         push("MISC", opExp.total, "Other operating expenses (auto)");
         push("MISC", roadBill, "Road bills");
         push("DRIVER_BATA", fooding, "Fooding");

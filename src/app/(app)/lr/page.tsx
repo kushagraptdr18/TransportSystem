@@ -15,7 +15,7 @@ export default async function LrEntryPage({
       <h1 className="text-xl font-semibold">
         LR Entry{data.mode === "edit" ? ` — ${data.defaults.lrNo}` : ""}
       </h1>
-      <LrForm key={data.lrId ?? "new"} {...data} isDummy={false} />
+      <LrForm key={data.lrId ?? "new"} {...data} isDummy={data.isDummy} />
     </div>
   );
 }

@@ -18,8 +18,9 @@ export default async function ChalanPrintPage({
   const copies = Math.min(3, Math.max(1, parseInt(searchParams.copies ?? "1", 10) || 1));
 
   const data = await withTenant(session.tenantId, async (tx) => {
+    // firm scoped: another firm's chalan must never print under this session
     const chalan = await tx.chalan.findFirst({
-      where: { id: params.id, deletedAt: null },
+      where: { id: params.id, firmId: session.firmId, deletedAt: null },
       include: {
         lrs: { include: { lr: { include: { items: true } } } },
         advances: true,

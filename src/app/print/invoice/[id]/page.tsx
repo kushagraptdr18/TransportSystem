@@ -22,7 +22,7 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const invoice = await tx.invoice.findFirst({
-      where: { id: params.id, deletedAt: null },
+      where: { id: params.id, firmId: session.firmId, deletedAt: null },
       include: {
         lrs: { include: { lr: { include: { items: true, pods: true } } } },
         charges: true,
@@ -63,6 +63,8 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
   const gstTotal = round2(
     toNum(invoice.cgstAmt) + toNum(invoice.sgstAmt) + toNum(invoice.igstAmt)
   );
+  // GST-kind totals build up from the discounted taxable value of the lines
+  const linesTaxable = round2(invoice.lines.reduce((s, l) => s + toNum(l.taxableValue), 0));
   const firmGstPct = firm
     ? toNum(firm.cgstPct) + toNum(firm.sgstPct) || toNum(firm.igstPct)
     : 0;
@@ -99,7 +101,7 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
       logoUrl: firmImageUrl(firm, "logo"),
       sealUrl: firmImageUrl(firm, "seal"),
     },
-    tdsPct: toNum(invoice.tdsPct) || 1,
+    tdsPct: toNum(invoice.tdsPct),
     serviceDescription: "Goods Transport Service",
     sacCode: invoice.sacCode || "996791",
     party: {
@@ -157,6 +159,7 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
         }
       : null,
     gstApplied: gstTotal > 0,
+    reverseCharge: invoice.reverseCharge,
     remarks: invoice.remarks ?? "",
     // passed through as fields, not a joined line — the view prints one
     // labelled row each so the account number and IFSC cannot be misread
@@ -307,19 +310,48 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
           <table className="ml-auto mt-3 w-1/2 border-collapse text-xs">
             <tbody>
               {(
-                [
-                  ["Grand Total (before tax)", toNum(invoice.grandTotal)],
-                  ...(gstTotal > 0
-                    ? ([
-                        ["CGST", toNum(invoice.cgstAmt)],
-                        ["SGST", toNum(invoice.sgstAmt)],
-                        ["IGST", toNum(invoice.igstAmt)],
-                      ] as [string, number][])
-                    : []),
-                  ["Net Total", toNum(invoice.netTotal)],
-                  ["Less: Advance", toNum(invoice.advance)],
-                  ["Balance", toNum(invoice.balance)],
-                ] as [string, number][]
+                (invoice.kind === "GST"
+                  ? [
+                      // GST bill: grandTotal already includes tax, TCS and the
+                      // extras — build up from the taxable lines instead of
+                      // listing GST twice against an all-inclusive figure
+                      ["Lines Total (Taxable)", linesTaxable],
+                      ...(gstTotal > 0
+                        ? ([
+                            ["CGST", toNum(invoice.cgstAmt)],
+                            ["SGST", toNum(invoice.sgstAmt)],
+                            ["IGST", toNum(invoice.igstAmt)],
+                          ] as [string, number][])
+                        : []),
+                      ...(toNum(invoice.tcsAmt) > 0
+                        ? ([[`TCS @ ${toNum(invoice.tcsPct)}%`, toNum(invoice.tcsAmt)]] as [
+                            string,
+                            number,
+                          ][])
+                        : []),
+                      ...(toNum(invoice.freightExtra) !== 0
+                        ? ([["Freight (extra)", toNum(invoice.freightExtra)]] as [string, number][])
+                        : []),
+                      ...(toNum(invoice.othersExtra) !== 0
+                        ? ([["Others (extra)", toNum(invoice.othersExtra)]] as [string, number][])
+                        : []),
+                      ["Grand Total", toNum(invoice.netTotal)],
+                      ["Less: Advance", toNum(invoice.advance)],
+                      ["Balance", toNum(invoice.balance)],
+                    ]
+                  : [
+                      ["Grand Total (before tax)", toNum(invoice.grandTotal)],
+                      ...(gstTotal > 0
+                        ? ([
+                            ["CGST", toNum(invoice.cgstAmt)],
+                            ["SGST", toNum(invoice.sgstAmt)],
+                            ["IGST", toNum(invoice.igstAmt)],
+                          ] as [string, number][])
+                        : []),
+                      ["Net Total", toNum(invoice.netTotal)],
+                      ["Less: Advance", toNum(invoice.advance)],
+                      ["Balance", toNum(invoice.balance)],
+                    ]) as [string, number][]
               ).map(([label, v]) => (
                 <tr key={label} className={label === "Balance" ? "font-bold" : undefined}>
                   <td className="border border-black px-1 py-0.5">{label}</td>

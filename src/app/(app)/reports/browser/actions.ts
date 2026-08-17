@@ -121,6 +121,9 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
       const where = {
         ...scope,
         deletedAt: null,
+        // cancelled / paper-change LRs are not operational — the LR register
+        // excludes them, so the browser's list and totals must too
+        lrType: { notIn: ["CANCELLED" as const, "PAPER_CHANGE" as const] },
         ...dateFilter("lrDate", input.month),
         ...(q ? { lrNo: { contains: q, mode: "insensitive" as const } } : {}),
         ...(obd ? { obdNo: { contains: obd, mode: "insensitive" as const } } : {}),
@@ -204,7 +207,11 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
         ...dateFilter("chalanDate", input.month),
         ...(q ? { chalanNo: { contains: q, mode: "insensitive" as const } } : {}),
         ...(input.partyId ? { brokerId: input.partyId } : {}),
-        vehicleId: input.vehicleId && vehicleIds.includes(input.vehicleId) ? input.vehicleId : { in: vehicleIds },
+        // intersect the picked vehicle with the ownership class: a vehicle
+        // outside the class yields zero rows, never the whole class
+        vehicleId: input.vehicleId
+          ? { in: vehicleIds.includes(input.vehicleId) ? [input.vehicleId] : [] }
+          : { in: vehicleIds },
       };
       const [rows, count, sums] = await Promise.all([
         tx.chalan.findMany({ where, orderBy: [{ chalanDate: "desc" }, { id: "desc" }], skip: cursor, take: PAGE }),

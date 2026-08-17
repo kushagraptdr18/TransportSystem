@@ -13,6 +13,15 @@ import {
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
+ * ACTUAL-method trip sheets write their auto-fetched vehicle-register expenses
+ * back as one MISC trip-expense row carrying this remark (trip-settlement-form).
+ * The register sweep below already counts those same rupees from the
+ * VehicleExpenseItem rows themselves, so the marked trip row is excluded here —
+ * the register stays authoritative and nothing counts twice.
+ */
+const AUTO_REGISTER_EXPENSE_REMARK = "Other operating expenses (auto)";
+
+/**
  * Vehicle Profit & Loss — Own / Relative vehicles only.
  *   P&L = Trip Freight − Trip Expenses (company approved grand total)
  *         − Vehicle Expenses (excluding Diesel & Toll — already in trips)
@@ -113,7 +122,9 @@ export async function VehiclePnlTab({
           where: { firmId: session.firmId, deletedAt: null, tripId: { not: null } },
         }),
         // vehicle loan instalments — a financed vehicle carries its EMI cost on
-        // the date the instalment was paid
+        // the date the instalment was PAID. The loan itself is long-lived, so
+        // it is keyed by firm + VEHICLE loan type only: filtering on the loan's
+        // origin FY dropped every instalment of a loan taken in an earlier year
         tx.loanEmi.findMany({
           where: {
             deletedAt: null,
@@ -122,9 +133,8 @@ export async function VehiclePnlTab({
               : {}),
             loan: {
               firmId: session.firmId,
-              fyId: session.fyId,
               deletedAt: null,
-              vehicleId: { not: null },
+              loanType: "VEHICLE",
             },
           },
           include: { loan: true },
@@ -280,7 +290,11 @@ export async function VehiclePnlTab({
           linked !== undefined
             ? linked
             : r2(toNum(String(t.gTotalFreight)) + toNum(String(t.rTotalFreight)));
-        const approved = r2(t.expenses.reduce((s, e) => s + toNum(String(e.amount)), 0));
+        // the marked row duplicates the register sweep — see the constant above
+        const ownExpenses = t.expenses.filter(
+          (e) => e.remarks !== AUTO_REGISTER_EXPENSE_REMARK
+        );
+        const approved = r2(ownExpenses.reduce((s, e) => s + toNum(String(e.amount)), 0));
         const settlement = settlementByTrip.get(t.id) ?? null;
         const driver = t.driverId ? driverById.get(t.driverId) : null;
         const tripEnd = t.returnDate ?? t.tripDate;
@@ -302,7 +316,7 @@ export async function VehiclePnlTab({
           .filter((a) => a.tripId === t.id)
           .reduce((s, a) => s + toNum(String(a.amount)), 0);
         const byCat = new Map<string, number>();
-        for (const e of t.expenses) {
+        for (const e of ownExpenses) {
           byCat.set(e.category, r2((byCat.get(e.category) ?? 0) + toNum(String(e.amount))));
         }
         return {

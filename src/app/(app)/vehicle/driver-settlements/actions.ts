@@ -101,12 +101,14 @@ export async function settleDriverSettlement(
 
       // LIVE outstanding: a Payment/Receipt voucher may already have settled
       // part (or all) of this row through its allocation grid — paying the
-      // recorded amount again would pay the driver twice
+      // recorded amount again would pay the driver twice. The row is not
+      // FY-scoped, so the allocations must not be either (fyId: null) — a
+      // voucher entered last FY settled it just as finally.
       const voucherPaid =
         (
           await settledByRef(tx, {
             firmId: session.firmId,
-            fyId: session.fyId,
+            fyId: null,
             refTypes: ["DRIVER_SETTLEMENT"],
             refIds: [s.id],
           })
@@ -286,10 +288,12 @@ export async function settleDriverRunningBalance(
       });
       if (!pending.length) return { ok: false as const, error: "No pending balance to settle." };
       // net of the LIVE remainders: voucher allocations already made against
-      // any of these rows must not be paid a second time here
+      // any of these rows must not be paid a second time here. Pending rows
+      // carry no FY filter, so the allocation lookup spans all FYs too
+      // (fyId: null) — else a row paid last FY would be paid again this FY.
       const voucherPaid = await settledByRef(tx, {
         firmId: session.firmId,
-        fyId: session.fyId,
+        fyId: null,
         refTypes: ["DRIVER_SETTLEMENT"],
         refIds: pending.map((p) => p.id),
       });

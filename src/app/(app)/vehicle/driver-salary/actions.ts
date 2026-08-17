@@ -26,6 +26,26 @@ import { toNum } from "@/lib/utils";
 
 const REVALIDATE = "/vehicle/driver-salary";
 
+// ------------------------------------------------------- salary advance markers
+// DriverAdvance has no salaryId column, so a salary that consumes register rows
+// stamps them through a machine-readable remark tag — same family as the trip
+// sheet's tripId link and the F&F's remainder remarks. The tag is what lets a
+// salary edit / delete restore exactly the rows it consumed.
+const salaryAdvTag = (salaryId: string) => `[SAL-ADV:${salaryId}]`;
+const salaryAdvRemTag = (salaryId: string) => `[SAL-ADV-REM:${salaryId}]`;
+
+/** Undo the remark chunk `consumeAdvance` appended for this salary. */
+function stripSalaryAdvTag(remarks: string | null, salaryId: string): string | null {
+  if (!remarks) return null;
+  const idx = remarks.indexOf(salaryAdvTag(salaryId));
+  if (idx < 0) return remarks;
+  // the appended chunk contains no " · " itself, so the last separator before
+  // the tag is the one that joined it to the original remark
+  const sep = remarks.lastIndexOf(" · ", idx);
+  const cleaned = sep >= 0 ? remarks.slice(0, sep) : "";
+  return cleaned.trim() || null;
+}
+
 // ---------------------------------------------------------------- shortage entry
 
 const shortageSchema = z.object({
@@ -170,6 +190,80 @@ export async function processDriverSalary(
       });
       if (dup) return { ok: false as const, error: `Salary for ${d.month} already processed for this driver.` };
 
+      // edit guards live up here so the advance validation below can count the
+      // rows this salary previously consumed as available again
+      const before = d.id
+        ? await tx.driverSalary.findFirst({
+            where: { id: d.id, firmId: session.firmId, deletedAt: null },
+          })
+        : null;
+      if (d.id) {
+        if (!before) return { ok: false as const, error: "Salary record not found." };
+        if (before.paymentStatus === "PAID") {
+          return { ok: false as const, error: "Salary already paid — cannot edit." };
+        }
+        if (toNum(String(before.paidAmount)) > 0) {
+          return { ok: false as const, error: "Salary has payments against it — cannot edit." };
+        }
+      }
+
+      // Advance register: PENDING rows, plus (on edit) what THIS salary
+      // consumed earlier — those return to PENDING before re-consumption. The
+      // register is the source of truth; a recovery that does not consume its
+      // rows would let a trip sheet or the F&F recover the same advance again.
+      const [pendingAdvances, prevConsumed, prevRemainders] = await Promise.all([
+        tx.driverAdvance.findMany({
+          where: { firmId: session.firmId, driverId: d.driverId, status: "PENDING", deletedAt: null },
+          orderBy: { date: "asc" },
+        }),
+        d.id
+          ? tx.driverAdvance.findMany({
+              where: {
+                firmId: session.firmId,
+                status: "ADJUSTED",
+                deletedAt: null,
+                remarks: { contains: salaryAdvTag(d.id) },
+              },
+            })
+          : Promise.resolve([]),
+        d.id
+          ? tx.driverAdvance.findMany({
+              where: {
+                firmId: session.firmId,
+                deletedAt: null,
+                remarks: { contains: salaryAdvRemTag(d.id) },
+              },
+            })
+          : Promise.resolve([]),
+      ]);
+      // a remainder row this salary split off may itself have been consumed by
+      // a trip sheet / F&F since — restoring the original would double it
+      if (prevRemainders.some((r) => r.status !== "PENDING")) {
+        return {
+          ok: false as const,
+          error: "An advance remainder from this salary was already adjusted elsewhere — cannot edit.",
+        };
+      }
+      const remainderIds = new Set(prevRemainders.map((r) => r.id));
+      // FIFO queue: live PENDING rows (minus this salary's own remainder rows,
+      // which are withdrawn on release) + the rows this salary consumed before
+      const advQueue = [
+        ...pendingAdvances.filter((a) => !remainderIds.has(a.id)),
+        ...prevConsumed.map((a) => ({
+          ...a,
+          remarks: d.id ? stripSalaryAdvTag(a.remarks, d.id) : a.remarks,
+        })),
+      ].sort((a, b) => a.date.getTime() - b.date.getTime());
+      const advanceOutstanding = round2(
+        advQueue.reduce((s, r) => s + toNum(String(r.amount)), 0)
+      );
+      if (d.advanceAdjust > advanceOutstanding + 0.009) {
+        return {
+          ok: false as const,
+          error: `Advance adjustment exceeds the driver's pending advances (${advanceOutstanding}).`,
+        };
+      }
+
       // shortages: adjust only when the user said Yes
       const pending = await tx.driverShortage.findMany({
         where: { firmId: session.firmId, driverId: d.driverId, status: "PENDING", deletedAt: null },
@@ -204,19 +298,27 @@ export async function processDriverSalary(
       };
 
       let id: string;
-      if (d.id) {
-        const before = await tx.driverSalary.findFirstOrThrow({ where: { id: d.id, deletedAt: null } });
-        if (before.paymentStatus === "PAID") {
-          return { ok: false as const, error: "Salary already paid — cannot edit." };
-        }
+      if (d.id && before) {
         // release shortages previously adjusted by this salary
-        if (toNum(String(before.paidAmount)) > 0) {
-          return { ok: false as const, error: "Salary has payments against it — cannot edit." };
-        }
         await tx.driverShortage.updateMany({
           where: { salaryId: d.id },
           data: { status: "PENDING", salaryId: null, adjustedAmount: 0 },
         });
+        // release advances previously consumed by this salary (mirror the trip
+        // sheet's release-then-relink): withdraw the remainder rows it split
+        // off, return the consumed originals to PENDING
+        if (prevRemainders.length) {
+          await tx.driverAdvance.updateMany({
+            where: { id: { in: prevRemainders.map((r) => r.id) } },
+            data: { deletedAt: new Date() },
+          });
+        }
+        for (const adv of prevConsumed) {
+          await tx.driverAdvance.update({
+            where: { id: adv.id },
+            data: { status: "PENDING", adjustedDate: null, remarks: stripSalaryAdvTag(adv.remarks, d.id) },
+          });
+        }
         const updated = await tx.driverSalary.update({ where: { id: d.id }, data: values });
         id = updated.id;
         await reverseLedger(tx, "DRIVER_SALARY", id);
@@ -244,8 +346,51 @@ export async function processDriverSalary(
         }
       }
 
-      // ledger accrual
       const salaryDate = new Date(`${d.month}-01T00:00:00`);
+
+      // consume PENDING advances FIFO up to the amount recovered here, so the
+      // register closes with the recovery. Partial consumption splits the row
+      // exactly like the F&F does: the adjusted part closes and the remainder
+      // survives as its own PENDING row (bookkeeping only — the ORIGINAL
+      // advance's ledger posting already carries the money).
+      let advLeft = d.advanceAdjust;
+      for (const adv of advQueue) {
+        if (advLeft <= 0.009) break;
+        const amt = toNum(String(adv.amount));
+        if (amt <= 0) continue;
+        const take = round2(Math.min(amt, advLeft));
+        advLeft = round2(advLeft - take);
+        await tx.driverAdvance.update({
+          where: { id: adv.id },
+          data: {
+            status: "ADJUSTED",
+            adjustedDate: salaryDate,
+            remarks: `${adv.remarks ? adv.remarks + " · " : ""}₹${take} adjusted in salary ${d.month} ${salaryAdvTag(id)}`,
+          },
+        });
+        if (take < amt - 0.009) {
+          await tx.driverAdvance.create({
+            data: {
+              tenantId: session.tenantId,
+              firmId: adv.firmId,
+              fyId: adv.fyId,
+              date: adv.date,
+              driverId: adv.driverId,
+              vehicleId: adv.vehicleId,
+              tripRef: adv.tripRef,
+              amount: round2(amt - take),
+              paymentMode: adv.paymentMode,
+              bankPartyId: adv.bankPartyId,
+              voucherRef: adv.voucherRef,
+              status: "PENDING",
+              remarks: `Remainder of advance dated ${adv.date.toISOString().slice(0, 10)} after salary ${d.month} (₹${take} adjusted of ₹${amt}) ${salaryAdvRemTag(id)}`,
+              createdById: session.userId,
+            },
+          });
+        }
+      }
+
+      // ledger accrual
       const common = { date: salaryDate, refType: "DRIVER_SALARY", refId: id, refNo: `DSAL-${d.month}` };
       const expenseHead = await ensureAccountHead(tx, session, "Driver Salary Expense", "EXPENSE");
       const entries: LedgerPostEntry[] = [
@@ -391,6 +536,15 @@ export async function payDriverSalaryRunning(
 
       const paymentDate = new Date(`${d.paymentDate}T00:00:00`);
       const latest = salaries[salaries.length - 1];
+      // The salaries are settled OLDEST-first below, so the shortage stamp must
+      // point at the salary the adjustment actually pays — the oldest one with
+      // an outstanding. That salary receives money in this run and locks
+      // (edit/delete refuse paid salaries), so editing a later, untouched month
+      // can no longer reset a shortage that settled an older one.
+      const fifoTarget =
+        salaries.find(
+          (s) => round2(toNum(String(s.netPayable)) - toNum(String(s.paidAmount))) > 0
+        ) ?? latest;
 
       // shortage adjustment — consume oldest pending shortages first
       let toAdjust = d.shortageAdjust;
@@ -405,7 +559,7 @@ export async function payDriverSalaryRunning(
           data: {
             adjustedAmount: round2(toNum(String(sh.adjustedAmount)) + take),
             status: take >= remaining ? "ADJUSTED" : "PENDING",
-            salaryId: latest.id,
+            salaryId: fifoTarget.id,
           },
         });
       }
@@ -495,7 +649,9 @@ export async function deleteDriverSalary(
   await authorize(session, "maintenance", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.driverSalary.findFirstOrThrow({ where: { id, deletedAt: null } });
+      const before = await tx.driverSalary.findFirstOrThrow({
+        where: { id, firmId: session.firmId, deletedAt: null },
+      });
       if (before.paymentStatus === "PAID" || toNum(String(before.paidAmount)) > 0) {
         throw new Error("Salary with payments cannot be deleted.");
       }
@@ -503,6 +659,38 @@ export async function deleteDriverSalary(
         where: { salaryId: id },
         data: { status: "PENDING", salaryId: null, adjustedAmount: 0 },
       });
+      // release the advances this salary consumed (mirror the edit path):
+      // withdraw the remainder rows it split off, restore the originals
+      const [consumedAdv, remainderAdv] = await Promise.all([
+        tx.driverAdvance.findMany({
+          where: {
+            firmId: session.firmId,
+            status: "ADJUSTED",
+            deletedAt: null,
+            remarks: { contains: salaryAdvTag(id) },
+          },
+        }),
+        tx.driverAdvance.findMany({
+          where: { firmId: session.firmId, deletedAt: null, remarks: { contains: salaryAdvRemTag(id) } },
+        }),
+      ]);
+      if (remainderAdv.some((r) => r.status !== "PENDING")) {
+        throw new Error(
+          "An advance remainder from this salary was already adjusted elsewhere — cannot delete."
+        );
+      }
+      if (remainderAdv.length) {
+        await tx.driverAdvance.updateMany({
+          where: { id: { in: remainderAdv.map((r) => r.id) } },
+          data: { deletedAt: new Date() },
+        });
+      }
+      for (const adv of consumedAdv) {
+        await tx.driverAdvance.update({
+          where: { id: adv.id },
+          data: { status: "PENDING", adjustedDate: null, remarks: stripSalaryAdvTag(adv.remarks, id) },
+        });
+      }
       await tx.driverSalary.update({ where: { id }, data: { deletedAt: new Date() } });
       // nothing to release in the shortage register: salary never posts there,
       // the DriverShortage record does

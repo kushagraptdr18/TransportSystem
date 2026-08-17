@@ -49,11 +49,10 @@ export default async function TdsQuarterlyPage({
     buildTdsPayableRows(tx, session, dateWhere)
   );
 
-  const partyName = searchParams.party
-    ? parties.find((p) => p.id === searchParams.party)?.name ?? ""
-    : undefined;
+  // the filter bar's combobox already carries party IDS — pass the id
+  // straight through so the grouping filters on the stable link, never a name
   const data = buildQuarterlyData(rows, {
-    partyName,
+    partyId: searchParams.party,
     rate: searchParams.rate,
     quarter: searchParams.quarter,
   });

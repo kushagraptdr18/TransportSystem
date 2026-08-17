@@ -82,9 +82,10 @@ describe("chalan compute", () => {
     });
     expect(t.freight).toBe(25000);
     expect(t.totalChalanAmt).toBe(25500);
-    expect(t.commissionAmt).toBe(510);
-    expect(t.tdsAmt).toBe(255);
-    expect(t.grandTotal).toBe(25500 - 510 - 255 - 200 - 100);
+    // commission & TDS are levied on the freight amount only
+    expect(t.commissionAmt).toBe(500);
+    expect(t.tdsAmt).toBe(250);
+    expect(t.grandTotal).toBe(25500 - 500 - 250 - 200 - 100);
     expect(t.advanceTotal).toBe(7000);
     expect(t.balance).toBe(t.grandTotal - 7000);
   });

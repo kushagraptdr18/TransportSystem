@@ -12,7 +12,10 @@ const label = "border border-black bg-neutral-100 px-2 py-1 font-semibold";
 export default async function DriverFnfPrintPage({ params }: { params: { id: string } }) {
   const session = requireSession();
   const data = await withTenant(session.tenantId, async (tx) => {
-    const fnf = await tx.driverFnf.findFirst({ where: { id: params.id, deletedAt: null } });
+    const fnf = await tx.driverFnf.findFirst({
+      // firm-scoped: another firm's settlement must not print under this session
+      where: { id: params.id, firmId: session.firmId, deletedAt: null },
+    });
     if (!fnf) return null;
     const [firm, driver, bank] = await Promise.all([
       tx.firm.findUnique({ where: { id: fnf.firmId } }),

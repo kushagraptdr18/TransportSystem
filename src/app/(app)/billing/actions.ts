@@ -1,7 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { requireSession } from "@/lib/session";
+import { requireSession, type Session } from "@/lib/session";
 import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
@@ -346,6 +346,212 @@ const invoiceSchema = z.object({
 
 export type SaveInvoiceInput = z.infer<typeof invoiceSchema>;
 
+/** GST state code from the state master (fallback when a GSTIN is missing). */
+async function stateGstCode(tx: Tx, stateId: string | null | undefined): Promise<string | null> {
+  if (!stateId) return null;
+  const state = await tx.state.findUnique({ where: { id: stateId } });
+  return state?.gstCode ?? null;
+}
+
+/**
+ * Reverse and re-post the ledger legs of one invoice: debit the customer for
+ * netTotal, credit GST Output / TCS Payable / each additional charge head /
+ * Freight Income. Shared by saveInvoice and resyncInvoicesForLr so the two
+ * postings can never drift. `invoice.fyId` is the invoice's OWN financial
+ * year — re-posting must not re-stamp entries into the session's FY.
+ */
+async function postInvoiceLedger(
+  tx: Tx,
+  session: Session & { firmId: string; fyId: string },
+  invoice: {
+    id: string;
+    firmId: string;
+    fyId: string;
+    invoiceNo: string;
+    invoiceDate: Date;
+    kind: InvoiceKind;
+    partyId: string;
+  },
+  charges: { chargeType: string; description?: string | null; amount: number }[],
+  totals: { netTotal: number; cgstAmt: number; sgstAmt: number; igstAmt: number },
+  tcsAmt: number
+): Promise<void> {
+  await reverseLedger(tx, "INVOICE", invoice.id);
+  if (totals.netTotal <= 0) return;
+  const common = {
+    date: invoice.invoiceDate,
+    refType: "INVOICE",
+    refId: invoice.id,
+    refNo: invoice.invoiceNo,
+    firmId: invoice.firmId,
+    fyId: invoice.fyId,
+  };
+  // the customer owes the FULL bill value, GST included — netTotal, the
+  // same figure invoiceSettlement and the Outstanding register work on.
+  // (For a GST-kind bill netTotal === grandTotal; for PT/FT/MANUAL with
+  // GST it is grandTotal + tax — posting grandTotal left the GST off the
+  // party ledger entirely, a phantom credit once the customer paid.)
+  const entries: Parameters<typeof postLedger>[2] = [
+    {
+      ...common,
+      partyId: invoice.partyId,
+      side: "DEBIT",
+      amount: totals.netTotal,
+      narration: `Invoice ${invoice.invoiceNo} (${invoice.kind.replace(/_/g, " ")})`,
+    },
+  ];
+  // GST is a statutory liability, not income — it gets its own ledger,
+  // exactly like TDS Payable, whatever the bill kind
+  const gstTotal = round2(totals.cgstAmt + totals.sgstAmt + totals.igstAmt);
+  if (gstTotal > 0.009) {
+    const gstHeadId = await ensureAccountHead(tx, session, "GST Output", "INCOME");
+    entries.push({
+      ...common,
+      accountHeadId: gstHeadId,
+      side: "CREDIT",
+      amount: gstTotal,
+      narration: `GST on invoice ${invoice.invoiceNo}`,
+    });
+  }
+  // TCS is the same kind of statutory liability — collected for the
+  // government, never freight income
+  if (tcsAmt > 0.009) {
+    const tcsHeadId = await ensureAccountHead(tx, session, "TCS Payable", "INCOME");
+    entries.push({
+      ...common,
+      accountHeadId: tcsHeadId,
+      side: "CREDIT",
+      amount: tcsAmt,
+      narration: `TCS on invoice ${invoice.invoiceNo}`,
+    });
+  }
+  // Every additional charge credits ITS OWN ledger head — loading,
+  // documentation, detention and the rest are separate income lines, not
+  // one clubbed "Freight Income" figure. A charge named after a common
+  // head (Detention, ODC, ...) lands in that shared ledger.
+  const billedCharges = charges.filter((c) => round2(c.amount) > 0);
+  // a bill whose charges alone exceed its pre-tax value (heavy credit
+  // lines) cannot be split without unbalancing it — one freight credit
+  const preTax = round2(totals.netTotal - gstTotal - tcsAmt);
+  const splittable = round2(billedCharges.reduce((s, c) => s + c.amount, 0)) < preTax - 0.009;
+  let chargesTotal = 0;
+  for (const c of splittable ? billedCharges : []) {
+    const amount = round2(c.amount);
+    chargesTotal = round2(chargesTotal + amount);
+    const headId = await ensureAccountHead(tx, session, c.chargeType, "INCOME");
+    entries.push({
+      ...common,
+      accountHeadId: headId,
+      side: "CREDIT",
+      amount,
+      narration: `${c.chargeType}${c.description ? ` (${c.description})` : ""} — invoice ${invoice.invoiceNo}`,
+    });
+  }
+  // freight income is the pre-tax remainder — GST/TCS already have their legs
+  const freight = round2(preTax - chargesTotal);
+  if (freight > 0) {
+    const incomeHeadId = await ensureAccountHead(tx, session, "Freight Income", "INCOME");
+    entries.push({
+      ...common,
+      accountHeadId: incomeHeadId,
+      side: "CREDIT",
+      amount: freight,
+      narration: `Freight income — invoice ${invoice.invoiceNo}`,
+    });
+  }
+  await postLedger(tx, session, entries);
+}
+
+/**
+ * Re-derive totals and re-post the ledger of every live PART/FULL_TRUCK
+ * invoice holding this LR. Invoice totals are snapshots of their LRs, so an
+ * in-place LR edit (bill-preview flow) must flow through to the bill or the
+ * two desync. GST-kind bills are out of scope: their lines don't come from
+ * LRs. Runs inside the caller's transaction (called from saveLr).
+ */
+export async function resyncInvoicesForLr(
+  tx: Tx,
+  session: Session & { firmId: string; fyId: string },
+  lrId: string
+): Promise<void> {
+  const links = await tx.invoiceLr.findMany({
+    where: {
+      lrId,
+      invoice: { deletedAt: null, kind: { in: ["PART_TRUCK", "FULL_TRUCK"] } },
+    },
+    select: { invoiceId: true },
+  });
+  for (const { invoiceId } of links) {
+    const inv = await tx.invoice.findUniqueOrThrow({
+      where: { id: invoiceId },
+      include: { lrs: { include: { lr: { include: { items: true } } } }, charges: true },
+    });
+    const [firm, party] = await Promise.all([
+      tx.firm.findUnique({ where: { id: inv.firmId } }),
+      tx.party.findUnique({ where: { id: inv.partyId } }),
+    ]);
+    const supplierStateCode =
+      stateCodeFromGstin(firm?.gstin) ?? (await stateGstCode(tx, firm?.stateId));
+    const recipientStateCode =
+      stateCodeFromGstin(party?.gstin) ?? (await stateGstCode(tx, party?.stateId));
+    // GST config from the stored pct columns — an RCM bill stored 0%, and its
+    // resync must stay GST-free
+    const gstPct =
+      toNum(String(inv.cgstPct)) + toNum(String(inv.sgstPct)) || toNum(String(inv.igstPct));
+    const totals = computeInvoice({
+      lrAmounts: inv.lrs.map((il) => toNum(String(il.lr.total))),
+      extraCharges: inv.charges.map((c) => toNum(String(c.amount))),
+      gstApplicable: inv.gstApplicable && gstPct > 0,
+      gstPct,
+      supplierStateCode,
+      recipientStateCode,
+      tdsPct: toNum(String(inv.tdsPct)),
+      advance: toNum(String(inv.advance)),
+    });
+    const totalWt = inv.lrs.reduce(
+      (s, il) => s + il.lr.items.reduce((a, i) => a + toNum(String(i.chargeWt)), 0),
+      0
+    );
+    await tx.invoice.update({
+      where: { id: inv.id },
+      data: {
+        cgstPct: totals.cgstAmt > 0 ? gstPct / 2 : 0,
+        cgstAmt: totals.cgstAmt,
+        sgstPct: totals.sgstAmt > 0 ? gstPct / 2 : 0,
+        sgstAmt: totals.sgstAmt,
+        igstPct: totals.igstAmt > 0 ? gstPct : 0,
+        igstAmt: totals.igstAmt,
+        tdsAmt: totals.tdsAmt,
+        total: totals.total,
+        grandTotal: totals.grandTotal,
+        netTotal: totals.netTotal,
+        balance: totals.balance,
+        totalWt: round2(totalWt),
+      },
+    });
+    await postInvoiceLedger(
+      tx,
+      session,
+      {
+        id: inv.id,
+        firmId: inv.firmId,
+        fyId: inv.fyId,
+        invoiceNo: inv.invoiceNo,
+        invoiceDate: inv.invoiceDate,
+        kind: inv.kind,
+        partyId: inv.partyId,
+      },
+      inv.charges.map((c) => ({
+        chargeType: c.chargeType,
+        description: c.description,
+        amount: toNum(String(c.amount)),
+      })),
+      totals,
+      0 // TCS exists only on GST-kind bills, which are never resynced here
+    );
+  }
+}
+
 export async function saveInvoice(
   input: unknown
 ): Promise<{ ok: true; id: string } | { ok: false; error: string; alreadyBilledLr?: string }> {
@@ -366,11 +572,20 @@ export async function saveInvoice(
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      // unique invoice number per firm+fy+kind
+      const before = data.id
+        ? await tx.invoice.findFirst({
+            where: { id: data.id, firmId: session.firmId, deletedAt: null },
+            include: { lrs: true },
+          })
+        : null;
+      if (data.id && !before) return { ok: false as const, error: "Invoice not found." };
+
+      // unique invoice number per firm+fy+kind — an edit stays in the
+      // invoice's own FY, so the clash check must look there too
       const dup = await tx.invoice.findFirst({
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
+          fyId: before?.fyId ?? session.fyId,
           kind: data.kind,
           invoiceNo: data.invoiceNo,
           deletedAt: null,
@@ -383,14 +598,6 @@ export async function saveInvoice(
           error: `Invoice number ${data.invoiceNo} already exists for this firm / financial year.`,
         };
       }
-
-      const before = data.id
-        ? await tx.invoice.findFirst({
-            where: { id: data.id, firmId: session.firmId, deletedAt: null },
-            include: { lrs: true },
-          })
-        : null;
-      if (data.id && !before) return { ok: false as const, error: "Invoice not found." };
       const previousLrIds = before?.lrs.map((l) => l.lrId) ?? [];
 
       // validate LRs & duplicate billing (hard block)
@@ -421,14 +628,30 @@ export async function saveInvoice(
             error: `Invoice for LR ${lr.lrNo} has already been created.`,
           };
         }
+        if ((lr.billToId ?? lr.consignorId) !== data.partyId) {
+          return { ok: false as const, error: `LR ${lr.lrNo} belongs to a different party.` };
+        }
+        // an LR already on THIS invoice stays billable however its status reads
+        if (lr.status !== "DELIVERED" && !previousLrIds.includes(lr.id)) {
+          return {
+            ok: false as const,
+            error: `LR ${lr.lrNo} is not delivered yet (status ${lr.status}). Complete chalan + POD first.`,
+          };
+        }
+        if (data.kind === "PART_TRUCK" && lr.lrType !== "TBB") {
+          return { ok: false as const, error: `LR ${lr.lrNo} is not a TBB (to-be-billed) LR.` };
+        }
       }
 
-      // state codes for GST split
+      // state codes for GST split — GSTIN prefix, else the state master, so the
+      // saved bill agrees with the client preview for no-GSTIN parties
       const firm = await tx.firm.findUnique({ where: { id: session.firmId } });
       const party = await tx.party.findUnique({ where: { id: data.partyId } });
       if (!party) return { ok: false as const, error: "Party not found." };
-      const supplierStateCode = stateCodeFromGstin(firm?.gstin);
-      const recipientStateCode = stateCodeFromGstin(party.gstin);
+      const supplierStateCode =
+        stateCodeFromGstin(firm?.gstin) ?? (await stateGstCode(tx, firm?.stateId));
+      const recipientStateCode =
+        stateCodeFromGstin(party.gstin) ?? (await stateGstCode(tx, party.stateId));
 
       // ---- recompute (never trust client) ----
       let totals: {
@@ -532,7 +755,9 @@ export async function saveInvoice(
       const invoiceData = {
         tenantId: session.tenantId,
         firmId: session.firmId,
-        fyId: session.fyId,
+        // an edit keeps the invoice in its original financial year — only a
+        // fresh bill is stamped into the session's FY
+        fyId: before?.fyId ?? session.fyId,
         kind: data.kind,
         invoiceNo: data.invoiceNo,
         invoiceDate: new Date(data.invoiceDate),
@@ -613,10 +838,21 @@ export async function saveInvoice(
         await tx.invoiceLr.createMany({
           data: data.lrIds.map((lrId) => ({ tenantId: session.tenantId, invoiceId, lrId })),
         });
-        await tx.lr.updateMany({
-          where: { id: { in: data.lrIds } },
-          data: { status: "BILLED" },
-        });
+        // atomic claim: only still-DELIVERED rows flip to BILLED — a racing
+        // invoice that claimed one first leaves the count short and this whole
+        // save rolls back instead of double-billing the LR
+        const newIds = data.lrIds.filter((id) => !previousLrIds.includes(id));
+        if (newIds.length) {
+          const claimed = await tx.lr.updateMany({
+            where: { id: { in: newIds }, status: "DELIVERED" },
+            data: { status: "BILLED" },
+          });
+          if (claimed.count !== newIds.length) {
+            throw new Error(
+              "One or more selected LRs were just billed on another invoice — refresh and retry."
+            );
+          }
+        }
       }
       if (data.charges.length) {
         await tx.invoiceCharge.createMany({
@@ -667,6 +903,20 @@ export async function saveInvoice(
       // the party's open advance balance FIFO (restore-then-reconsume on edit)
       await restoreAdvanceUses(tx, "INVOICE", invoiceId);
       if (data.advance > 0) {
+        // never trust the client's advance figure: restored uses are already
+        // back in the balance, so this is exactly what the bill may claim
+        const available = await partyAdvanceBalance(
+          tx,
+          session.firmId,
+          data.partyId,
+          "RECEIVED",
+          session.fyId
+        );
+        if (data.advance > available + 0.009) {
+          throw new Error(
+            `Advance ${data.advance} exceeds the party's open advance balance ${available}.`
+          );
+        }
         await consumeAdvances(tx, {
           tenantId: session.tenantId,
           firmId: session.firmId,
@@ -681,79 +931,22 @@ export async function saveInvoice(
 
       // ledger: debit the customer (receivable), credit freight income —
       // re-posted on every save so edits stay in sync
-      await reverseLedger(tx, "INVOICE", invoiceId);
-      if (totals.netTotal > 0) {
-        const invoiceDate = new Date(data.invoiceDate);
-        const common = {
-          date: invoiceDate,
-          refType: "INVOICE",
-          refId: invoiceId,
-          refNo: data.invoiceNo,
-        };
-        // the customer owes the FULL bill value, GST included — netTotal, the
-        // same figure invoiceSettlement and the Outstanding register work on.
-        // (For a GST-kind bill netTotal === grandTotal; for PT/FT/MANUAL with
-        // GST it is grandTotal + tax — posting grandTotal left the GST off the
-        // party ledger entirely, a phantom credit once the customer paid.)
-        const entries: Parameters<typeof postLedger>[2] = [
-          {
-            ...common,
-            partyId: data.partyId,
-            side: "DEBIT",
-            amount: totals.netTotal,
-            narration: `Invoice ${data.invoiceNo} (${data.kind.replace(/_/g, " ")})`,
-          },
-        ];
-        // GST is a statutory liability, not income — it gets its own ledger,
-        // exactly like TDS Payable, whatever the bill kind
-        const gstTotal = round2(totals.cgstAmt + totals.sgstAmt + totals.igstAmt);
-        if (gstTotal > 0.009) {
-          const gstHeadId = await ensureAccountHead(tx, session, "GST Output", "INCOME");
-          entries.push({
-            ...common,
-            accountHeadId: gstHeadId,
-            side: "CREDIT",
-            amount: gstTotal,
-            narration: `GST on invoice ${data.invoiceNo}`,
-          });
-        }
-        // Every additional charge credits ITS OWN ledger head — loading,
-        // documentation, detention and the rest are separate income lines, not
-        // one clubbed "Freight Income" figure. A charge named after a common
-        // head (Detention, ODC, ...) lands in that shared ledger.
-        const billedCharges = data.charges.filter((c) => round2(c.amount) > 0);
-        // a bill whose charges alone exceed its pre-tax value (heavy credit
-        // lines) cannot be split without unbalancing it — one freight credit
-        const preTax = round2(totals.netTotal - gstTotal);
-        const splittable =
-          round2(billedCharges.reduce((s, c) => s + c.amount, 0)) < preTax - 0.009;
-        let chargesTotal = 0;
-        for (const c of splittable ? billedCharges : []) {
-          const amount = round2(c.amount);
-          chargesTotal = round2(chargesTotal + amount);
-          const headId = await ensureAccountHead(tx, session, c.chargeType, "INCOME");
-          entries.push({
-            ...common,
-            accountHeadId: headId,
-            side: "CREDIT",
-            amount,
-            narration: `${c.chargeType}${c.description ? ` (${c.description})` : ""} — invoice ${data.invoiceNo}`,
-          });
-        }
-        // freight income is the pre-tax remainder — GST already has its leg
-        const freight = round2(preTax - chargesTotal);
-        if (freight > 0) {
-          const incomeHeadId = await ensureAccountHead(tx, session, "Freight Income", "INCOME");
-          entries.push({
-            ...common,
-            accountHeadId: incomeHeadId,
-            side: "CREDIT",
-            amount: freight,
-            narration: `Freight income — invoice ${data.invoiceNo}`,
-          });
-        }
-        await postLedger(tx, session, entries);
-      }
+      await postInvoiceLedger(
+        tx,
+        session,
+        {
+          id: invoiceId,
+          firmId: session.firmId,
+          fyId: before?.fyId ?? session.fyId,
+          invoiceNo: data.invoiceNo,
+          invoiceDate: new Date(data.invoiceDate),
+          kind: data.kind,
+          partyId: data.partyId,
+        },
+        data.charges,
+        totals,
+        tcsAmt
+      );
 
       if (data.setBankDefault && data.bankPartyId) {
         await tx.firm.update({
@@ -877,8 +1070,16 @@ export async function getInvoiceForEdit(id: string): Promise<InvoiceEditPayload 
       include: { lrs: { include: { lr: { include: { items: true } } } }, charges: true, lines: true },
     });
     if (!inv) return null;
-    const gstPct =
+    let gstPct =
       toNum(String(inv.cgstPct)) + toNum(String(inv.sgstPct)) || toNum(String(inv.igstPct));
+    if (!gstPct) {
+      // an RCM bill stored 0% — fall back to the firm's GST config so turning
+      // RCM off later doesn't silently compute 0% GST
+      const firm = await tx.firm.findUnique({ where: { id: inv.firmId } });
+      gstPct = firm
+        ? toNum(String(firm.cgstPct)) + toNum(String(firm.sgstPct)) || toNum(String(firm.igstPct))
+        : 0;
+    }
     return {
       id: inv.id,
       kind: inv.kind,

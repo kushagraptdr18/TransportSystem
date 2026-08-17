@@ -145,16 +145,25 @@ export async function refPositions(
  * Amount settled per refId from live vouchers of this firm + FY.
  * Approved deductions (TDS / deduction) settle a document just like money
  * moved — an adjusted amount must never remain outstanding.
+ *
+ * Pass `fyId: null` to sum allocations across ALL financial years. Needed when
+ * the pending documents themselves carry no FY filter (driver +/- settlement
+ * rows): scoping the allocations to the session FY while the rows span years
+ * made a row settled last year look unpaid this year — and payable twice.
  */
 export async function settledByRef(
   tx: Tx,
-  opts: { firmId: string; fyId: string; refTypes: ModuleLink[]; refIds?: string[] }
+  opts: { firmId: string; fyId: string | null; refTypes: ModuleLink[]; refIds?: string[] }
 ): Promise<Map<string, number>> {
   const allocations = await tx.voucherAllocation.findMany({
     where: {
       refType: { in: opts.refTypes },
       ...(opts.refIds ? { refId: { in: opts.refIds } } : {}),
-      voucher: { deletedAt: null, firmId: opts.firmId, fyId: opts.fyId },
+      voucher: {
+        deletedAt: null,
+        firmId: opts.firmId,
+        ...(opts.fyId ? { fyId: opts.fyId } : {}),
+      },
     },
     select: {
       refId: true,

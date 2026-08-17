@@ -10,6 +10,7 @@ import type { RateBasis } from "@/lib/calc/rate";
 export interface LrFormData {
   mode: "create" | "edit";
   lrId?: string;
+  isDummy: boolean;
   defaults: LrFormValues;
   gstPct: number;
   cityOptions: MasterOption[];
@@ -55,7 +56,8 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
         nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId }),
         sourceId
           ? tx.lr.findFirst({
-              where: { id: sourceId, deletedAt: null },
+              // scoped: an id from another firm/FY must not load here
+              where: { id: sourceId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
               include: { items: true },
             })
           : Promise.resolve(null),
@@ -193,6 +195,7 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
     return {
       mode: existing && !isCopy ? ("edit" as const) : ("create" as const),
       lrId: isCopy ? undefined : existing?.id,
+      isDummy: existing?.isDummy ?? false,
       defaults,
       gstPct,
       cityOptions: cities.map((c) => ({ value: c.id, label: c.name, meta: c.state.name })),

@@ -36,7 +36,12 @@ export default async function ChalanPage({
       const accountHeads = await tx.accountHead.findMany({ orderBy: { name: "asc" } });
       const record = searchParams.id
         ? await tx.chalan.findFirst({
-            where: { id: searchParams.id, deletedAt: null },
+            where: {
+              id: searchParams.id,
+              firmId: session.firmId,
+              fyId: session.fyId,
+              deletedAt: null,
+            },
             include: {
               lrs: { include: { lr: { include: { items: true, pods: true } } } },
               advances: true,

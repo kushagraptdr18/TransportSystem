@@ -143,9 +143,9 @@ const advanceSchema = z.object({
   bankName: z.string().optional().nullable(),
   bankPartyId: z.string().optional().nullable(),
   headId: z.string().optional().nullable(),
-  dieselQty: z.number().optional().nullable(),
-  dieselRate: z.number().optional().nullable(),
-  amount: z.number().default(0),
+  dieselQty: z.number().min(0).optional().nullable(),
+  dieselRate: z.number().min(0).optional().nullable(),
+  amount: z.number().min(0).default(0),
   date: z.string().optional().nullable(),
   remarks: z.string().optional().nullable(),
 });
@@ -164,21 +164,21 @@ const chalanSchema = z.object({
   ownerName: z.string().optional().nullable(),
   remarks: z.string().optional().nullable(),
   lrIds: z.array(z.string()).min(1, "Select at least one LR — a chalan cannot be saved without LRs"),
-  freight: z.number().default(0), // vehicle freight (manual fallback)
-  rate: z.number().default(0),
+  freight: z.number().min(0).default(0), // vehicle freight (manual fallback)
+  rate: z.number().min(0).default(0),
   rateBasis: z.enum(["QTY", "ACTUAL_WT", "CHARGE_WT", "FIXED"]).default("CHARGE_WT"),
-  detention: z.number().default(0),
-  odcAmt: z.number().default(0),
-  fineSlip: z.number().default(0),
-  ldCharge: z.number().default(0),
-  shortageAmt: z.number().default(0),
-  otherAmt: z.number().default(0),
+  detention: z.number().min(0).default(0),
+  odcAmt: z.number().min(0).default(0),
+  fineSlip: z.number().min(0).default(0),
+  ldCharge: z.number().min(0).default(0),
+  shortageAmt: z.number().min(0).default(0),
+  otherAmt: z.number().min(0).default(0),
   otherRemarks: z.string().optional().nullable(),
-  commissionPct: z.number().default(0),
-  commissionAmt: z.number().default(0),
-  mamool: z.number().default(0),
-  courierCharge: z.number().default(0),
-  tdsPct: z.number().default(0),
+  commissionPct: z.number().min(0).default(0),
+  commissionAmt: z.number().min(0).default(0),
+  mamool: z.number().min(0).default(0),
+  courierCharge: z.number().min(0).default(0),
+  tdsPct: z.number().min(0).default(0),
   // trip km
   startKm: z.number().optional().nullable(),
   unloadDate: z.string().optional().nullable(),
@@ -214,6 +214,9 @@ async function recomputeAndStore(
       `LR ${blocked.lrNo} is ${blocked.lrType === "CANCELLED" ? "cancelled" : "a paper-change LR"} and cannot be loaded on a chalan.`
     );
   }
+  // qty must come from the same source the form uses (sum of LR item qtys) —
+  // defaulting it to 0 wiped the freight of every "Per Qty" chalan on save
+  const qty = lrs.reduce((s, l) => s + l.items.reduce((a, i) => a + toNum(i.qty), 0), 0);
   const actualWt = lrs.reduce((s, l) => s + l.items.reduce((a, i) => a + toNum(i.actualWt), 0), 0);
   const chargeWt = lrs.reduce((s, l) => s + l.items.reduce((a, i) => a + toNum(i.chargeWt), 0), 0);
   const bookingFreight = lrs.reduce((s, l) => s + toNum(l.freight), 0);
@@ -221,6 +224,7 @@ async function recomputeAndStore(
   const totals = computeChalan({
     rate: data.rate,
     rateBasis: data.rateBasis,
+    qty,
     actualWt,
     chargeWt,
     manualFreight: data.rate > 0 ? 0 : data.freight,
@@ -403,12 +407,23 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
           ).get(existing.id) ?? 0;
         if (
           round2(ownSettled + voucherSettled) > 0.009 &&
-          round2(fields.grandTotal) !== round2(toNum(existing.grandTotal))
+          (round2(fields.grandTotal) !== round2(toNum(existing.grandTotal)) ||
+            data.brokerId !== existing.brokerId)
         ) {
           return {
             ok: false as const,
             error:
-              "This chalan already has payments/settlements recorded against it — its amounts cannot be changed. Reverse the payment (or delete the settling voucher) first.",
+              "This chalan already has payments/settlements recorded against it — its amounts and broker cannot be changed. Reverse the payment (or delete the settling voucher) first.",
+          };
+        }
+        // saved advances are posted against (and consumed from) the CURRENT
+        // broker — switching brokers underneath them would leave his ledger
+        // debited for advances that now belong to someone else
+        if (data.brokerId !== existing.brokerId && existing.advances.length > 0) {
+          return {
+            ok: false as const,
+            error:
+              "This chalan has saved advances posted against its broker — the broker cannot be changed. Remove the advances first, then change the broker and re-enter them.",
           };
         }
       }
@@ -538,8 +553,11 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
       await deduction("Courier", fields.courierCharge, "Courier Recovered");
 
       await postLedger(tx, session, entries);
-      // recovered from the owner: his payable dropped by the shortage
-      await releaseShortageRecoveries(tx, "CHALAN", id);
+      // recovered from the owner: his payable dropped by the shortage.
+      // FULL teardown first (not just the recoveries): editing the shortage
+      // down to zero must also remove the recovery's ledger credit and the
+      // auto-raised entry, or a phantom open shortage survives the edit
+      await releaseShortage(tx, "CHALAN", id);
       if (fields.shortageAmt > 0) {
         await recoverShortage(tx, session, {
           date: fields.chalanDate,
@@ -1058,7 +1076,9 @@ export async function restoreChalan(
   await authorize(session, "chalan", "delete");
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const chalan = await tx.chalan.findFirst({ where: { id: chalanId, deletedAt: null } });
+      const chalan = await tx.chalan.findFirst({
+        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
       if (!chalan.cancelledAt) return { ok: false as const, error: "Chalan is not cancelled" };
 
@@ -1198,7 +1218,7 @@ export async function saveBalancePayment(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: data.chalanId, firmId: session.firmId, deletedAt: null },
+        where: { id: data.chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found." };
       if (chalan.cancelledAt) {
@@ -1380,7 +1400,10 @@ export async function saveBalancePayment(
         );
       }
       await postLedger(tx, session, balEntries);
-      await releaseShortageRecoveries(tx, "CHALAN", `${chalan.id}:BAL`);
+      // full teardown, not just the recoveries — editing the shortage down to
+      // zero must also drop the recovery's ledger credit and any auto-raised
+      // entry, or a phantom open shortage survives the re-settlement
+      await releaseShortage(tx, "CHALAN", `${chalan.id}:BAL`);
       if (data.shortage > 0.009) {
         await recoverShortage(tx, session, {
           date: paymentDate,

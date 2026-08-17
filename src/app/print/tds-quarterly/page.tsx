@@ -52,8 +52,10 @@ export default async function TdsQuarterlyPrintPage({
   const partyName = searchParams.party
     ? parties.find((p) => p.id === searchParams.party)?.name ?? ""
     : undefined;
+  // filter on the stable party id (same as the on-screen report); the name is
+  // only used for the printed filter line below
   const data = buildQuarterlyData(rows, {
-    partyName,
+    partyId: searchParams.party,
     rate: searchParams.rate,
     quarter: searchParams.quarter,
   });

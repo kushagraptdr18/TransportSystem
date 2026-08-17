@@ -88,7 +88,8 @@ export async function saveDriverAdvance(
       let id: string;
       if (d.id) {
         const before = await tx.driverAdvance.findFirstOrThrow({
-          where: { id: d.id, deletedAt: null },
+          // firm-scoped: an advance id from another firm must not be editable here
+          where: { id: d.id, firmId: session.firmId, deletedAt: null },
         });
         if (before.status === "ADJUSTED") {
           return { ok: false as const, error: "Advance already adjusted in a trip sheet — cannot edit." };
@@ -171,7 +172,9 @@ export async function deleteDriverAdvance(
   await authorize(session, "maintenance", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.driverAdvance.findFirstOrThrow({ where: { id, deletedAt: null } });
+      const before = await tx.driverAdvance.findFirstOrThrow({
+        where: { id, firmId: session.firmId, deletedAt: null },
+      });
       if (before.status === "ADJUSTED") throw new Error("Advance already adjusted in a trip sheet.");
       await tx.driverAdvance.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "DRIVER_ADVANCE", id);

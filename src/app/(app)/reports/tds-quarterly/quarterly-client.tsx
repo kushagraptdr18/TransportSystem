@@ -188,9 +188,9 @@ export function TdsQuarterlyClient({ data, fyLabel, printHref }: Props) {
               </TableRow>
             )}
             {data.parties.map((p) => (
-              <React.Fragment key={p.party}>
+              <React.Fragment key={p.partyId ?? p.party}>
                 {p.rates.map((g, gi) => (
-                  <TableRow key={`${p.party}-${g.label}`}>
+                  <TableRow key={`${p.partyId ?? p.party}-${g.label}`}>
                     <TableCell className={gi === 0 ? "font-medium" : "text-muted-foreground"}>
                       {gi === 0 ? (
                         <>

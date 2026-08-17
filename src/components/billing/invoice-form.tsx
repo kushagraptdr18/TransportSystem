@@ -713,6 +713,7 @@ export function InvoiceForm({
     },
     rcm: rcmInfo,
     gstApplied: gstApplicable && !rcmActive,
+    reverseCharge,
     remarks,
     bank:
       (bankPartyId && bankDetails?.[bankPartyId]) ||

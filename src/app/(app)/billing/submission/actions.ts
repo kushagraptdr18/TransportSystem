@@ -259,7 +259,9 @@ export async function saveSubmissionAck(
   await authorize(session, "billing", "edit");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.invoiceSubmission.findFirstOrThrow({ where: { id: data.id } });
+      const before = await tx.invoiceSubmission.findFirstOrThrow({
+        where: { id: data.id, firmId: session.firmId },
+      });
       const after = await tx.invoiceSubmission.update({
         where: { id: data.id },
         data: {
@@ -302,6 +304,11 @@ export async function setSubmissionFile(
     kind === "signed" ? "signedLetterPath" : kind === "ack" ? "ackCopyPath" : "supportingPath";
   try {
     await withTenant(session.tenantId, async (tx) => {
+      // scoped: a submission id from another firm must not be writable here
+      await tx.invoiceSubmission.findFirstOrThrow({
+        where: { id, firmId: session.firmId },
+        select: { id: true },
+      });
       await tx.invoiceSubmission.update({ where: { id }, data: { [field]: filePath } });
       await audit(tx, session, {
         entity: "InvoiceSubmission",

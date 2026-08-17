@@ -6,9 +6,10 @@ export const dynamic = "force-dynamic";
 export default async function MultipleLrPage() {
   const data = await loadLrFormData();
   // strip fields the batch wrapper supplies itself
-  const { mode: _mode, lrId: _lrId, ...formProps } = data;
+  const { mode: _mode, lrId: _lrId, isDummy: _isDummy, ...formProps } = data;
   void _mode;
   void _lrId;
+  void _isDummy;
 
   return (
     <div className="space-y-4">

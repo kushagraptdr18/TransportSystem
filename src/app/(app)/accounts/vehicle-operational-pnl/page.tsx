@@ -164,13 +164,15 @@ export default async function VehicleOperationalPnlPage({
           },
           select: { ureaAmount: true },
         }),
-        // full EMI of vehicle loans on own vehicles, on payment date
+        // full EMI of vehicle loans on own vehicles, on payment date — the
+        // loan is long-lived, so no FY filter on it: an instalment paid this
+        // period counts even when the loan was taken in an earlier FY
         tx.loanEmi.findMany({
           where: {
             deletedAt: null,
             ...(dateWhere ? { payDate: dateWhere } : {}),
             loan: {
-              ...scope,
+              firmId: session.firmId,
               deletedAt: null,
               loanType: "VEHICLE",
               vehicleId: { in: ownIds },

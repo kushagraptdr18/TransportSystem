@@ -11,6 +11,7 @@ import { toNum } from "@/lib/utils";
 import { nextLrNumber, syncSequenceTo } from "@/lib/sequences";
 import { stateCodeFromGstin } from "@/lib/calc/gst";
 import { computeLrTotals, itemAmount } from "@/components/lr/lr-calc";
+import { resyncInvoicesForLr } from "@/app/(app)/billing/actions";
 import { loadLrFormData, type LrFormData } from "./form-data";
 
 const rateBasisSchema = z.enum(["QTY", "ACTUAL_WT", "CHARGE_WT", "FIXED"]);
@@ -52,13 +53,13 @@ const lrSchema = z.object({
 
   insCompany: z.string().nullish(),
   insPolicyNo: z.string().nullish(),
-  insAmount: z.number().nullish(),
+  insAmount: z.number().min(0).nullish(),
 
   invoiceNo: z.string().nullish(),
   obdNo: z.string().nullish(),
   refNo: z.string().nullish(),
   invoiceDate: z.string().nullish(),
-  goodsValue: z.number().nullish(),
+  goodsValue: z.number().min(0).nullish(),
   ewayBillNo: z.string().nullish(),
   ewayExpiry: z.string().nullish(),
 
@@ -225,9 +226,9 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
         );
       }
 
+      data.cargoType = await deriveCargoType(tx, data.items);
       const lrData = lrRowData(data, totals, lrNo);
       const items = lrItemsData(session.tenantId, data);
-      data.cargoType = await deriveCargoType(tx, data.items);
 
       let savedId: string;
       if (data.id) {
@@ -252,6 +253,9 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
           before,
           after: updated,
         });
+        // invoice totals are snapshots — a billed LR edited here (e.g. from
+        // the bill preview) must flow through to its live bills
+        await resyncInvoicesForLr(tx, session, savedId);
       } else {
         const created = await tx.lr.create({
           data: {
@@ -315,6 +319,7 @@ export async function deleteLr(id: string): Promise<{ ok: true } | { ok: false; 
         include: {
           invoiceLrs: { include: { invoice: { select: { invoiceNo: true, deletedAt: true } } } },
           chalanLrs: { include: { chalan: { select: { chalanNo: true, deletedAt: true, cancelledAt: true } } } },
+          pods: { select: { id: true } },
         },
       });
       if (!before) throw new Error("LR not found in this firm");
@@ -335,10 +340,12 @@ export async function deleteLr(id: string): Promise<{ ok: true } | { ok: false; 
           `LR ${before.lrNo} is loaded on chalan ${liveChalan.chalan.chalanNo} — remove it from that chalan (or delete the chalan) first.`
         );
       }
+      if (before.pods.length > 0) {
+        throw new Error(`LR ${before.lrNo} has a POD — delete the POD entry first.`);
+      }
       // cascade: only stale links to deleted/cancelled documents remain now
       await tx.chalanLr.deleteMany({ where: { lrId: id } });
       await tx.invoiceLr.deleteMany({ where: { lrId: id } });
-      await tx.pod.deleteMany({ where: { lrId: id } });
       await tx.lr.update({ where: { id }, data: { deletedAt: new Date() } });
       await audit(tx, session, { entity: "Lr", entityId: id, action: "DELETE", before });
     });
@@ -468,9 +475,9 @@ const batchSchema = z.object({
 
 /**
  * Multiple LR creation: full LR payloads saved in ONE database transaction —
- * either every LR is created or none. Vehicle + LR date are taken from the
- * first entry and applied to all; LR numbers are assigned sequentially
- * (max existing + 1 onwards) at save time.
+ * either every LR is created or none. Each entry keeps its own vehicle, date
+ * and owner exactly as the batch tray shows them; LR numbers are assigned
+ * sequentially (max existing + 1 onwards) at save time.
  */
 export async function saveLrBatch(
   input: unknown
@@ -493,8 +500,6 @@ export async function saveLrBatch(
       const gstPct = igstPct > 0 ? igstPct : Number(firm.cgstPct) + Number(firm.sgstPct);
       const first = await nextLrNumber(tx, { firmId: session.firmId, fyId: session.fyId });
       let cursor = parseInt(first, 10);
-      const commonVehicleId = entries[0].vehicleId ?? null;
-      const commonDate = entries[0].lrDate;
       const lrNos: string[] = [];
 
       // user-typed LR numbers are honoured exactly; blanks are auto-assigned
@@ -536,8 +541,6 @@ export async function saveLrBatch(
           ...entries[i],
           id: null,
           lrNo: assigned[i],
-          vehicleId: commonVehicleId,
-          lrDate: commonDate,
         };
         const [consignor, consignee] = await Promise.all([
           tx.party.findUniqueOrThrow({ where: { id: data.consignorId } }),
@@ -609,14 +612,8 @@ export async function saveLrBatch(
  * Full LR-form data for editing an LR inside a dialog (e.g. from the bill
  * preview) — same payload the /lr edit page loads. Null if the LR is gone.
  */
-export async function getLrFormDataById(
-  lrId: string
-): Promise<(LrFormData & { isDummy: boolean }) | null> {
+export async function getLrFormDataById(lrId: string): Promise<LrFormData | null> {
   const data = await loadLrFormData(lrId);
   if (data.mode !== "edit" || !data.lrId) return null;
-  const session = requireSession();
-  const lr = await withTenant(session.tenantId, (tx) =>
-    tx.lr.findUnique({ where: { id: data.lrId }, select: { isDummy: true } })
-  );
-  return { ...data, isDummy: lr?.isDummy ?? false };
+  return data;
 }

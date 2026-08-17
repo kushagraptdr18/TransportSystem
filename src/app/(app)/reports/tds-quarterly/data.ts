@@ -59,6 +59,8 @@ export interface RateGroup {
 }
 
 export interface PartyGroup {
+  /** stable party link (null for rows without one, e.g. hire slips) */
+  partyId: string | null;
   party: string;
   pan: string;
   rates: RateGroup[];
@@ -88,14 +90,16 @@ export const DIRECT_LABEL = "Voucher / Direct";
 
 export function buildQuarterlyData(
   rows: TdsPayableRow[],
-  filters: { partyName?: string; rate?: string; quarter?: string }
+  filters: { partyId?: string; rate?: string; quarter?: string }
 ): QuarterlyData {
   const rateOptions = Array.from(
     new Set(rows.filter((r) => !DIRECT_MODULES.has(r.module)).map((r) => r.tdsPct))
   ).sort((a, b) => a - b);
 
   let filtered = rows;
-  if (filters.partyName) filtered = filtered.filter((r) => r.party === filters.partyName);
+  // filter on the stable party id, per payable-rows' contract — names can
+  // collide or be renamed mid-year
+  if (filters.partyId) filtered = filtered.filter((r) => r.partyId === filters.partyId);
   if (filters.rate !== undefined && filters.rate !== "" && filters.rate !== "ALL") {
     filtered = filtered.filter((r) =>
       filters.rate === DIRECT_RATE_FILTER
@@ -108,11 +112,18 @@ export function buildQuarterlyData(
     if (qi >= 0) filtered = filtered.filter((r) => quarterIndex(r.date) === qi);
   }
 
-  // party -> rate-key -> group ("DIRECT" pools every voucher/journal row)
+  // party -> rate-key -> group ("DIRECT" pools every voucher/journal row).
+  // Grouped by the stable party id (payable-rows' contract); rows with no
+  // party link (hire slips, blank-party journals) fall back to the display
+  // name so they still land somewhere visible. The name is kept for rendering.
   const byParty = new Map<string, Map<string, RateGroup>>();
+  const idByParty = new Map<string, string | null>();
+  const nameByParty = new Map<string, string>();
   const panByParty = new Map<string, string>();
   for (const r of filtered) {
-    const party = r.party || "(No Party)";
+    const party = r.partyId ?? `name:${r.party || "(No Party)"}`;
+    idByParty.set(party, r.partyId);
+    if (!nameByParty.get(party)) nameByParty.set(party, r.party || "(No Party)");
     if (r.pan && !panByParty.get(party)) panByParty.set(party, r.pan);
     const direct = DIRECT_MODULES.has(r.module);
     const key = direct ? DIRECT_RATE_FILTER : String(r.tdsPct);
@@ -140,7 +151,7 @@ export function buildQuarterlyData(
       refNo: r.refNo,
       module: r.module,
       section: r.section,
-      party,
+      party: r.party || "(No Party)",
       tdsPct: r.tdsPct,
       baseAmt: r.baseAmt,
       tdsAmt: r.tdsAmt,
@@ -152,7 +163,9 @@ export function buildQuarterlyData(
   }
 
   const parties: PartyGroup[] = Array.from(byParty.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) =>
+      (nameByParty.get(a) ?? "").localeCompare(nameByParty.get(b) ?? "")
+    )
     .map(([party, rates]) => {
       // recorded rates ascending; the combined voucher row always last
       const rateGroups = Array.from(rates.values()).sort(
@@ -171,7 +184,8 @@ export function buildQuarterlyData(
         totalTds = round2(totalTds + g.totalTds);
       }
       return {
-        party,
+        partyId: idByParty.get(party) ?? null,
+        party: nameByParty.get(party) ?? "(No Party)",
         pan: panByParty.get(party) ?? "",
         rates: rateGroups,
         cells,

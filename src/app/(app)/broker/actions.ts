@@ -10,7 +10,8 @@ import { audit } from "@/lib/audit";
 import { syncSequenceTo } from "@/lib/sequences";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { toNum } from "@/lib/utils";
-import { payableSettlement } from "@/lib/settlement";
+import { round2 } from "@/lib/calc/tds";
+import { payableSettlement, settledByRef } from "@/lib/settlement";
 import {
   applyManualAdvanceUses,
   listOpenAdvances,
@@ -292,8 +293,34 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
     const id = await withTenant(session.tenantId, async (tx) => {
       let savedId: string;
       if (data.id) {
-        const before = await tx.brokerSlip.findUniqueOrThrow({ where: { id: data.id } });
+        const before = await tx.brokerSlip.findFirst({
+          where: { id: data.id, firmId: session.firmId, fyId: session.fyId },
+        });
+        if (!before) throw new Error("Broker slip not found");
         if (before.deletedAt) throw new Error("Broker slip has been deleted");
+        // a financially settled side's money story is frozen: with a balance
+        // settlement or voucher allocation against it, changing the figures
+        // would strand the recorded settlement against amounts that no longer
+        // exist (mirrors the chalan guard)
+        const voucherSettled =
+          (
+            await settledByRef(tx, {
+              firmId: session.firmId,
+              fyId: session.fyId,
+              refTypes: ["BROKER_ENTRY"],
+              refIds: [data.id],
+            })
+          ).get(data.id) ?? 0;
+        const pFrozen = before.pPaymentStatus === "RECEIVED";
+        const vFrozen = before.vPaymentStatus === "PAID" || voucherSettled > 0.009;
+        if (
+          (pFrozen && round2(pTotals.balance) !== round2(toNum(before.pBalance))) ||
+          (vFrozen && round2(vTotals.balance) !== round2(toNum(before.vBalance)))
+        ) {
+          throw new Error(
+            "This slip already has payments/settlements recorded against it — its amounts cannot be changed. Reverse the payment (or delete the settling voucher) first."
+          );
+        }
         const updated = await tx.brokerSlip.update({ where: { id: data.id }, data: slipData });
         savedId = updated.id;
         await audit(tx, session, {
@@ -597,7 +624,27 @@ export async function deleteBrokerSlip(
   await authorize(session, "broker", "delete");
   try {
     await withTenant(session.tenantId, async (tx) => {
-      const before = await tx.brokerSlip.findUniqueOrThrow({ where: { id } });
+      const before = await tx.brokerSlip.findFirst({
+        where: { id, firmId: session.firmId, fyId: session.fyId },
+      });
+      if (!before) throw new Error("Broker slip not found");
+      // a slip settled through a Payment Voucher must NEVER be deleted: the
+      // voucher's debit and allocation would survive against a document that
+      // no longer exists (mirrors the chalan delete guard)
+      const voucherSettled =
+        (
+          await settledByRef(tx, {
+            firmId: session.firmId,
+            fyId: session.fyId,
+            refTypes: ["BROKER_ENTRY"],
+            refIds: [id],
+          })
+        ).get(id) ?? 0;
+      if (voucherSettled > 0.009) {
+        throw new Error(
+          "This broker slip has already been settled through a voucher and cannot be deleted. Delete/reverse that voucher first."
+        );
+      }
       await tx.brokerSlip.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "BROKER_SLIP", id);
       await reverseLedger(tx, "BROKER_SLIP_ADVANCE", id);
@@ -788,21 +835,27 @@ export async function saveBrokerBalancePayment(
       await releaseShortage(tx, "BROKER_SLIP", settleRef);
       const extras: Parameters<typeof postLedger>[2] = [];
       if (counterPartyId && Math.abs(data.roundOff) > 0.009) {
+        // a negative round-off means a little extra moved, so the legs flip
+        // (mirrors the chalan balance payment)
+        const signed = data.roundOff;
+        const amount = Math.abs(signed);
         const roundHeadId = await ensureAccountHead(tx, session, "Round Off", "INCOME");
-        const partySide = data.side === "P" ? "CREDIT" : "DEBIT";
+        const baseSide = data.side === "P" ? "CREDIT" : "DEBIT";
+        const partySide =
+          signed > 0 ? baseSide : baseSide === "CREDIT" ? "DEBIT" : "CREDIT";
         extras.push(
           {
             ...common,
             partyId: counterPartyId,
             side: partySide,
-            amount: Math.abs(data.roundOff),
-            narration: `Round off — broker slip ${slip.slipNo}`,
+            amount,
+            narration: `Round off ${signed > 0 ? "deducted" : "added"} at balance settlement — broker slip ${slip.slipNo}`,
           },
           {
             ...common,
             accountHeadId: roundHeadId,
             side: partySide === "CREDIT" ? "DEBIT" : "CREDIT",
-            amount: Math.abs(data.roundOff),
+            amount,
             narration: `Round off — broker slip ${slip.slipNo}`,
           }
         );

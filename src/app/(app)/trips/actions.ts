@@ -173,6 +173,38 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
         );
       }
 
+      // Overlapping windows double-consume the register: diesel / toll / urea
+      // fetches select purely by vehicle + date range, so two trips sharing a
+      // day would each pull the same purchases. Reject the overlap outright.
+      const winStart = data.fromDate ? toDate(data.fromDate) : toDate(data.tripDate);
+      const rawWinEnd = data.toDate
+        ? toDate(data.toDate)
+        : data.returnDate
+          ? toDate(data.returnDate)
+          : toDate(data.tripDate);
+      const dayEnd = (dt: Date) =>
+        new Date(dt.getFullYear(), dt.getMonth(), dt.getDate(), 23, 59, 59, 999);
+      const winEnd = dayEnd(rawWinEnd);
+      const others = await tx.trip.findMany({
+        where: {
+          firmId: session.firmId,
+          vehicleId: data.vehicleId,
+          deletedAt: null,
+          ...(data.id ? { id: { not: data.id } } : {}),
+        },
+        select: { tripNo: true, tripDate: true, returnDate: true, fromDate: true, toDate: true },
+      });
+      const clash = others.find((o) => {
+        const oStart = o.fromDate ?? o.tripDate;
+        const oEnd = dayEnd(o.toDate ?? o.returnDate ?? o.tripDate);
+        return oStart <= winEnd && winStart <= oEnd;
+      });
+      if (clash) {
+        throw new Error(
+          `Trip window overlaps trip ${clash.tripNo} for this vehicle — diesel / toll / urea would be fetched into both sheets. Adjust the dates.`
+        );
+      }
+
       let tripNo = data.tripNo;
       if (!data.id && !tripNo) {
         tripNo = await nextDocNumber(tx, {
@@ -277,8 +309,9 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
 
       let savedId: string;
       if (data.id) {
-        const before = await tx.trip.findUniqueOrThrow({
-          where: { id: data.id },
+        const before = await tx.trip.findFirstOrThrow({
+          // firm-scoped: a trip id from another firm must not be editable here
+          where: { id: data.id, firmId: session.firmId },
           include: { expenses: true },
         });
         if (before.deletedAt) throw new Error("Trip has been deleted");
@@ -372,6 +405,16 @@ export async function saveTrip(input: unknown): Promise<SaveResult> {
       const existingSettlement = await tx.driverSettlement.findFirst({
         where: { tripId: savedId, deletedAt: null },
       });
+      // a SETTLED balance is money that already moved — silently dropping the
+      // recomputed delta hid the mismatch; refuse the edit instead
+      if (
+        existingSettlement?.status === "SETTLED" &&
+        Math.abs(toNumSafe(existingSettlement.amount) - data.driverBalance) >= 0.01
+      ) {
+        throw new Error(
+          `Trip already settled — the driver balance cannot change (settled ${toNumSafe(existingSettlement.amount)}, recomputed ${data.driverBalance}). Reverse the settlement voucher first.`
+        );
+      }
       if (data.driverId && data.driverBalance !== 0) {
         const sData = {
           date: data.returnDate ? toDate(data.returnDate) : toDate(data.tripDate),

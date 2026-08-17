@@ -18,7 +18,8 @@ export default async function TripPrintPage({ params }: { params: { id: string }
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const trip = await tx.trip.findFirst({
-      where: { id: params.id, deletedAt: null },
+      // firm-scoped: another firm's trip must not print under this session
+      where: { id: params.id, firmId: session.firmId, deletedAt: null },
       include: { expenses: true },
     });
     if (!trip) return null;

@@ -16,6 +16,15 @@ export const dynamic = "force-dynamic";
  */
 
 const n = (v: unknown) => toNum(String(v ?? 0));
+
+/**
+ * ACTUAL-method trip sheets write their auto-fetched vehicle-register expenses
+ * back as one MISC trip-expense row carrying this remark. Section 4 below
+ * already lists those same rupees from the register (VehicleExpenseItem), so
+ * the marked row is excluded from the trip-expense side — the register stays
+ * authoritative and the profit analysis counts the money once.
+ */
+const AUTO_REGISTER_EXPENSE_REMARK = "Other operating expenses (auto)";
 const cell = "border px-1.5 py-0.5";
 const money = (v: number) => <span className="tabular-nums">{formatMoney(v)}</span>;
 
@@ -56,7 +65,8 @@ export default async function TripSummaryPage({ params }: { params: { id: string
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const trip = await tx.trip.findFirst({
-      where: { id: params.id, deletedAt: null },
+      // firm-scoped: another firm's trip must not print under this session
+      where: { id: params.id, firmId: session.firmId, deletedAt: null },
       include: { expenses: true },
     });
     if (!trip) return null;
@@ -102,12 +112,19 @@ export default async function TripSummaryPage({ params }: { params: { id: string
         include: { voucher: true },
         orderBy: { allocDate: "asc" },
       }),
-      // instalments paid in the trip period for this vehicle's loans
+      // instalments paid in the trip period for this vehicle's loans — a loan
+      // is long-lived, so the EMI counts by its PAY date, never the loan's
+      // origin FY (which hid instalments of loans taken in an earlier year)
       tx.loanEmi.findMany({
         where: {
           deletedAt: null,
           payDate: { gte: start, lte: end },
-          loan: { firmId: session.firmId, fyId: session.fyId, deletedAt: null, vehicleId: trip.vehicleId },
+          loan: {
+            firmId: session.firmId,
+            deletedAt: null,
+            loanType: "VEHICLE",
+            vehicleId: trip.vehicleId,
+          },
         },
         include: { loan: true },
         orderBy: { payDate: "asc" },
@@ -231,11 +248,16 @@ export default async function TripSummaryPage({ params }: { params: { id: string
   // ---------- trip expenses ----------
   const catLabel = (c: string) =>
     c.split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ");
+  // the marked auto-register row duplicates section 4 — see the constant above
+  const ownTripExpenses = trip.expenses.filter(
+    (e) => e.remarks !== AUTO_REGISTER_EXPENSE_REMARK
+  );
   const byCat = new Map<string, number>();
-  for (const e of trip.expenses) {
+  for (const e of ownTripExpenses) {
     byCat.set(e.category, round2((byCat.get(e.category) ?? 0) + n(e.amount)));
   }
-  const tripExpenses = n(trip.approvedTotal) || round2(trip.expenses.reduce((s, e) => s + n(e.amount), 0));
+  const tripExpenses =
+    n(trip.approvedTotal) || round2(ownTripExpenses.reduce((s, e) => s + n(e.amount), 0));
 
   // ---------- vehicle expenses in period (diesel/toll excluded from P&L math) ----------
   const isDieselOrToll = (headId: string) => {

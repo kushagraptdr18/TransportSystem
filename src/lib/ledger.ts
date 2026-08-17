@@ -14,6 +14,10 @@ export interface LedgerPostEntry {
   refId: string;
   refNo: string;
   narration?: string | null;
+  /** override the session's firm/FY — e.g. re-posting a document that lives
+   *  in another financial year must not re-stamp it into the session's */
+  firmId?: string;
+  fyId?: string;
 }
 
 /**
@@ -30,8 +34,8 @@ export async function postLedger(
     .filter((e) => e.amount > 0)
     .map((e) => ({
       tenantId: session.tenantId,
-      firmId: session.firmId,
-      fyId: session.fyId,
+      firmId: e.firmId ?? session.firmId,
+      fyId: e.fyId ?? session.fyId,
       date: e.date,
       partyId: e.partyId ?? null,
       vehicleId: e.vehicleId ?? null,

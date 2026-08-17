@@ -171,7 +171,7 @@ export function MultiLrBatch(props: Omit<LrFormProps, "mode" | "isDummy">) {
             <span>
               LRs in this batch <Badge variant="secondary">{batch.length}</Badge>
               <span className="ml-2 font-normal text-muted-foreground">
-                — vehicle &amp; date stay the same for every LR; numbers are sequential
+                — each LR keeps its own vehicle &amp; date as shown below; numbers are sequential
               </span>
             </span>
             <span className="flex flex-wrap items-center gap-2">

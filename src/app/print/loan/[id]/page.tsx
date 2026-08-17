@@ -17,7 +17,8 @@ export default async function LoanPrintPage({ params }: { params: { id: string }
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const loan = await tx.loan.findFirst({
-      where: { id: params.id, deletedAt: null },
+      // firm-scoped: another firm's loan must not print under this session
+      where: { id: params.id, firmId: session.firmId, deletedAt: null },
       include: { emis: { where: { deletedAt: null }, orderBy: { payDate: "asc" } } },
     });
     if (!loan) return null;

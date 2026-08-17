@@ -85,7 +85,9 @@ export async function getFinanceData(): Promise<{
     const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null as null };
     const [loans, txns, parties, vehicles] = await Promise.all([
       tx.loan.findMany({
-        where: scope,
+        // loans are long-lived: firm-scoped only, so a loan taken in an earlier
+        // FY stays visible and payable after the year changes
+        where: { firmId: session.firmId, deletedAt: null },
         include: { emis: { where: { deletedAt: null }, orderBy: { payDate: "asc" } } },
         orderBy: { date: "desc" },
       }),

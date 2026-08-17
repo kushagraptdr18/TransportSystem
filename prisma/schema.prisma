@@ -1111,7 +1111,11 @@ model Invoice {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  @@unique([firmId, fyId, kind, invoiceNo])
+  // Invoice numbers are unique per firm + FY + kind among ACTIVE (non-deleted)
+  // invoices only — enforced by a partial unique index in SQL (Prisma cannot
+  // model partial indexes): Invoice_firmId_fyId_kind_invoiceNo_active_key
+  // WHERE "deletedAt" IS NULL. Soft-deleted invoice numbers can be reused.
+  @@index([firmId, fyId, kind, invoiceNo])
   @@index([tenantId, firmId, fyId, kind])
   @@index([tenantId, partyId])
 }
@@ -1648,6 +1652,8 @@ model Pod {
   updatedAt   DateTime @updatedAt
 
   @@unique([firmId, fyId, docNo])
+  // one POD per LR — concurrent saves must not create duplicates
+  @@unique([lrId])
   @@index([tenantId, lrId])
 }
 
@@ -2746,6 +2752,9 @@ model DriverFnf {
   deletedAt   DateTime?
 
   @@unique([firmId, fyId, settlementNo])
+  // one F&F per driver, EVER — closes the race where two concurrent
+  // finalizations both passed the findFirst existence check
+  @@unique([driverId])
   @@index([tenantId, driverId])
 }
 

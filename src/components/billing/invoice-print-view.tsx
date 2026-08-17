@@ -83,6 +83,8 @@ export interface InvoiceViewData {
   /** informational RCM split — never affects the invoice total */
   rcm: { taxableValue: number; pct: number; cgst: number; sgst: number; igst: number } | null;
   gstApplied: boolean;
+  /** the bill itself is on reverse-charge basis (not the firm's RCM default) */
+  reverseCharge: boolean;
   remarks: string;
   /**
    * Kept as separate fields rather than one joined line: this is what the
@@ -176,6 +178,27 @@ export function InvoicePrintView({
   // rather than hard-coded, or the totals slide under the wrong headings the
   // moment a column is dropped
   const totalLabelSpan = columns.filter((c) => !TOTAL_COLUMNS.includes(c.header)).length;
+
+  // header info pairs, laid out two per row; a 0% TDS bill drops its pair
+  // entirely rather than printing 0% (or the old, wrong 1%)
+  const infoPairs: [string, string][] = [
+    ["PAN", firm.pan],
+    ["GSTIN", firm.gstin],
+    ["Vendor Code", party.vendorCode || firm.vendorCode],
+    ["IBA Code", firm.ibaCode],
+    // "(Info)" is deliberate: TDS is the customer's to deduct, not a charge
+    // on this bill
+    ...(data.tdsPct > 0
+      ? ([["TDS Applicable (Info)", `${data.tdsPct}%`]] as [string, string][])
+      : []),
+    ["SAC Code", data.sacCode],
+    ["Service", data.serviceDescription],
+    ["Reverse Charge", data.reverseCharge ? "Yes" : "No"],
+    ["Place of Supply", data.placeOfSupply],
+    ["State / Code", `${firm.stateName}${firm.stateCode ? ` / ${firm.stateCode}` : ""}`],
+  ];
+  const infoRows: [string, string][][] = [];
+  for (let i = 0; i < infoPairs.length; i += 2) infoRows.push(infoPairs.slice(i, i + 2));
 
   // a missing branch or IFSC drops its line rather than printing a label with
   // nothing after it; no bank on the bill drops the block entirely
@@ -281,37 +304,12 @@ export function InvoicePrintView({
                 <tbody>
                   {/* one list, two pairs per row — reordering is a code edit
                       here rather than a re-layout */}
-                  {(
-                    [
-                      ["PAN", firm.pan, "GSTIN", firm.gstin],
-                      [
-                        "Vendor Code",
-                        party.vendorCode || firm.vendorCode,
-                        "IBA Code",
-                        firm.ibaCode,
-                      ],
-                      // "(Info)" is deliberate: TDS is the customer's to deduct,
-                      // not a charge on this bill
-                      ["TDS Applicable (Info)", `${data.tdsPct || 1}%`, "SAC Code", data.sacCode],
-                      [
-                        "Service",
-                        data.serviceDescription,
-                        "Reverse Charge",
-                        firm.rcmCovered ? "Yes" : "No",
-                      ],
-                      [
-                        "Place of Supply",
-                        data.placeOfSupply,
-                        "State / Code",
-                        `${firm.stateName}${firm.stateCode ? ` / ${firm.stateCode}` : ""}`,
-                      ],
-                    ] as [string, string, string, string][]
-                  ).map(([l1, v1, l2, v2]) => (
-                    <tr key={l1}>
-                      <td className={`${labelCell} border-t-0`}>{l1}</td>
-                      <td className={`${cell} border-t-0`}>{v1}</td>
-                      <td className={`${labelCell} border-t-0`}>{l2}</td>
-                      <td className={`${cell} border-r-0 border-t-0`}>{v2}</td>
+                  {infoRows.map(([a, b]) => (
+                    <tr key={a[0]}>
+                      <td className={`${labelCell} border-t-0`}>{a[0]}</td>
+                      <td className={`${cell} border-t-0`}>{a[1]}</td>
+                      <td className={`${labelCell} border-t-0`}>{b?.[0] ?? ""}</td>
+                      <td className={`${cell} border-r-0 border-t-0`}>{b?.[1] ?? ""}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -468,7 +466,14 @@ export function InvoicePrintView({
                         [`SGST @ ${data.gstPct / 2}%`, formatMoney(totals.sgstAmt)],
                         [`IGST @ ${data.gstPct}%`, formatMoney(totals.igstAmt)],
                       ] as [string, string][])
-                    : ([["GST", "Payable under RCM by recipient"]] as [string, string][])),
+                    : // only a bill actually on reverse-charge shifts GST to the
+                      // recipient — a plain no-GST bill must not claim RCM
+                      ([
+                        [
+                          "GST",
+                          data.reverseCharge ? "Payable under RCM by recipient" : "Not Applicable",
+                        ],
+                      ] as [string, string][])),
                   ["Less: Advance", formatMoney(totals.advance)],
                   ["Round Off", (roundOff >= 0 ? "+" : "−") + formatMoney(Math.abs(roundOff))],
                 ] as [string, string][]

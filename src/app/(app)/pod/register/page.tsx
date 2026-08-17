@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { getVehicleOptions } from "@/lib/lookups";
 import { toNum } from "@/lib/utils";
@@ -22,6 +23,7 @@ export default async function PodRegisterPage({
   searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
+  await authorize(session, "pod", "view");
 
   const dateFrom = searchParams.date_from ? new Date(searchParams.date_from + "T00:00:00") : null;
   const dateTo = searchParams.date_to ? new Date(searchParams.date_to + "T23:59:59.999") : null;

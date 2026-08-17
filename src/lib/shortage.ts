@@ -286,6 +286,32 @@ export async function releaseShortageRecoveries(
   if (rows.length) await tx.shortageRecovery.deleteMany({ where: { module, refId } });
 }
 
+/**
+ * Amount recovered against a document's raised shortages by OTHER documents.
+ * A document whose raised shortage carries such recoveries cannot simply be
+ * torn down — releasing the entry would orphan the recoveries and silently
+ * lose money already collected elsewhere.
+ */
+export async function externallyRecoveredShortage(
+  tx: Tx,
+  module: ShortageModule,
+  refId: string
+): Promise<number> {
+  const raised = await tx.shortageEntry.findMany({
+    where: { module, refId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!raised.length) return 0;
+  const rows = await tx.shortageRecovery.findMany({
+    where: {
+      shortageId: { in: raised.map((s) => s.id) },
+      NOT: { module, refId },
+    },
+    select: { amount: true },
+  });
+  return round2(rows.reduce((s, r) => s + Number(r.amount), 0));
+}
+
 /** Full teardown for a deleted source document: its raises AND its recoveries. */
 export async function releaseShortage(
   tx: Tx,

@@ -22,7 +22,10 @@ export default async function BrokerSlipPrintPage({
   const copies = Math.min(3, Math.max(1, parseInt(searchParams.copies ?? "1", 10) || 1));
 
   const data = await withTenant(session.tenantId, async (tx) => {
-    const slip = await tx.brokerSlip.findFirst({ where: { id: params.id, deletedAt: null } });
+    // firm scoped: another firm's slip must never print under this session
+    const slip = await tx.brokerSlip.findFirst({
+      where: { id: params.id, firmId: session.firmId, deletedAt: null },
+    });
     if (!slip) return null;
     const [firm, parties, cities, vehicles, vAlloc] = await Promise.all([
       tx.firm.findUnique({ where: { id: slip.firmId } }),

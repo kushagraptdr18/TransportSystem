@@ -87,7 +87,7 @@ export async function saveLoan(
     return await withTenant(session.tenantId, async (tx) => {
       // One loan, one vehicle: a second loan on the same vehicle would make the
       // vehicle's finance tab and its EMI cost ambiguous.
-      if (d.vehicleId) {
+      if (d.loanType === "VEHICLE" && d.vehicleId) {
         const clash = await tx.loan.findFirst({
           where: {
             firmId: session.firmId,
@@ -112,7 +112,9 @@ export async function saveLoan(
         partyId: d.partyId,
         loanType: d.loanType,
         purpose: d.purpose?.trim() || null,
-        vehicleId: d.loanType === "VEHICLE" ? d.vehicleId || null : d.vehicleId || null,
+        // only a VEHICLE loan carries a vehicle — a stray vehicleId on any
+        // other loan type would drag its EMIs into the vehicle P&Ls
+        vehicleId: d.loanType === "VEHICLE" ? d.vehicleId || null : null,
         amount: d.amount,
         interestMode: d.interestMode,
         interestRate: d.interestRate,
@@ -406,7 +408,9 @@ export async function payLoanEmi(
       // A VEHICLE loan's whole instalment is one operating cost: no fixed
       // assets or loan-liability ledgers exist in this ERP, so the full EMI
       // debits "Vehicle EMI Expense" (vehicle-stamped) and nothing splits.
-      const vehicleEmiRule = !!loan.vehicleId && taken;
+      // Keyed on the loan TYPE, not vehicleId — a legacy non-vehicle loan
+      // carrying a stray vehicleId must keep the standard split.
+      const vehicleEmiRule = loan.loanType === "VEHICLE";
       if (vehicleEmiRule) {
         const headId = await ensureAccountHead(tx, session, "Vehicle EMI Expense", "EXPENSE");
         entries.push({
@@ -451,7 +455,7 @@ export async function payLoanEmi(
       // Relative vehicle: the company paid an EMI on a vehicle it does not own,
       // so the whole instalment belongs on the relative owner's ledger. Same
       // rule diesel and every other expense head already follow.
-      if (loan.vehicleId && taken) {
+      if (vehicleEmiRule && loan.vehicleId) {
         const vehicle = await tx.vehicle.findFirst({ where: { id: loan.vehicleId } });
         if (vehicle?.ownershipType === "RELATIVE" && vehicle.ownerId) {
           // credit the same head the EMI debited, so the transfer nets it out

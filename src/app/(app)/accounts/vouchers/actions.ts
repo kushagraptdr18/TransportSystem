@@ -18,7 +18,12 @@ import {
   ALL_PAYABLE_REF_TYPES,
   ALL_RECEIVABLE_REF_TYPES,
 } from "@/lib/settlement";
-import { raiseShortage, recoverShortage, releaseShortage } from "@/lib/shortage";
+import {
+  externallyRecoveredShortage,
+  raiseShortage,
+  recoverShortage,
+  releaseShortage,
+} from "@/lib/shortage";
 import {
   applyManualAdvanceUses,
   listOpenAdvances,
@@ -259,10 +264,17 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         error: `Header TDS (${data.tdsAmt}) must equal the TDS on the allocation rows (${rowTds}).`,
       };
     }
-    if (rowDed > 0.009 && Math.abs(round2(data.deduction + data.otherAmt) - rowDed) > 0.02) {
+    // Row deductions (shortage + other ded.) are funded by the HEADER
+    // deduction ALONE — the entry screen folds both into it. Header otherAmt
+    // is the OPPOSITE concept (charges ADDED to the net) and must never stand
+    // in for a row deduction: the poster would clamp its Shortage leg to zero
+    // and commit more credit than debit. Validating the two header fields
+    // separately keeps the DR and CR the poster produces equal for every
+    // accepted payload.
+    if (rowDed > 0.009 && Math.abs(round2(data.deduction) - rowDed) > 0.02) {
       return {
         ok: false,
-        error: `Header deductions (${round2(data.deduction + data.otherAmt)}) must equal the deductions on the allocation rows (${rowDed}).`,
+        error: `Header deduction (${round2(data.deduction)}) must equal the shortage + other deductions on the allocation rows (${rowDed}).`,
       };
     }
   }
@@ -482,6 +494,11 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       }
 
       let savedId: string;
+      // the previous save's shortage-relevant figures (edit path) — decide
+      // below whether the raised shortage entry must be torn down or kept
+      let prevRowShortage = 0;
+      let prevShortageMode: "RAISE" | "RECOVER" | null = null;
+      let prevShortagePartyId: string | null = null;
       if (data.id) {
         // scoped to the session's firm/FY: reversing and re-posting under the
         // wrong scope would silently migrate accounting across firms/years
@@ -491,6 +508,18 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         });
         if (!before) throw new Error("Voucher not found in this firm/financial year");
         if (before.deletedAt) throw new Error("Voucher has been deleted");
+        prevRowShortage = round2(
+          before.allocations.reduce((s, a) => s + Number(a.deduction), 0)
+        );
+        prevShortagePartyId = before.partyId;
+        prevShortageMode =
+          prevRowShortage > 0.009 && before.partyId
+            ? before.type === "PAYMENT"
+              ? "RECOVER"
+              : before.type === "RECEIPT"
+                ? "RAISE"
+                : null
+            : null;
         await tx.voucherAllocation.deleteMany({ where: { voucherId: data.id } });
         const updated = await tx.voucher.update({
           where: { id: data.id },
@@ -696,11 +725,38 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       // The register's single Shortage-head leg IS the posting for this
       // shortage — the header block above deliberately leaves it out (posting
       // both doubled the head and unbalanced the books).
-      await releaseShortage(tx, "VOUCHER", savedId);
       const allocShortage = round2(
         data.allocations.reduce((s, a) => s + a.deduction, 0)
       );
-      if (allocShortage > 0.009 && data.partyId && (data.type === "PAYMENT" || data.type === "RECEIPT")) {
+      const shortageMode: "RAISE" | "RECOVER" | null =
+        allocShortage > 0.009 && data.partyId
+          ? data.type === "PAYMENT"
+            ? "RECOVER"
+            : data.type === "RECEIPT"
+              ? "RAISE"
+              : null
+          : null;
+      // Releasing on EVERY save soft-deleted the raised entry and defeated
+      // raiseShortage's idempotent reuse — an edit silently reset recoveries
+      // other documents had already booked against it. Tear down only when
+      // the shortage-relevant figures actually changed; an unchanged save
+      // reuses the existing entry (recoveries intact) via raiseShortage /
+      // recoverShortage themselves. A change that would orphan recoveries
+      // from OTHER documents is blocked instead.
+      const shortageChanged =
+        prevShortageMode !== shortageMode ||
+        prevShortagePartyId !== (data.partyId || null) ||
+        Math.abs(prevRowShortage - allocShortage) > 0.009;
+      if (data.id && shortageChanged) {
+        const extRecovered = await externallyRecoveredShortage(tx, "VOUCHER", savedId);
+        if (extRecovered > 0.009) {
+          throw new Error(
+            "The shortage raised by this voucher already has recoveries booked from other documents — release those recoveries first."
+          );
+        }
+        await releaseShortage(tx, "VOUCHER", savedId);
+      }
+      if (shortageMode) {
         const refNos = Array.from(new Set(data.allocations.filter((a) => a.deduction > 0).map((a) => a.refNo)));
         const shortageArgs = {
           date: voucherDate,
@@ -835,6 +891,26 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         });
       }
 
+      // an auto-advance that other documents already consumed is anchored to
+      // its party and direction — an edit must never migrate it to another
+      // party or flip it by changing the voucher type
+      if (data.id) {
+        const priorAdv = await tx.partyAdvance.findFirst({
+          where: { voucherId: savedId, deletedAt: null },
+        });
+        if (
+          priorAdv &&
+          Number(priorAdv.consumedAmount) > 0.009 &&
+          (!isMoneyType ||
+            priorAdv.kind !== advanceKind ||
+            priorAdv.partyId !== (data.partyId || null))
+        ) {
+          throw new Error(
+            "The advance created by this voucher is already adjusted against bills — its party and voucher type cannot change. Remove those adjustments first."
+          );
+        }
+      }
+
       // ---- automatic party advance (receive-as-advance / over-payment /
       // advance-payment / over-payment on payables) ----
       // Any unallocated remainder of a party receipt OR payment becomes an
@@ -951,6 +1027,15 @@ export async function deleteVoucher(
       }
       if (adv) {
         await tx.partyAdvance.update({ where: { id: adv.id }, data: { deletedAt: new Date() } });
+      }
+      // a shortage this voucher raised may already be recovered by OTHER
+      // documents — deleting would orphan those recoveries and lose money
+      // already collected elsewhere
+      const extRecovered = await externallyRecoveredShortage(tx, "VOUCHER", id);
+      if (extRecovered > 0.009) {
+        throw new Error(
+          "The shortage raised by this voucher already has recoveries booked from other documents — release those recoveries first."
+        );
       }
       await tx.voucher.update({ where: { id }, data: { deletedAt: new Date() } });
       // driver settlements this voucher had settled become payable again
@@ -1086,7 +1171,10 @@ export async function getAllocationCandidates(input: {
       const paid = await allocatedByRef(tx, scope, moduleLink, invoices.map((i) => i.id), voucherId);
       for (const inv of invoices) {
         const bill = Number(inv.grandTotal);
-        const outstanding = round2(bill - Number(inv.advance) - (paid.get(inv.id) ?? 0));
+        // outstanding on the SAME base the save-time ceiling and settlement
+        // use: netTotal (GST included) less the advance — grandTotal excludes
+        // the GST, so a GST bill could never be settled in full from the grid
+        const outstanding = round2(Number(inv.netTotal) - Number(inv.advance) - (paid.get(inv.id) ?? 0));
         if (outstanding > 0)
           out.push({
             refId: inv.id,
@@ -1495,6 +1583,9 @@ export async function getOpenCancelAdvances(partyId: string): Promise<OpenCancel
     const advances = await tx.partyAdvance.findMany({
       where: {
         firmId: session.firmId,
+        // the save path only accepts this FY's advances — listing other years
+        // would offer rows that can never be saved
+        fyId: session.fyId,
         partyId,
         deletedAt: null,
         source: "CHALAN_CANCEL",
