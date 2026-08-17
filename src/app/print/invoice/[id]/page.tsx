@@ -213,16 +213,25 @@ export default async function InvoicePrintPage({ params }: { params: { id: strin
           igstAmt: toNum(invoice.igstAmt),
           totalBilled: toNum(invoice.netTotal),
           rcmNote: gstTotal === 0,
+          // the account is the firm's own — the bill's selected bank party wins,
+          // else the bank saved in Company Master prints as the default
           bank: bank
             ? {
-                // the account is the firm's own — the bank party holds its details
                 accountName: firm?.name ?? "",
                 account: bank.bankAccount ?? "",
                 bankName: bank.bankName ?? bank.name,
                 ifsc: bank.bankIfsc ?? "",
                 branch: bank.bankBranch ?? "",
               }
-            : null,
+            : firm?.bankAccount || firm?.bankName
+              ? {
+                  accountName: firm.name,
+                  account: firm.bankAccount ?? "",
+                  bankName: firm.bankName ?? "",
+                  ifsc: firm.bankIfsc ?? "",
+                  branch: firm.bankBranch ?? "",
+                }
+              : null,
         }
       : null;
 

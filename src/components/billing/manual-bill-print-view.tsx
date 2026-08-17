@@ -87,15 +87,12 @@ export function ManualBillPrintView({ data }: { data: ManualBillViewData }) {
           <div className="flex w-[16%] flex-col justify-between border-r border-black p-1">
             {firm.logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={firm.logoUrl} alt="" className="max-h-14 self-center object-contain" />
+              <img src={firm.logoUrl} alt="" className="max-h-24 w-full self-center object-contain" />
             ) : (
               <div />
             )}
             <div className="text-[7px] leading-tight">
-              <div>Classification of Service : Transport of goods service by Road.</div>
-              <div className="mt-0.5 border border-black px-0.5 text-[9px] font-bold">
-                PAN No. {firm.pan}
-              </div>
+              Classification of Service : Transport of goods service by Road.
             </div>
           </div>
           <div className="flex flex-1 flex-col justify-center border-r border-black p-1 text-center">
@@ -107,6 +104,11 @@ export function ManualBillPrintView({ data }: { data: ManualBillViewData }) {
             </div>
             <div className="text-[9px] font-semibold">Regd.Office :- {firm.regdOffice}</div>
             {firm.mobile && <div className="text-[9px]">MOB:- {firm.mobile}</div>}
+            {firm.pan && (
+              <div className="mx-auto mt-0.5 inline-block border border-black px-2 text-[10px] font-bold">
+                PAN No. {firm.pan}
+              </div>
+            )}
           </div>
           <div className="w-[27%] text-[10px]">
             <div className="flex border-b border-black">
@@ -276,7 +278,7 @@ export function ManualBillPrintView({ data }: { data: ManualBillViewData }) {
           </div>
           {firm.sealUrl && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={firm.sealUrl} alt="" className="mr-8 mt-2 max-h-24 object-contain" />
+            <img src={firm.sealUrl} alt="" className="mr-8 mt-1 max-h-36 object-contain" />
           )}
         </div>
 
