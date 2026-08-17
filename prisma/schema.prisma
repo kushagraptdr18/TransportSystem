@@ -1885,6 +1885,29 @@ model TripExpense {
   @@index([tenantId])
 }
 
+// Malik Nikasi: an owner drawing money out of a vehicle's earnings. Not an
+// expense — it never touches the vehicle P&L's net; it only reduces the
+// vehicle's running balance (lifetime net − lifetime withdrawals). Posts to
+// the owner party's ledger (DEBIT) and the paying bank/cash book (CREDIT).
+model VehicleWithdrawal {
+  id            String    @id @default(cuid())
+  tenantId      String
+  firmId        String
+  fyId          String
+  vehicleId     String
+  partyId       String // the malik (owner party) who took the money
+  payPartyId    String // BANK / CASH / CARD party the money left from
+  date          DateTime
+  amount        Decimal   @db.Decimal(14, 2)
+  remarks       String?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  @@index([tenantId, firmId, vehicleId])
+}
+
 model VehicleExpense {
   id        String   @id @default(cuid())
   tenantId  String

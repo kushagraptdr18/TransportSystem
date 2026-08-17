@@ -1,5 +1,4 @@
-﻿import type { Prisma } from "@prisma/client";
-import { requireSession } from "@/lib/session";
+﻿import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
@@ -63,53 +62,39 @@ export async function VehiclePnlTab({
   const dateTo = searchParams.date_to ? new Date(searchParams.date_to + "T23:59:59") : null;
 
   const data = await withTenant(session.tenantId, async (tx) => {
-    const tripWhere: Prisma.TripWhereInput = {
-      firmId: session.firmId,
-      fyId: session.fyId,
-      deletedAt: null,
-    };
-    if (searchParams.vehicle) tripWhere.vehicleId = searchParams.vehicle;
-    if (searchParams.driver) tripWhere.driverId = searchParams.driver;
-    if (dateFrom || dateTo) {
-      tripWhere.tripDate = { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) };
-    }
-
+    // everything is fetched LIFETIME (firm-scoped, no FY/date filter) and the
+    // period figures are carved out in JS below: the running balance needs
+    // "shuru se ab tak" nets no matter what period the filters show
     const [
       vehicles,
-      trips,
+      allTrips,
       drivers,
       cities,
       heads,
-      expItems,
-      salaries,
+      allExpItems,
+      allSalaries,
       assignments,
       settlements,
       advances,
-      loanEmis,
+      allLoanEmis,
+      withdrawals,
     ] = await Promise.all([
         tx.vehicle.findMany({
           where: { ownershipType: { in: ["OWNER", "RELATIVE"] } },
           orderBy: { number: "asc" },
         }),
-        tx.trip.findMany({ where: tripWhere, include: { expenses: true }, orderBy: { tripDate: "asc" } }),
+        tx.trip.findMany({
+          where: { firmId: session.firmId, deletedAt: null },
+          include: { expenses: true },
+          orderBy: { tripDate: "asc" },
+        }),
         tx.driver.findMany({ where: { firmId: session.firmId, deletedAt: null } }),
         tx.city.findMany(),
         tx.accountHead.findMany(),
         tx.vehicleExpenseItem.findMany({
           where: {
-            // the ALLOCATION date decides the period, not the purchase date: a
-            // chain bought on the 1st and fitted on the 8th is the 8th's cost
-            ...(dateFrom || dateTo
-              ? {
-                  allocDate: {
-                    ...(dateFrom ? { gte: dateFrom } : {}),
-                    ...(dateTo ? { lte: dateTo } : {}),
-                  },
-                }
-              : {}),
             voucher: {
               firmId: session.firmId,
-              fyId: session.fyId,
               txnType: "EXPENSE",
               deletedAt: null,
             },
@@ -117,7 +102,7 @@ export async function VehiclePnlTab({
           include: { voucher: true },
         }),
         tx.driverSalary.findMany({
-          where: { firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+          where: { firmId: session.firmId, deletedAt: null },
         }),
         tx.driverAssignment.findMany(),
         tx.driverSettlement.findMany({
@@ -134,9 +119,6 @@ export async function VehiclePnlTab({
         tx.loanEmi.findMany({
           where: {
             deletedAt: null,
-            ...(dateFrom || dateTo
-              ? { payDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
-              : {}),
             loan: {
               firmId: session.firmId,
               deletedAt: null,
@@ -145,24 +127,32 @@ export async function VehiclePnlTab({
           },
           include: { loan: true },
         }),
+        tx.vehicleWithdrawal.findMany({
+          where: { firmId: session.firmId, deletedAt: null },
+          orderBy: { date: "asc" },
+        }),
       ]);
-    // live trip income from the linked chalans / broker slips
-    const docTotals = await tripGrandTotals(tx, trips.map((t) => t.id));
-    // finance company names for the EMI drill-down
-    const parties = await tx.party.findMany({ select: { id: true, name: true } });
+    // live trip income from the linked chalans / broker slips (all trips — the
+    // lifetime nets behind the running balance need every trip's figure)
+    const docTotals = await tripGrandTotals(tx, allTrips.map((t) => t.id));
+    // party names for the EMI drill-down, withdrawal list & entry form
+    const parties = await tx.party.findMany({
+      select: { id: true, name: true, ledgerGroup: true, isActive: true },
+    });
     return {
       parties,
       vehicles,
-      trips,
+      allTrips,
       drivers,
       cities,
       heads,
-      expItems,
-      salaries,
+      allExpItems,
+      allSalaries,
       assignments,
       settlements,
       advances,
-      loanEmis,
+      allLoanEmis,
+      withdrawals,
       docTotals,
     };
   });
@@ -170,18 +160,36 @@ export async function VehiclePnlTab({
   const {
     parties,
     vehicles,
-    trips,
+    allTrips,
     drivers,
     cities,
     heads,
-    expItems,
-    salaries,
+    allExpItems,
+    allSalaries,
     assignments,
     settlements,
     advances,
-    loanEmis,
+    allLoanEmis,
+    withdrawals,
     docTotals,
   } = data;
+
+  // ---- carve the selected period out of the lifetime data ----
+  const inPeriod = (d: Date) => (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
+  const trips = allTrips.filter(
+    (t) =>
+      t.fyId === session.fyId &&
+      inPeriod(t.tripDate) &&
+      (!searchParams.vehicle || t.vehicleId === searchParams.vehicle) &&
+      (!searchParams.driver || t.driverId === searchParams.driver)
+  );
+  // the ALLOCATION date decides the period, not the purchase date: a chain
+  // bought on the 1st and fitted on the 8th is the 8th's cost
+  const expItems = allExpItems.filter(
+    (it) => it.voucher.fyId === session.fyId && inPeriod(it.allocDate)
+  );
+  const salaries = allSalaries.filter((s) => s.fyId === session.fyId);
+  const loanEmis = allLoanEmis.filter((e) => inPeriod(e.payDate));
 
   const cityName = new Map(cities.map((c) => [c.id, c.name]));
   const driverById = new Map(drivers.map((d) => [d.id, d]));
@@ -310,6 +318,66 @@ export async function VehiclePnlTab({
     emiDetailsByVehicle.set(vehicleId, list);
   }
 
+  // ---- lifetime nets ("shuru se ab tak") — they drive the running balance,
+  // independent of whatever period/driver the filters currently show ----
+  const lifeMonthly = new Map<string, Map<string, number>>();
+  const bumpLife = (vid: string, m: string, amt: number) => bumpMonthly(lifeMonthly, vid, m, amt);
+  for (const t of allTrips) {
+    if (!t.vehicleId) continue;
+    const linked = docTotals.get(t.id);
+    const freight =
+      linked !== undefined
+        ? linked
+        : r2(toNum(String(t.gTotalFreight)) + toNum(String(t.rTotalFreight)));
+    const approved = r2(
+      t.expenses
+        .filter((e) => e.remarks !== AUTO_REGISTER_EXPENSE_REMARK)
+        .reduce((s, e) => s + toNum(String(e.amount)), 0)
+    );
+    bumpLife(t.vehicleId, monthKey(t.tripDate), r2(freight - approved));
+  }
+  for (const it of allExpItems) {
+    if (isDieselOrToll(it.voucher.headId)) continue;
+    bumpLife(it.vehicleId, monthKey(it.allocDate), -toNum(String(it.amount)));
+  }
+  for (const sal of allSalaries) {
+    const monthStart = new Date(`${sal.month}-01T00:00:00`);
+    const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59);
+    const a = assignments.find(
+      (x) =>
+        x.driverId === sal.driverId &&
+        x.fromDate <= monthEnd &&
+        (!x.toDate || x.toDate >= monthStart)
+    );
+    if (!a) continue;
+    const booked = r2(
+      toNum(String(sal.salaryAmount)) +
+        toNum(String(sal.incentive)) +
+        toNum(String(sal.bonus)) +
+        toNum(String(sal.otherAllowance))
+    );
+    bumpLife(a.vehicleId, sal.month, -booked);
+  }
+  for (const emi of allLoanEmis) {
+    const vid = emi.loan.vehicleId;
+    if (!vid) continue;
+    const total = r2(
+      toNum(String(emi.principal)) +
+        toNum(String(emi.interest)) +
+        toNum(String(emi.penalty)) +
+        toNum(String(emi.otherAmt))
+    );
+    if (total > 0) bumpLife(vid, monthKey(emi.payDate), -total);
+  }
+
+  // malik nikasi per vehicle, lifetime, dates ascending
+  const wdByVehicle = new Map<string, typeof withdrawals>();
+  for (const w of withdrawals) {
+    const list = wdByVehicle.get(w.vehicleId) ?? [];
+    list.push(w);
+    wdByVehicle.set(w.vehicleId, list);
+  }
+
   const rows: VehiclePnlRow[] = vehicles
     .filter((v) => !searchParams.vehicle || v.id === searchParams.vehicle)
     .filter((v) => !searchParams.ownership || v.ownershipType === searchParams.ownership)
@@ -397,6 +465,46 @@ export async function VehiclePnlTab({
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([month, m]) => ({ month, net: m }));
 
+      // running balance: lifetime net − lifetime nikasi, continues across
+      // periods/FYs regardless of the filters above
+      const lm = lifeMonthly.get(v.id) ?? new Map<string, number>();
+      const lifetimeNet = r2(Array.from(lm.values()).reduce((s, x) => s + x, 0));
+      const wds = wdByVehicle.get(v.id) ?? [];
+      const wdLifetime = r2(wds.reduce((s, w) => s + toNum(String(w.amount)), 0));
+      const runningBalance = r2(lifetimeNet - wdLifetime);
+      const wdPeriod = r2(
+        wds.filter((w) => inPeriod(w.date)).reduce((s, w) => s + toNum(String(w.amount)), 0)
+      );
+      // balance after each entry ≈ net through the entry's month − nikasi so far
+      const monthsAsc = Array.from(lm.keys()).sort();
+      const cumByMonth = new Map<string, number>();
+      let cum = 0;
+      for (const mm of monthsAsc) {
+        cum = r2(cum + (lm.get(mm) ?? 0));
+        cumByMonth.set(mm, cum);
+      }
+      const netThrough = (m: string) => {
+        let last = 0;
+        for (const mm of monthsAsc) {
+          if (mm <= m) last = cumByMonth.get(mm) ?? last;
+          else break;
+        }
+        return last;
+      };
+      let wdCum = 0;
+      const wdEntries = wds.map((w) => {
+        wdCum = r2(wdCum + toNum(String(w.amount)));
+        return {
+          id: w.id,
+          date: w.date.toISOString(),
+          party: partyName.get(w.partyId) ?? "",
+          payParty: partyName.get(w.payPartyId) ?? "",
+          amount: toNum(String(w.amount)),
+          remarks: w.remarks ?? "",
+          balanceAfter: r2(netThrough(monthKey(w.date)) - wdCum),
+        };
+      });
+
       return {
         id: v.id,
         vehicle: v.number,
@@ -417,17 +525,36 @@ export async function VehiclePnlTab({
         salaryDetails: (salaryDetailsByVehicle.get(v.id) ?? []).sort((a, b) =>
           a.month.localeCompare(b.month)
         ),
+        wdPeriod,
+        wdLifetime,
+        lifetimeNet,
+        runningBalance,
+        wdEntries,
         trips: pnlTrips,
       };
     })
-    .filter((r) => r.tripCount > 0 || r.vehicleExpenses > 0 || r.driverSalary > 0 || r.emi > 0);
+    .filter(
+      (r) =>
+        r.tripCount > 0 ||
+        r.vehicleExpenses > 0 ||
+        r.driverSalary > 0 ||
+        r.emi > 0 ||
+        r.wdEntries.length > 0
+    );
 
+  const moneyGroups = ["BANK", "CASH", "CARD"];
   return (
     <div className="space-y-4">
       <VehiclePnlClient
         rows={rows}
         vehicleOptions={vehicles.map((v) => ({ value: v.id, label: v.number }))}
         driverOptions={drivers.map((d) => ({ value: d.id, label: d.name }))}
+        malikOptions={parties
+          .filter((p) => p.isActive && !moneyGroups.includes(p.ledgerGroup))
+          .map((p) => ({ value: p.id, label: p.name }))}
+        payOptions={parties
+          .filter((p) => p.isActive && moneyGroups.includes(p.ledgerGroup))
+          .map((p) => ({ value: p.id, label: p.name }))}
       />
     </div>
   );

@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Eye } from "lucide-react";
+import { Eye, Plus, Trash2 } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,10 +15,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/components/ui/use-toast";
 import { DataTable, type DataTableColumnMeta } from "@/components/data/data-table";
+import { DateInput } from "@/components/data/date-input";
 import { ExportButton } from "@/components/data/export-button";
 import { FilterBar } from "@/components/data/filter-bar";
-import type { MasterOption } from "@/components/data/master-combobox";
+import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
+import {
+  deleteVehicleWithdrawal,
+  saveVehicleWithdrawal,
+} from "@/app/(app)/vehicle/management/withdrawal-actions";
 
 export interface PnlTrip {
   id: string;
@@ -75,6 +84,24 @@ export interface VehiclePnlRow {
   vehExpDetails: { date: string; head: string; voucherNo: string; amount: number }[];
   /** booked salary months attributed to this vehicle */
   salaryDetails: { month: string; driver: string; amount: number }[];
+  /** malik nikasi in the selected period */
+  wdPeriod: number;
+  /** malik nikasi since the beginning */
+  wdLifetime: number;
+  /** net profit since the beginning (all FYs), behind the running balance */
+  lifetimeNet: number;
+  /** lifetime net − lifetime nikasi — continues across periods */
+  runningBalance: number;
+  wdEntries: {
+    id: string;
+    date: string;
+    party: string;
+    payParty: string;
+    amount: number;
+    remarks: string;
+    /** net through the entry's month − nikasi up to & incl. this entry */
+    balanceAfter: number;
+  }[];
   trips: PnlTrip[];
 }
 
@@ -149,6 +176,8 @@ function PnlOverview({ rows }: { rows: VehiclePnlRow[] }) {
     const expenses = parts.reduce((s, v) => s + v, 0);
     const net = sum((r) => r.net);
     const trips = sum((r) => r.tripCount);
+    const nikasi = sum((r) => r.wdPeriod);
+    const runningBalance = sum((r) => r.runningBalance);
     const sorted = [...rows].sort((a, b) => b.net - a.net);
     const monthly = new Map<string, number>();
     for (const r of rows)
@@ -157,7 +186,7 @@ function PnlOverview({ rows }: { rows: VehiclePnlRow[] }) {
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-12)
       .map(([month, m]) => ({ month, net: Math.round(m) }));
-    return { freight, parts, expenses, net, trips, sorted, months };
+    return { freight, parts, expenses, net, trips, nikasi, runningBalance, sorted, months };
   }, [rows]);
 
   if (!rows.length) return null;
@@ -185,7 +214,7 @@ function PnlOverview({ rows }: { rows: VehiclePnlRow[] }) {
   return (
     <div className="space-y-3">
       {/* tiles */}
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <div className="rounded-lg border bg-gradient-to-br from-primary/5 to-card p-4">
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Net Profit / Loss
@@ -202,6 +231,26 @@ function PnlOverview({ rows }: { rows: VehiclePnlRow[] }) {
             </b>{" "}
             of freight
           </div>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Malik Nikasi
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-orange-600 dark:text-orange-400">
+            {lakh(t.nikasi)}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">is period mein</div>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Running Balance
+          </div>
+          <div
+            className={`mt-1 text-2xl font-semibold tabular-nums ${t.runningBalance < 0 ? "text-destructive" : ""}`}
+          >
+            {lakh(t.runningBalance)}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">shuru se: profit − nikasi</div>
         </div>
         <div className="rounded-lg border bg-card p-4">
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -367,14 +416,76 @@ export function VehiclePnlClient({
   rows,
   vehicleOptions,
   driverOptions,
+  malikOptions,
+  payOptions,
 }: {
   rows: VehiclePnlRow[];
   vehicleOptions: MasterOption[];
   driverOptions: MasterOption[];
+  malikOptions: MasterOption[];
+  payOptions: MasterOption[];
 }) {
+  const router = useRouter();
+  const { toast } = useToast();
   const [vehicleOf, setVehicleOf] = React.useState<VehiclePnlRow | null>(null);
   const [tripOf, setTripOf] = React.useState<{ vehicle: VehiclePnlRow; trip: PnlTrip } | null>(null);
   const [emiOf, setEmiOf] = React.useState<VehiclePnlRow | null>(null);
+  const [wdListOf, setWdListOf] = React.useState<VehiclePnlRow | null>(null);
+  // malik nikasi entry form
+  const [wdOpen, setWdOpen] = React.useState(false);
+  const [wdSaving, setWdSaving] = React.useState(false);
+  const [wdVehicleId, setWdVehicleId] = React.useState<string | null>(null);
+  const [wdPartyId, setWdPartyId] = React.useState<string | null>(null);
+  const [wdPayPartyId, setWdPayPartyId] = React.useState<string | null>(null);
+  const [wdDateText, setWdDateText] = React.useState(formatDate(new Date()));
+  const [wdAmount, setWdAmount] = React.useState(0);
+  const [wdRemarks, setWdRemarks] = React.useState("");
+
+  const textToIso = (text: string): string => {
+    const m = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : "";
+  };
+
+  const saveWd = async () => {
+    const iso = textToIso(wdDateText);
+    if (!wdVehicleId || !wdPartyId || !wdPayPartyId || !iso || wdAmount <= 0) {
+      toast({ variant: "destructive", title: "Vehicle, malik, paid-from, date aur amount sab required hain" });
+      return;
+    }
+    setWdSaving(true);
+    try {
+      const res = await saveVehicleWithdrawal({
+        vehicleId: wdVehicleId,
+        partyId: wdPartyId,
+        payPartyId: wdPayPartyId,
+        date: iso,
+        amount: wdAmount,
+        remarks: wdRemarks,
+      });
+      if (res.ok) {
+        toast({ title: "Nikasi saved — ledger & running balance updated" });
+        setWdOpen(false);
+        setWdAmount(0);
+        setWdRemarks("");
+        router.refresh();
+      } else {
+        toast({ variant: "destructive", title: res.error });
+      }
+    } finally {
+      setWdSaving(false);
+    }
+  };
+
+  const removeWd = async (id: string) => {
+    const res = await deleteVehicleWithdrawal(id);
+    if (res.ok) {
+      toast({ title: "Nikasi entry deleted — ledger reversed" });
+      setWdListOf(null);
+      router.refresh();
+    } else {
+      toast({ variant: "destructive", title: res.error });
+    }
+  };
 
   const money = (
     key: keyof Pick<
@@ -478,12 +589,56 @@ export function VehiclePnlClient({
       ),
       meta: { numeric: true } satisfies DataTableColumnMeta<VehiclePnlRow>,
     },
+    {
+      accessorKey: "wdPeriod",
+      header: "Withdrawals",
+      cell: ({ row }) =>
+        row.original.wdEntries.length ? (
+          <button
+            type="button"
+            className="tabular-nums text-orange-600 underline-offset-2 hover:underline dark:text-orange-400"
+            title="Malik nikasi entries dekho"
+            onClick={(e) => {
+              e.stopPropagation();
+              setWdListOf(row.original);
+            }}
+          >
+            {formatMoney(row.original.wdPeriod)}
+          </button>
+        ) : (
+          <span className="tabular-nums text-muted-foreground">{formatMoney(0)}</span>
+        ),
+      meta: {
+        numeric: true,
+        total: (rs) => formatMoney(rs.reduce((s, r) => s + r.wdPeriod, 0)),
+      } satisfies DataTableColumnMeta<VehiclePnlRow>,
+    },
+    {
+      accessorKey: "runningBalance",
+      header: "Running Balance",
+      cell: ({ row }) => (
+        <span
+          className={`font-semibold tabular-nums ${row.original.runningBalance < 0 ? "text-destructive" : ""}`}
+          title={`Lifetime net ${formatMoney(row.original.lifetimeNet)} − nikasi ${formatMoney(row.original.wdLifetime)}`}
+        >
+          {formatMoney(row.original.runningBalance)}
+        </span>
+      ),
+      meta: {
+        numeric: true,
+        total: (rs) => formatMoney(rs.reduce((s, r) => s + r.runningBalance, 0)),
+      } satisfies DataTableColumnMeta<VehiclePnlRow>,
+    },
   ];
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Trip Profit &amp; Loss with Expenses</h1>
+        <div className="flex items-center gap-2">
+        <Button size="sm" onClick={() => setWdOpen(true)}>
+          <Plus className="h-4 w-4" /> Malik Nikasi
+        </Button>
         <ExportButton
           rows={rows}
           fileName="trip-pnl-with-expenses"
@@ -499,8 +654,11 @@ export function VehiclePnlClient({
             { header: "EMI Expenses", key: "emi", numeric: true },
             { header: "Net Profit / Loss", key: "net", numeric: true },
             { header: "Margin %", key: "margin", numeric: true },
+            { header: "Withdrawals", key: "wdPeriod", numeric: true },
+            { header: "Running Balance", key: "runningBalance", numeric: true },
           ]}
         />
+        </div>
       </div>
       <p className="text-sm text-muted-foreground">
         Own &amp; Relative vehicles only. P&amp;L = Trip Freight − Company Approved Trip Expenses −
@@ -969,6 +1127,159 @@ export function VehiclePnlClient({
             </Button>
             <Button variant="outline" onClick={() => setTripOf(null)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* -------- malik nikasi list (lifetime, with balance-after) -------- */}
+      <Dialog open={!!wdListOf} onOpenChange={(o) => !o && setWdListOf(null)}>
+        <DialogContent className="max-h-[95vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Malik Nikasi — {wdListOf?.vehicle}</DialogTitle>
+            <DialogDescription>
+              Running Balance {formatMoney(wdListOf?.runningBalance ?? 0)} = lifetime net{" "}
+              {formatMoney(wdListOf?.lifetimeNet ?? 0)} − total nikasi{" "}
+              {formatMoney(wdListOf?.wdLifetime ?? 0)}. Balance After = us mahine tak ka profit −
+              tab tak ki nikasi.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-xs">
+              <thead>
+                <tr>
+                  {["Date", "Malik", "Paid From", "Remarks", "Amount", "Balance After", ""].map((h) => (
+                    <th key={h} className="border px-1.5 py-1 text-left font-semibold">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {wdListOf?.wdEntries.map((w) => (
+                  <tr key={w.id}>
+                    <td className="border px-1.5 py-1">{formatDate(w.date)}</td>
+                    <td className="border px-1.5 py-1">{w.party}</td>
+                    <td className="border px-1.5 py-1">{w.payParty}</td>
+                    <td className="border px-1.5 py-1 text-muted-foreground">{w.remarks || "—"}</td>
+                    <td className="border px-1.5 py-1 text-right font-medium tabular-nums text-orange-600 dark:text-orange-400">
+                      {formatMoney(w.amount)}
+                    </td>
+                    <td
+                      className={`border px-1.5 py-1 text-right font-semibold tabular-nums ${w.balanceAfter < 0 ? "text-destructive" : ""}`}
+                    >
+                      {formatMoney(w.balanceAfter)}
+                    </td>
+                    <td className="border px-1 py-0.5 text-center">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-destructive"
+                        title="Delete — ledger entry bhi reverse hogi"
+                        onClick={() => void removeWd(w.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {!!wdListOf?.wdEntries.length && (
+                <tfoot>
+                  <tr className="font-semibold">
+                    <td colSpan={4} className="border px-1.5 py-1">
+                      Total Nikasi
+                    </td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(wdListOf.wdLifetime)}
+                    </td>
+                    <td className="border px-1.5 py-1 text-right tabular-nums">
+                      {formatMoney(wdListOf.runningBalance)}
+                    </td>
+                    <td className="border" />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWdListOf(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* -------- malik nikasi entry form -------- */}
+      <Dialog open={wdOpen} onOpenChange={setWdOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Malik Nikasi</DialogTitle>
+            <DialogDescription>
+              Save hote hi malik ke ledger mein debit, bank/cash book mein credit, aur gaadi ka
+              running balance ghatega. Net profit par koi asar nahi — nikasi kharcha nahi hai.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Vehicle *</Label>
+              <MasterCombobox
+                options={vehicleOptions}
+                value={wdVehicleId}
+                onChange={setWdVehicleId}
+                placeholder="Select vehicle..."
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Malik (Party) *</Label>
+              <MasterCombobox
+                options={malikOptions}
+                value={wdPartyId}
+                onChange={setWdPartyId}
+                placeholder="Select malik..."
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Date *</Label>
+              <DateInput value={wdDateText} onChange={setWdDateText} className="h-9" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Amount *</Label>
+              <Input
+                type="number"
+                inputMode="decimal"
+                step="any"
+                className="h-9 text-right tabular-nums"
+                value={wdAmount || ""}
+                onChange={(e) => setWdAmount(Number(e.target.value) || 0)}
+                onFocus={(e) => e.target.select()}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Paid From (Bank / Cash) *</Label>
+              <MasterCombobox
+                options={payOptions}
+                value={wdPayPartyId}
+                onChange={setWdPayPartyId}
+                placeholder="Select bank/cash..."
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Remarks</Label>
+              <Input
+                className="h-9"
+                value={wdRemarks}
+                onChange={(e) => setWdRemarks(e.target.value)}
+                placeholder="optional"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWdOpen(false)} disabled={wdSaving}>
+              Cancel
+            </Button>
+            <Button onClick={() => void saveWd()} disabled={wdSaving}>
+              {wdSaving ? "Saving..." : "Save Nikasi"}
             </Button>
           </DialogFooter>
         </DialogContent>
