@@ -21,6 +21,12 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  */
 const AUTO_REGISTER_EXPENSE_REMARK = "Other operating expenses (auto)";
 
+/** "YYYY-MM" bucket for the monthly trend — local time, matching the filters. */
+function monthKey(d: Date | string): string {
+  const dt = typeof d === "string" ? new Date(d) : d;
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+}
+
 /**
  * Vehicle Profit & Loss — Own / Relative vehicles only.
  *   P&L = Trip Freight − Trip Expenses (company approved grand total)
@@ -199,8 +205,19 @@ export async function VehiclePnlTab({
     if (s.tripId) settlementByTrip.set(s.tripId, { prev, current: amt, final, status: s.status });
   }
 
+  // per-vehicle monthly nets feed the trend sparkline and the monthly chart
+  const bumpMonthly = (map: Map<string, Map<string, number>>, vid: string, m: string, amt: number) => {
+    const inner = map.get(vid) ?? new Map<string, number>();
+    inner.set(m, r2((inner.get(m) ?? 0) + amt));
+    map.set(vid, inner);
+  };
+  const salaryMonthly = new Map<string, Map<string, number>>();
+  const vehExpMonthly = new Map<string, Map<string, number>>();
+  const emiMonthly = new Map<string, Map<string, number>>();
+
   // booked driver salary attributed to a vehicle via the assignment history
   const salaryByVehicle = new Map<string, number>();
+  const salaryDetailsByVehicle = new Map<string, { month: string; driver: string; amount: number }[]>();
   for (const sal of salaries) {
     if (searchParams.driver && sal.driverId !== searchParams.driver) continue;
     const monthStart = new Date(`${sal.month}-01T00:00:00`);
@@ -221,16 +238,31 @@ export async function VehiclePnlTab({
         toNum(String(sal.otherAllowance))
     );
     salaryByVehicle.set(a.vehicleId, r2((salaryByVehicle.get(a.vehicleId) ?? 0) + booked));
+    bumpMonthly(salaryMonthly, a.vehicleId, sal.month, booked);
+    const list = salaryDetailsByVehicle.get(a.vehicleId) ?? [];
+    list.push({ month: sal.month, driver: driverById.get(sal.driverId)?.name ?? "", amount: booked });
+    salaryDetailsByVehicle.set(a.vehicleId, list);
   }
 
   // vehicle expenses excluding diesel & toll
   const vehExpByVehicle = new Map<string, number>();
+  const vehExpDetailsByVehicle = new Map<
+    string,
+    { date: string; head: string; voucherNo: string; amount: number }[]
+  >();
   for (const it of expItems) {
     if (isDieselOrToll(it.voucher.headId)) continue;
-    vehExpByVehicle.set(
-      it.vehicleId,
-      r2((vehExpByVehicle.get(it.vehicleId) ?? 0) + toNum(String(it.amount)))
-    );
+    const amt = toNum(String(it.amount));
+    vehExpByVehicle.set(it.vehicleId, r2((vehExpByVehicle.get(it.vehicleId) ?? 0) + amt));
+    bumpMonthly(vehExpMonthly, it.vehicleId, monthKey(it.allocDate), amt);
+    const list = vehExpDetailsByVehicle.get(it.vehicleId) ?? [];
+    list.push({
+      date: it.allocDate.toISOString(),
+      head: headName.get(it.voucher.headId) ?? "",
+      voucherNo: it.voucher.voucherNo,
+      amount: amt,
+    });
+    vehExpDetailsByVehicle.set(it.vehicleId, list);
   }
   // EMI Expenses — its own P&L row. For profitability analysis the FULL
   // instalment (principal + interest + penalty + charges) is the financing
@@ -262,6 +294,7 @@ export async function VehiclePnlTab({
     const total = r2(principal + interest + penalty);
     if (total <= 0) continue;
     emiByVehicle.set(vehicleId, r2((emiByVehicle.get(vehicleId) ?? 0) + total));
+    bumpMonthly(emiMonthly, vehicleId, monthKey(emi.payDate), total);
     const list = emiDetailsByVehicle.get(vehicleId) ?? [];
     list.push({
       payDate: emi.payDate.toISOString(),
@@ -350,6 +383,20 @@ export async function VehiclePnlTab({
       const vehicleExpenses = vehExpByVehicle.get(v.id) ?? 0;
       const driverSalary = salaryByVehicle.get(v.id) ?? 0;
       const emi = emiByVehicle.get(v.id) ?? 0;
+      const net = r2(freight - tripExpenses - vehicleExpenses - driverSalary - emi);
+
+      // month-wise net — trips land in their trip month, register expenses /
+      // salary / EMI in their own months; feeds the sparkline + monthly chart
+      const monthly = new Map<string, number>();
+      const bump = (m: string, amt: number) => monthly.set(m, r2((monthly.get(m) ?? 0) + amt));
+      for (const t of pnlTrips) bump(monthKey(t.tripDate), r2(t.freight - t.approved));
+      vehExpMonthly.get(v.id)?.forEach((amt, m) => bump(m, -amt));
+      salaryMonthly.get(v.id)?.forEach((amt, m) => bump(m, -amt));
+      emiMonthly.get(v.id)?.forEach((amt, m) => bump(m, -amt));
+      const monthlyNet = Array.from(monthly.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([month, m]) => ({ month, net: m }));
+
       return {
         id: v.id,
         vehicle: v.number,
@@ -361,7 +408,15 @@ export async function VehiclePnlTab({
         driverSalary,
         emi,
         emis: emiDetailsByVehicle.get(v.id) ?? [],
-        net: r2(freight - tripExpenses - vehicleExpenses - driverSalary - emi),
+        net,
+        margin: freight > 0 ? r2((net / freight) * 100) : 0,
+        monthlyNet,
+        vehExpDetails: (vehExpDetailsByVehicle.get(v.id) ?? []).sort((a, b) =>
+          a.date.localeCompare(b.date)
+        ),
+        salaryDetails: (salaryDetailsByVehicle.get(v.id) ?? []).sort((a, b) =>
+          a.month.localeCompare(b.month)
+        ),
         trips: pnlTrips,
       };
     })

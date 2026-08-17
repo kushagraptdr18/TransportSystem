@@ -67,6 +67,14 @@ export interface VehiclePnlRow {
   emi: number;
   emis: PnlEmi[];
   net: number;
+  /** net ÷ freight, in % (0 when there is no freight) */
+  margin: number;
+  /** month-wise net ("YYYY-MM"), for the trend sparkline & monthly chart */
+  monthlyNet: { month: string; net: number }[];
+  /** register expenses in the period (Diesel & Toll excluded) */
+  vehExpDetails: { date: string; head: string; voucherNo: string; amount: number }[];
+  /** booked salary months attributed to this vehicle */
+  salaryDetails: { month: string; driver: string; amount: number }[];
   trips: PnlTrip[];
 }
 
@@ -75,6 +83,285 @@ const signed = (n: number) =>
 
 const catLabel = (c: string) =>
   c.split("_").map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ");
+
+const MONTH_SHORT = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+const monthLabel = (m: string) => `${MONTH_SHORT[Number(m.slice(5)) - 1] ?? m} ${m.slice(2, 4)}`;
+
+/** ₹ figure compacted for tiles/charts: 757000 → "₹7.57L" */
+function lakh(n: number): string {
+  const abs = Math.abs(n);
+  const s =
+    abs >= 10000000
+      ? `₹${(abs / 10000000).toFixed(2)}Cr`
+      : abs >= 100000
+        ? `₹${(abs / 100000).toFixed(2)}L`
+        : abs >= 1000
+          ? `₹${(abs / 1000).toFixed(1)}k`
+          : `₹${Math.round(abs)}`;
+  return n < 0 ? `− ${s}` : s;
+}
+
+// chart palette (light / dark pairs, validated categorical order)
+const PROFIT_BG = "bg-[#2a78d6] dark:bg-[#3987e5]";
+const LOSS_BG = "bg-[#e34948] dark:bg-[#e66767]";
+const SERIES_BG = [
+  "bg-[#2a78d6] dark:bg-[#3987e5]", // trip expenses
+  "bg-[#eb6834] dark:bg-[#d95926]", // vehicle expenses
+  "bg-[#1baf7a] dark:bg-[#199e70]", // driver salary
+  "bg-[#eda100] dark:bg-[#c98500]", // emi
+];
+const SERIES_STROKE = [
+  "stroke-[#2a78d6] dark:stroke-[#3987e5]",
+  "stroke-[#eb6834] dark:stroke-[#d95926]",
+  "stroke-[#1baf7a] dark:stroke-[#199e70]",
+  "stroke-[#eda100] dark:stroke-[#c98500]",
+];
+
+/** last ≤6 months of a vehicle's net as tiny bars — red below zero */
+function TrendSpark({ monthly }: { monthly: { month: string; net: number }[] }) {
+  const pts = monthly.slice(-6);
+  if (!pts.length) return <span className="text-xs text-muted-foreground">—</span>;
+  const maxAbs = Math.max(...pts.map((p) => Math.abs(p.net)), 1);
+  return (
+    <span className="inline-flex h-5 items-end gap-[2px]" title={pts.map((p) => `${monthLabel(p.month)}: ${formatMoney(p.net)}`).join("\n")}>
+      {pts.map((p) => (
+        <i
+          key={p.month}
+          className={`w-[5px] rounded-[1px] ${p.net >= 0 ? PROFIT_BG : LOSS_BG}`}
+          style={{ height: `${Math.max(15, (Math.abs(p.net) / maxAbs) * 100)}%`, opacity: 0.85 }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** summary tiles + the three overview charts above the table */
+function PnlOverview({ rows }: { rows: VehiclePnlRow[] }) {
+  const t = React.useMemo(() => {
+    const sum = (f: (r: VehiclePnlRow) => number) => rows.reduce((s, r) => s + f(r), 0);
+    const freight = sum((r) => r.freight);
+    const parts = [
+      sum((r) => r.tripExpenses),
+      sum((r) => r.vehicleExpenses),
+      sum((r) => r.driverSalary),
+      sum((r) => r.emi),
+    ];
+    const expenses = parts.reduce((s, v) => s + v, 0);
+    const net = sum((r) => r.net);
+    const trips = sum((r) => r.tripCount);
+    const sorted = [...rows].sort((a, b) => b.net - a.net);
+    const monthly = new Map<string, number>();
+    for (const r of rows)
+      for (const m of r.monthlyNet) monthly.set(m.month, (monthly.get(m.month) ?? 0) + m.net);
+    const months = Array.from(monthly.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-12)
+      .map(([month, m]) => ({ month, net: Math.round(m) }));
+    return { freight, parts, expenses, net, trips, sorted, months };
+  }, [rows]);
+
+  if (!rows.length) return null;
+
+  const best = t.sorted[0];
+  const worst = t.sorted[t.sorted.length - 1];
+  // diverging bar geometry: one shared scale, baseline splits pos/neg space
+  const maxPos = Math.max(...t.sorted.map((r) => Math.max(r.net, 0)), 0);
+  const maxNeg = Math.max(...t.sorted.map((r) => Math.max(-r.net, 0)), 0);
+  const scale = maxPos + maxNeg || 1;
+  const basePct = maxNeg > 0 ? (maxNeg / scale) * 92 + 3 : 3;
+  const barVehicles = t.sorted.slice(0, 12);
+  const maxMonthAbs = Math.max(...t.months.map((m) => Math.abs(m.net)), 1);
+  // donut segments on r=60 (circumference ≈ 377), 2px gaps between arcs
+  const C = 2 * Math.PI * 60;
+  let acc = 0;
+  const donut = t.parts.map((v) => {
+    const len = t.expenses > 0 ? (v / t.expenses) * C : 0;
+    const seg = { len: Math.max(len - 2, 0), off: acc };
+    acc += len;
+    return seg;
+  });
+  const donutLabels = ["Trip Expenses", "Vehicle Exp.", "Driver Salary", "EMI"];
+
+  return (
+    <div className="space-y-3">
+      {/* tiles */}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-lg border bg-gradient-to-br from-primary/5 to-card p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Net Profit / Loss
+          </div>
+          <div
+            className={`mt-1 text-3xl font-semibold tabular-nums ${t.net >= 0 ? "text-emerald-600" : "text-destructive"}`}
+          >
+            {lakh(t.net)}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            margin{" "}
+            <b className="text-foreground">
+              {t.freight > 0 ? `${((t.net / t.freight) * 100).toFixed(1)}%` : "—"}
+            </b>{" "}
+            of freight
+          </div>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Trip Freight
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums">{lakh(t.freight)}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t.trips} trips · {rows.length} vehicles
+            {t.trips > 0 && <> · avg {lakh(t.freight / t.trips)}/trip</>}
+          </div>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Total Expenses
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums">{lakh(t.expenses)}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {t.freight > 0 ? `${((t.expenses / t.freight) * 100).toFixed(1)}% of freight` : " "}
+          </div>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Best / Worst
+          </div>
+          <div className="mt-1 space-y-1 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate">{best.vehicle}</span>
+              <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-400">
+                {signed(best.net)}
+              </Badge>
+            </div>
+            {worst.id !== best.id && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate">{worst.vehicle}</span>
+                <Badge
+                  variant={worst.net < 0 ? "destructive" : "secondary"}
+                  className={worst.net < 0 ? "" : undefined}
+                >
+                  {signed(worst.net)}
+                </Badge>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* charts */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        {/* vehicle-wise diverging bars */}
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-sm font-semibold">Vehicle-wise Net Profit / Loss</div>
+          <p className="mb-2 text-xs text-muted-foreground">
+            profit right of the line, loss left{t.sorted.length > 12 ? ` · top 12 of ${t.sorted.length}` : ""}
+          </p>
+          {barVehicles.map((r) => {
+            const w = (Math.abs(r.net) / scale) * 92;
+            return (
+              <div key={r.id} className="my-1.5 grid grid-cols-[96px_1fr_76px] items-center gap-2 text-xs">
+                <span className="truncate">{r.vehicle}</span>
+                <span className="relative h-4">
+                  <i className="absolute bottom-[-3px] top-[-3px] w-px bg-border" style={{ left: `${basePct}%` }} />
+                  <i
+                    className={`absolute top-[2px] h-3 ${r.net >= 0 ? `rounded-r ${PROFIT_BG}` : `rounded-l ${LOSS_BG}`}`}
+                    style={
+                      r.net >= 0
+                        ? { left: `${basePct}%`, width: `${w}%` }
+                        : { left: `${basePct - w}%`, width: `${w}%` }
+                    }
+                  />
+                </span>
+                <span
+                  className={`text-right tabular-nums ${r.net < 0 ? "font-medium text-destructive" : "text-muted-foreground"}`}
+                >
+                  {lakh(r.net)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* month-wise net */}
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-sm font-semibold">Month-wise Net</div>
+          <p className="mb-2 text-xs text-muted-foreground">har mahine ka net profit</p>
+          {t.months.length ? (
+            <>
+              <div className="flex h-36 items-end gap-2 border-b px-1">
+                {t.months.map((m) => (
+                  <div
+                    key={m.month}
+                    className="flex h-full flex-1 flex-col items-center justify-end"
+                    title={`${monthLabel(m.month)}: ${formatMoney(m.net)}`}
+                  >
+                    <span className="mb-1 text-[10px] tabular-nums text-muted-foreground">
+                      {lakh(m.net)}
+                    </span>
+                    <i
+                      className={`w-[70%] max-w-10 rounded-t ${m.net >= 0 ? PROFIT_BG : LOSS_BG}`}
+                      style={{ height: `${Math.max(4, (Math.abs(m.net) / maxMonthAbs) * 82)}%` }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 px-1 pt-1">
+                {t.months.map((m) => (
+                  <div key={m.month} className="flex-1 text-center text-[10px] text-muted-foreground">
+                    {monthLabel(m.month)}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">No monthly data in this period.</p>
+          )}
+        </div>
+
+        {/* expense donut */}
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-sm font-semibold">Where the money went</div>
+          <p className="mb-2 text-xs text-muted-foreground">all vehicles, selected period</p>
+          <div className="flex items-center gap-4">
+            <div className="relative h-[136px] w-[136px] flex-none">
+              <svg width="136" height="136" viewBox="0 0 150 150" className="-rotate-90">
+                <circle cx="75" cy="75" r="60" fill="none" strokeWidth="20" className="stroke-muted" />
+                {donut.map((seg, i) =>
+                  seg.len > 0 ? (
+                    <circle
+                      key={i}
+                      cx="75"
+                      cy="75"
+                      r="60"
+                      fill="none"
+                      strokeWidth="20"
+                      className={SERIES_STROKE[i]}
+                      strokeDasharray={`${seg.len} ${C - seg.len}`}
+                      strokeDashoffset={-seg.off}
+                    />
+                  ) : null
+                )}
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <b className="text-sm tabular-nums">{lakh(t.expenses)}</b>
+                <span className="text-[10px] uppercase text-muted-foreground">total</span>
+              </div>
+            </div>
+            <div className="grid flex-1 gap-1.5 text-xs">
+              {donutLabels.map((label, i) => (
+                <div key={label} className="flex items-center gap-2">
+                  <i className={`h-2.5 w-2.5 rounded-sm ${SERIES_BG[i]}`} />
+                  <span className="text-muted-foreground">{label}</span>
+                  <b className="ml-auto tabular-nums">{lakh(t.parts[i])}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function VehiclePnlClient({
   rows,
@@ -165,6 +452,32 @@ export function VehiclePnlClient({
       } satisfies DataTableColumnMeta<VehiclePnlRow>,
     },
     money("net", "Net Profit / Loss"),
+    {
+      id: "trend",
+      header: "Trend",
+      cell: ({ row }) => <TrendSpark monthly={row.original.monthlyNet} />,
+      enableSorting: false,
+    },
+    {
+      accessorKey: "margin",
+      header: "Margin",
+      cell: ({ row }) => (
+        <span className="inline-flex items-center gap-1.5 tabular-nums">
+          <span className={row.original.margin < 0 ? "font-medium text-destructive" : undefined}>
+            {row.original.margin.toFixed(1)}%
+          </span>
+          {row.original.margin > 0 && (
+            <span className="inline-block h-1.5 w-12 overflow-hidden rounded-full bg-muted">
+              <i
+                className={`block h-full rounded-full ${PROFIT_BG}`}
+                style={{ width: `${Math.min(row.original.margin, 100)}%` }}
+              />
+            </span>
+          )}
+        </span>
+      ),
+      meta: { numeric: true } satisfies DataTableColumnMeta<VehiclePnlRow>,
+    },
   ];
 
   return (
@@ -185,6 +498,7 @@ export function VehiclePnlClient({
             { header: "Driver Salary", key: "driverSalary", numeric: true },
             { header: "EMI Expenses", key: "emi", numeric: true },
             { header: "Net Profit / Loss", key: "net", numeric: true },
+            { header: "Margin %", key: "margin", numeric: true },
           ]}
         />
       </div>
@@ -211,6 +525,7 @@ export function VehiclePnlClient({
           { type: "combobox", key: "driver", label: "Driver", options: driverOptions },
         ]}
       />
+      <PnlOverview rows={rows} />
       <DataTable
         columns={columns}
         data={rows}
@@ -295,6 +610,84 @@ export function VehiclePnlClient({
               </tbody>
             </table>
           </div>
+
+          {/* vehicle expenses + booked salary breakups for the same period */}
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="rounded-md border p-2">
+              <div className="mb-1 text-sm font-semibold">
+                Vehicle Expenses — {formatMoney(vehicleOf?.vehicleExpenses ?? 0)}
+                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                  (Diesel &amp; Toll excluded — already in trips)
+                </span>
+              </div>
+              {vehicleOf?.vehExpDetails.length ? (
+                <div className="max-h-56 overflow-y-auto">
+                  <table className="w-full border-collapse text-xs">
+                    <thead>
+                      <tr>
+                        {["Date", "Head", "Voucher", "Amount"].map((h) => (
+                          <th key={h} className="border px-1.5 py-1 text-left font-semibold">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vehicleOf.vehExpDetails.map((e, i) => (
+                        <tr key={i}>
+                          <td className="border px-1.5 py-0.5">{formatDate(e.date)}</td>
+                          <td className="border px-1.5 py-0.5">{e.head}</td>
+                          <td className="border px-1.5 py-0.5">{e.voucherNo}</td>
+                          <td className="border px-1.5 py-0.5 text-right tabular-nums">
+                            {formatMoney(e.amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">None booked in this period.</div>
+              )}
+            </div>
+            <div className="rounded-md border p-2">
+              <div className="mb-1 text-sm font-semibold">
+                Driver Salary — {formatMoney(vehicleOf?.driverSalary ?? 0)}
+                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                  (booked — paid or pending, both count)
+                </span>
+              </div>
+              {vehicleOf?.salaryDetails.length ? (
+                <div className="max-h-56 overflow-y-auto">
+                  <table className="w-full border-collapse text-xs">
+                    <thead>
+                      <tr>
+                        {["Month", "Driver", "Salary"].map((h) => (
+                          <th key={h} className="border px-1.5 py-1 text-left font-semibold">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vehicleOf.salaryDetails.map((s, i) => (
+                        <tr key={i}>
+                          <td className="border px-1.5 py-0.5">{monthLabel(s.month)}</td>
+                          <td className="border px-1.5 py-0.5">{s.driver}</td>
+                          <td className="border px-1.5 py-0.5 text-right tabular-nums">
+                            {formatMoney(s.amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground">No salary booked in this period.</div>
+              )}
+            </div>
+          </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setVehicleOf(null)}>
               Close
