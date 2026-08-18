@@ -107,7 +107,7 @@ export function VehiclesClient({
         // unified list — same combobox for Owner / Broker / Relative
         {
           name: "ownerId",
-          label: "Name *",
+          label: "Name * (optional for Broker)",
           type: "combobox",
           options: ownerOptions,
           createDialog: (props: Parameters<typeof PartyCreateDialog>[0]) => (

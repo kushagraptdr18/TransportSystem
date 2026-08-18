@@ -23,8 +23,11 @@ const schema = z
     permitNo: optStr,
     insuranceNo: optStr,
   })
-  .refine((d) => Boolean(d.ownerId), {
-    message: "Select the owner / broker / relative name",
+  // Own / Relative vehicles must name their owner (ledger & P&L attribution);
+  // a broker vehicle may be saved without one — the chalan then asks for the
+  // broker explicitly instead of prefilling it from the vehicle
+  .refine((d) => d.ownershipType === "BROKER" || Boolean(d.ownerId), {
+    message: "Select the owner / relative name",
     path: ["ownerId"],
   });
 
@@ -95,18 +98,27 @@ export async function importVehicles(formData: FormData): Promise<ImportSummary>
       if (!["OWNER", "BROKER", "RELATIVE"].includes(ownership)) {
         throw new Error("Ownership must be OWNER, BROKER or RELATIVE");
       }
-      // owners, brokers and relatives share one unified person list
-      const person = await tx.party.findFirst({
-        where: {
-          name: { equals: rec["NAME"], mode: "insensitive" },
-          ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] },
-        },
-      });
-      if (!person) throw new Error(`"${rec["NAME"]}" not found in the owner / broker / relative list`);
+      // owners, brokers and relatives share one unified person list;
+      // a BROKER vehicle may come in without a name
+      const person = rec["NAME"]
+        ? await tx.party.findFirst({
+            where: {
+              name: { equals: rec["NAME"], mode: "insensitive" },
+              ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] },
+            },
+          })
+        : null;
+      if (!person && (ownership !== "BROKER" || rec["NAME"])) {
+        throw new Error(
+          rec["NAME"]
+            ? `"${rec["NAME"]}" not found in the owner / broker / relative list`
+            : "Name is required for OWNER / RELATIVE vehicles"
+        );
+      }
       const values = {
         ownershipType: ownership,
         isOwn: ownership === "OWNER",
-        ownerId: person.id,
+        ownerId: person?.id ?? null,
         vehicleType: rec["TYPE"] || null,
         chassisNo: rec["CHASSIS NO"]?.toUpperCase() || null,
         engineNo: rec["ENGINE NO"]?.toUpperCase() || null,

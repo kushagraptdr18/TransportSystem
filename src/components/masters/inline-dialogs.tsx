@@ -156,6 +156,7 @@ export function PartyCreateDialog({
   const [gstin, setGstin] = React.useState("");
   const [pan, setPan] = React.useState("");
   const [mobile, setMobile] = React.useState("");
+  const [transportName, setTransportName] = React.useState("");
   const [tdsMode, setTdsMode] = React.useState<"TDS_APPLICABLE" | "DECLARATION">("TDS_APPLICABLE");
 
   const submit = async () => {
@@ -172,6 +173,7 @@ export function PartyCreateDialog({
         gstin: gstin || undefined,
         pan: pan || undefined,
         mobile: mobile || undefined,
+        transportName: group === "OWNER_BROKER" ? transportName.toUpperCase() || undefined : undefined,
         tdsMode: group === "OWNER_BROKER" ? tdsMode : undefined,
       });
       onCreated(opt);
@@ -222,6 +224,15 @@ export function PartyCreateDialog({
           <Field label="Mobile">
             <Input value={mobile} onChange={(e) => setMobile(e.target.value)} />
           </Field>
+          {group === "OWNER_BROKER" && (
+            <Field label="Transport Name">
+              <Input
+                value={transportName}
+                onChange={(e) => setTransportName(e.target.value.toUpperCase())}
+                placeholder="Firm / transport ka naam"
+              />
+            </Field>
+          )}
           {group === "OWNER_BROKER" && (
             <div className="space-y-1.5 sm:col-span-2">
               <Label className="text-xs">TDS Handling</Label>
@@ -285,8 +296,9 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
       toast({ variant: "destructive", title: "Vehicle number is required" });
       return;
     }
-    if (!ownerId) {
-      toast({ variant: "destructive", title: "Select the owner / broker / relative name" });
+    // broker vehicles may save without a name; own/relative must be attributed
+    if (!ownerId && ownership !== "BROKER") {
+      toast({ variant: "destructive", title: "Select the owner / relative name" });
       return;
     }
     setBusy(true);
@@ -347,13 +359,31 @@ export function VehicleCreateDialog({ open, onOpenChange, onCreated }: InlineCre
           </div>
           <div className="space-y-1.5 sm:col-span-2">
             <Label className="text-xs">
-              {ownership === "RELATIVE" ? "Relative Name *" : ownership === "BROKER" ? "Broker Name *" : "Owner Name *"}
+              {ownership === "RELATIVE"
+                ? "Relative Name *"
+                : ownership === "BROKER"
+                  ? "Broker Name (optional)"
+                  : "Owner Name *"}
             </Label>
             <MasterCombobox
               options={owners}
               value={ownerId}
               onChange={setOwnerId}
               placeholder="Type to search..."
+              createLabel="+ Create party"
+              renderCreateDialog={(closeAndSelect) => (
+                <PartyCreateDialog
+                  open
+                  onOpenChange={(o: boolean) => {
+                    if (!o) closeAndSelect(ownerId ?? "");
+                  }}
+                  onCreated={(opt: MasterOption) => {
+                    setOwners((prev) => [...prev, opt]);
+                    closeAndSelect(opt.value);
+                  }}
+                  defaultGroup="OWNER_BROKER"
+                />
+              )}
             />
           </div>
           <Field label="Vehicle Type">

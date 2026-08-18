@@ -184,7 +184,8 @@ export function LrForm(props: LrFormProps) {
   const router = useRouter();
   const { toast } = useToast();
   const [saving, setSaving] = React.useState(false);
-  const [showInvoice, setShowInvoice] = React.useState(false);
+  // Party Invoice Details stays open — clerks fill it on nearly every LR
+  const [showInvoice, setShowInvoice] = React.useState(true);
   const [showInsurance, setShowInsurance] = React.useState(false);
 
   // inline-created options are appended locally
@@ -786,6 +787,7 @@ export function LrForm(props: LrFormProps) {
                     step="any"
                     {...register(`items.${index}.qty`, { valueAsNumber: true })}
                     className={numCls}
+                    onFocus={(e) => e.target.select()}
                   />
                   <Input
                     type="number"
@@ -799,6 +801,7 @@ export function LrForm(props: LrFormProps) {
                       },
                     })}
                     className={numCls}
+                    onFocus={(e) => e.target.select()}
                   />
                   <Input
                     type="number"
@@ -808,6 +811,7 @@ export function LrForm(props: LrFormProps) {
                       onChange: () => chargeWtTouched.current.add(index),
                     })}
                     className={numCls}
+                    onFocus={(e) => e.target.select()}
                   />
                   <Input {...register(`items.${index}.unit`)} className={inputCls} />
                   <Input
@@ -822,6 +826,7 @@ export function LrForm(props: LrFormProps) {
                       },
                     })}
                     className={numCls}
+                    onFocus={(e) => e.target.select()}
                   />
                   <Select
                     value={row?.rateBasis ?? "CHARGE_WT"}

@@ -131,6 +131,8 @@ export async function createPartyInline(input: {
   mobile?: string;
   stateId?: string;
   cityId?: string;
+  /** owner/broker parties: the transport firm name printed on documents */
+  transportName?: string;
   tdsMode?: "TDS_APPLICABLE" | "DECLARATION";
 }): Promise<Option> {
   const s = requireSession();
