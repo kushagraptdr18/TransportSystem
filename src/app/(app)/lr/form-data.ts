@@ -202,12 +202,12 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
       partyOptions: parties.map((p) => ({
         value: p.id,
         label: p.name,
-        meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+        meta: [p.alias, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
       })),
       billToOptions: billToParties.map((p) => ({
         value: p.id,
         label: p.name,
-        meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+        meta: [p.alias, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
       })),
       vehicleOptions: vehicles.map((veh) => ({
         value: veh.id,

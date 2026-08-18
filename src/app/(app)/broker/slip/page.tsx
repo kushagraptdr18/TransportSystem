@@ -64,12 +64,12 @@ export default async function BrokerSlipPage({
         parties: partyRows.map((p) => ({
           value: p.id,
           label: p.name,
-          meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+          meta: [p.alias, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
         })),
         brokers: brokerRows.map((p) => ({
           value: p.id,
           label: p.name,
-          meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+          meta: [p.alias, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
           // backs the Broker <-> Transport Name two-way link, as in Chalan Entry
           transportName: p.transportName,
           ownerName: p.ownerName,

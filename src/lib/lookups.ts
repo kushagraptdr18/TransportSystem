@@ -37,7 +37,8 @@ export async function getPartyOptions(groups?: LedgerGroup[]): Promise<Option[]>
   return parties.map((p) => ({
     value: p.id,
     label: p.name,
-    meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+    // alias first: the combobox searches label+meta, so the short name matches
+    meta: [p.alias, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
   }));
 }
 
@@ -145,7 +146,7 @@ export async function createPartyInline(input: {
   return {
     value: party.id,
     label: party.name,
-    meta: [party.gstin, party.pan].filter(Boolean).join(" · ") || undefined,
+    meta: [party.alias, party.gstin, party.pan].filter(Boolean).join(" · ") || undefined,
     // chalan / broker-slip keep their own broker lists — the created option
     // carries the two-way name-link data so it links without a page reload
     transportName: party.transportName ?? null,

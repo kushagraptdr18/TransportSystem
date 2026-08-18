@@ -189,7 +189,7 @@ export default async function ChalanPage({
   const brokerOptions: BrokerOption[] = brokers.map((b) => ({
     value: b.id,
     label: b.name,
-    meta: [b.gstin, b.pan].filter(Boolean).join(" · ") || undefined,
+    meta: [b.alias, b.gstin, b.pan].filter(Boolean).join(" · ") || undefined,
     pan: b.pan,
     tdsMode: b.tdsMode,
     transportName: b.transportName,

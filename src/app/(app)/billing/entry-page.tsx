@@ -117,7 +117,7 @@ export async function InvoiceEntryPage({
         partyOptions={parties.map((p) => ({
           value: p.id,
           label: p.name,
-          meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+          meta: [p.alias, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
         }))}
         bankOptions={banks.map((b) => ({ value: b.id, label: b.name }))}
         bankDetails={Object.fromEntries(

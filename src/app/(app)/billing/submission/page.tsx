@@ -74,7 +74,7 @@ export default async function BillSubmissionPage({
         partyOptions={parties.map((p) => ({
           value: p.id,
           label: p.name,
-          meta: [p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+          meta: [p.alias, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
         }))}
       />
     </div>
