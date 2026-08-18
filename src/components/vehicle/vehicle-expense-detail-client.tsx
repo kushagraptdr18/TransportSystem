@@ -4,6 +4,7 @@ import * as React from "react";
 import { ChevronRight } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { ExportButton } from "@/components/data/export-button";
 import { FilterBar } from "@/components/data/filter-bar";
 import type { MasterOption } from "@/components/data/master-combobox";
 
@@ -27,7 +28,13 @@ export interface VehicleExpenseDetailRow {
   vehicle: string;
   ownership: string;
   ownershipType: string;
+  /** expense total */
   total: number;
+  /** INCOME vouchers allocated to the vehicle (scrap sale, kiraya, ...) */
+  income: number;
+  incomeEntries: HeadDetail["entries"];
+  /** total − income */
+  net: number;
   heads: HeadDetail[];
 }
 
@@ -75,17 +82,60 @@ export function VehicleExpenseDetailClient({
   // its color in every vehicle block)
   const t = React.useMemo(() => {
     const headTotals = new Map<string, number>();
+    const monthly = new Map<string, number>();
+    const byType = new Map<string, { vehicles: number; net: number }>();
     let entries = 0;
-    for (const r of rows)
+    for (const r of rows) {
       for (const h of r.heads) {
         headTotals.set(h.name, (headTotals.get(h.name) ?? 0) + h.amount);
         entries += h.entries.length;
+        for (const [m, amt] of Object.entries(h.months))
+          monthly.set(m, (monthly.get(m) ?? 0) + amt);
       }
+      entries += r.incomeEntries.length;
+      const ty = byType.get(r.ownership) ?? { vehicles: 0, net: 0 };
+      ty.vehicles += 1;
+      ty.net += r.net;
+      byType.set(r.ownership, ty);
+    }
     const sorted = Array.from(headTotals.entries()).sort(([, a], [, b]) => b - a);
     const colorOf = new Map<string, string>();
     sorted.forEach(([name], i) => colorOf.set(name, HEAD_BG[i] ?? OTHER_BG));
     const total = rows.reduce((s, r) => s + r.total, 0);
-    return { total, entries, sorted, colorOf };
+    const income = rows.reduce((s, r) => s + r.income, 0);
+    const months = Array.from(monthly.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-12)
+      .map(([month, amt]) => ({ month, amt: Math.round(amt) }));
+    const types = Array.from(byType.entries()).sort(([, a], [, b]) => b.net - a.net);
+    // flat entry list for the Excel export: vehicle + head + every entry
+    const flat = rows.flatMap((r) => [
+      ...r.heads.flatMap((h) =>
+        h.entries.map((e) => ({
+          vehicle: r.vehicle,
+          ownership: r.ownership,
+          head: h.name,
+          date: formatDate(e.date),
+          voucherNo: e.voucherNo,
+          supplier: e.supplier,
+          qty: e.qty ?? "",
+          amount: e.amount,
+          remarks: e.remarks,
+        }))
+      ),
+      ...r.incomeEntries.map((e) => ({
+        vehicle: r.vehicle,
+        ownership: r.ownership,
+        head: "INCOME",
+        date: formatDate(e.date),
+        voucherNo: e.voucherNo,
+        supplier: e.supplier,
+        qty: e.qty ?? "",
+        amount: -e.amount,
+        remarks: e.remarks,
+      })),
+    ]);
+    return { total, income, net: total - income, entries, sorted, colorOf, months, types, flat };
   }, [rows]);
 
   if (!rows.length) {
@@ -100,12 +150,33 @@ export function VehicleExpenseDetailClient({
   const biggest = t.sorted[0];
   const costliest = rows[0];
 
+  const maxMonth = Math.max(...t.months.map((m) => m.amt), 1);
+  const maxTypeNet = Math.max(...t.types.map(([, v]) => v.net), 1);
+
   return (
     <div className="space-y-4">
-      <Filters vehicleOptions={vehicleOptions} />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Filters vehicleOptions={vehicleOptions} />
+        <ExportButton
+          rows={t.flat}
+          fileName="vehicle-expense-detail"
+          sheetName="Vehicle Expense Detail"
+          columns={[
+            { header: "Vehicle", key: "vehicle" },
+            { header: "Ownership", key: "ownership" },
+            { header: "Head", key: "head" },
+            { header: "Date", key: "date" },
+            { header: "Voucher", key: "voucherNo" },
+            { header: "Supplier / Detail", key: "supplier" },
+            { header: "Qty", key: "qty", numeric: true },
+            { header: "Amount", key: "amount", numeric: true },
+            { header: "Remarks", key: "remarks" },
+          ]}
+        />
+      </div>
 
       {/* tiles */}
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-lg border bg-card p-4">
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Total Expenses
@@ -114,6 +185,22 @@ export function VehicleExpenseDetailClient({
           <div className="mt-1 text-xs text-muted-foreground">
             {rows.length} vehicles · {t.entries} entries
           </div>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Total Income
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-emerald-600">
+            {lakh(t.income)}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">scrap / kiraya (INCOME vouchers)</div>
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Net Cost
+          </div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums">{lakh(t.net)}</div>
+          <div className="mt-1 text-xs text-muted-foreground">expenses − income</div>
         </div>
         <div className="rounded-lg border bg-card p-4">
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -132,8 +219,67 @@ export function VehicleExpenseDetailClient({
           </div>
           <div className="mt-1 text-lg font-semibold">{costliest.vehicle}</div>
           <div className="mt-1 text-xs tabular-nums text-muted-foreground">
-            {lakh(costliest.total)} in this period
+            {lakh(costliest.net)} net in this period
           </div>
+        </div>
+      </div>
+
+      {/* monthly + ownership compare */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-sm font-semibold">Month-wise Expenses — all vehicles</div>
+          <div className="mb-2 text-xs text-muted-foreground">kaunse mahine kitna kharcha</div>
+          {t.months.length ? (
+            <>
+              <div className="flex h-32 items-end gap-2 border-b px-1">
+                {t.months.map((m) => (
+                  <div
+                    key={m.month}
+                    className="flex h-full flex-1 flex-col items-center justify-end"
+                    title={`${monthLabel(m.month)}: ${formatMoney(m.amt)}`}
+                  >
+                    <span className="mb-1 text-[10px] tabular-nums text-muted-foreground">
+                      {lakh(m.amt)}
+                    </span>
+                    <i
+                      className={`w-[70%] max-w-10 rounded-t ${HEAD_BG[1]}`}
+                      style={{ height: `${Math.max(4, (m.amt / maxMonth) * 80)}%` }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 px-1 pt-1">
+                {t.months.map((m) => (
+                  <div key={m.month} className="flex-1 text-center text-[10px] text-muted-foreground">
+                    {monthLabel(m.month)}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">No data.</p>
+          )}
+        </div>
+        <div className="rounded-lg border bg-card p-4">
+          <div className="text-sm font-semibold">Ownership Compare</div>
+          <div className="mb-2 text-xs text-muted-foreground">net cost — Own vs Relative vs Broker</div>
+          {t.types.map(([label, v]) => (
+            <div
+              key={label}
+              className="my-2 grid grid-cols-[110px_1fr_110px] items-center gap-2 text-sm"
+            >
+              <span>
+                {label} <span className="text-xs text-muted-foreground">({v.vehicles})</span>
+              </span>
+              <span className="h-2.5 overflow-hidden rounded-full bg-muted">
+                <i
+                  className={`block h-full rounded-full ${HEAD_BG[1]}`}
+                  style={{ width: `${Math.max((v.net / maxTypeNet) * 100, 1)}%` }}
+                />
+              </span>
+              <span className="text-right font-semibold tabular-nums">{formatMoney(v.net)}</span>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -177,7 +323,14 @@ export function VehicleExpenseDetailClient({
               />
               <span className="font-semibold">{r.vehicle}</span>
               <Badge variant="secondary">{r.ownership}</Badge>
-              <span className="ml-auto font-semibold tabular-nums">{formatMoney(r.total)}</span>
+              {r.income > 0 && (
+                <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-400">
+                  Income {formatMoney(r.income)}
+                </Badge>
+              )}
+              <span className="ml-auto font-semibold tabular-nums">
+                {r.income > 0 ? <>Net {formatMoney(r.net)}</> : formatMoney(r.total)}
+              </span>
             </button>
             {open && (
               <div className="border-t">
@@ -281,6 +434,64 @@ export function VehicleExpenseDetailClient({
                     </React.Fragment>
                   );
                 })}
+                {/* income section — nets off the vehicle's cost */}
+                {r.income > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      className="grid w-full grid-cols-[14px_150px_1fr_110px_90px] items-center gap-2.5 border-t px-4 py-2 text-left text-sm hover:bg-muted/50"
+                      onClick={() => setOpenHeads((s) => toggle(s, `${r.id}:__income`))}
+                    >
+                      <i className="h-2.5 w-2.5 rounded-sm bg-emerald-600 dark:bg-emerald-500" />
+                      <span className="truncate font-medium text-emerald-700 dark:text-emerald-400">
+                        Income
+                      </span>
+                      <span />
+                      <span className="text-right font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">
+                        + {formatMoney(r.income)}
+                      </span>
+                      <span className="text-right text-xs tabular-nums text-muted-foreground">
+                        {r.incomeEntries.length}{" "}
+                        {r.incomeEntries.length === 1 ? "entry" : "entries"}
+                      </span>
+                    </button>
+                    {openHeads.has(`${r.id}:__income`) && (
+                      <div className="border-t bg-muted/30 px-4 py-3">
+                        <div className="overflow-x-auto">
+                          <table className="w-full border-collapse text-xs">
+                            <thead>
+                              <tr>
+                                {["Date", "Voucher", "Detail", "Amount", "Remarks"].map((hd) => (
+                                  <th
+                                    key={hd}
+                                    className={`border px-1.5 py-1 text-left font-semibold ${hd === "Amount" ? "text-right" : ""}`}
+                                  >
+                                    {hd}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {r.incomeEntries.map((e, i) => (
+                                <tr key={i}>
+                                  <td className="border px-1.5 py-1">{formatDate(e.date)}</td>
+                                  <td className="border px-1.5 py-1">{e.voucherNo || "—"}</td>
+                                  <td className="border px-1.5 py-1">{e.supplier || "—"}</td>
+                                  <td className="border px-1.5 py-1 text-right font-medium tabular-nums text-emerald-700 dark:text-emerald-400">
+                                    {formatMoney(e.amount)}
+                                  </td>
+                                  <td className="border px-1.5 py-1 text-muted-foreground">
+                                    {e.remarks || "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>

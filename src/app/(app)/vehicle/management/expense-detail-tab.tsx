@@ -43,10 +43,11 @@ export async function VehicleExpenseDetailTab({
                 },
               }
             : {}),
+          // EXPENSE and INCOME vouchers both — income (scrap sale, kiraya)
+          // shows as its own section and nets off the vehicle's cost
           voucher: {
             firmId: session.firmId,
             fyId: session.fyId,
-            txnType: "EXPENSE",
             deletedAt: null,
           },
         },
@@ -105,22 +106,32 @@ export async function VehicleExpenseDetailTab({
     byVehicle.set(vehicleId, headsMap);
   };
 
+  // vehicleId -> income entries (INCOME vouchers allocated to the vehicle)
+  const incomeByVehicle = new Map<string, HeadDetail["entries"]>();
+
   for (const it of items) {
     const amount = toNum(String(it.amount));
     if (amount <= 0) continue;
     const qty = it.qty != null ? toNum(String(it.qty)) : null;
+    const entry = {
+      date: it.allocDate.toISOString(),
+      voucherNo: it.voucher.voucherNo,
+      supplier:
+        (it.voucher.partyId && partyName.get(it.voucher.partyId)) || it.voucher.itemName || "",
+      qty,
+      amount,
+      remarks: it.remarks || it.voucher.remarks || "",
+    };
+    if (it.voucher.txnType === "INCOME") {
+      const list = incomeByVehicle.get(it.vehicleId) ?? [];
+      list.push(entry);
+      incomeByVehicle.set(it.vehicleId, list);
+      continue;
+    }
     bump(
       it.vehicleId,
       headName.get(it.voucher.headId) ?? "(unknown head)",
-      {
-        date: it.allocDate.toISOString(),
-        voucherNo: it.voucher.voucherNo,
-        supplier:
-          (it.voucher.partyId && partyName.get(it.voucher.partyId)) || it.voucher.itemName || "",
-        qty,
-        amount,
-        remarks: it.remarks || it.voucher.remarks || "",
-      },
+      entry,
       monthKey(it.allocDate)
     );
   }
@@ -148,10 +159,19 @@ export async function VehicleExpenseDetailTab({
     );
   }
 
-  const rows: VehicleExpenseDetailRow[] = Array.from(byVehicle.entries())
-    .map(([vehicleId, headsMap]) => {
+  const vehicleIds = new Set([
+    ...Array.from(byVehicle.keys()),
+    ...Array.from(incomeByVehicle.keys()),
+  ]);
+  const rows: VehicleExpenseDetailRow[] = Array.from(vehicleIds)
+    .map((vehicleId) => {
       const v = vehicleById.get(vehicleId);
-      const headList = Array.from(headsMap.values()).sort((a, b) => b.amount - a.amount);
+      const headList = Array.from(
+        (byVehicle.get(vehicleId) ?? new Map<string, HeadDetail>()).values()
+      ).sort((a, b) => b.amount - a.amount);
+      const incomeEntries = incomeByVehicle.get(vehicleId) ?? [];
+      const income = r2(incomeEntries.reduce((s, e) => s + e.amount, 0));
+      const total = r2(headList.reduce((s, h) => s + h.amount, 0));
       return {
         id: vehicleId,
         vehicle: v?.number ?? "(unknown vehicle)",
@@ -162,13 +182,16 @@ export async function VehicleExpenseDetailTab({
               ? "Relative"
               : "Broker",
         ownershipType: v?.ownershipType ?? "",
-        total: r2(headList.reduce((s, h) => s + h.amount, 0)),
+        total,
+        income,
+        incomeEntries,
+        net: r2(total - income),
         heads: headList,
       };
     })
     .filter((r) => !searchParams.vehicle || r.id === searchParams.vehicle)
     .filter((r) => !searchParams.ownership || r.ownershipType === searchParams.ownership)
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => b.net - a.net);
 
   return (
     <VehicleExpenseDetailClient
