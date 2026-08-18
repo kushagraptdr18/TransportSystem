@@ -367,6 +367,14 @@ export function BrokerSlipForm({
     const b = brokerOptions.find((x) => x.value === v);
     if (b && !form.ownerName) set("ownerName", b.ownerName ?? b.label);
   };
+  // a broker created inline lands in brokerOptions a beat AFTER selectBroker
+  // ran — backfill the owner name once the enriched option is in the list
+  React.useEffect(() => {
+    if (!form.transporterId || form.ownerName) return;
+    const b = brokerOptions.find((x) => x.value === form.transporterId);
+    if (b) set("ownerName", b.ownerName ?? b.label);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.transporterId, brokerOptions]);
   const transportOptions = brokerOptions
     .filter((b) => b.transportName)
     .map((b) => ({ value: b.value, label: b.transportName as string, meta: b.label }));

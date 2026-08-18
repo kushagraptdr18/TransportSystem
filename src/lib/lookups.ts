@@ -134,7 +134,7 @@ export async function createPartyInline(input: {
   /** owner/broker parties: the transport firm name printed on documents */
   transportName?: string;
   tdsMode?: "TDS_APPLICABLE" | "DECLARATION";
-}): Promise<Option> {
+}): Promise<Option & { transportName?: string | null; ownerName?: string | null }> {
   const s = requireSession();
   await authorize(s, "masters", "create");
   const party = await withTenant(s.tenantId, (tx) =>
@@ -142,7 +142,15 @@ export async function createPartyInline(input: {
       data: { tenantId: s.tenantId, ...input, name: input.name.toUpperCase().trim() },
     })
   );
-  return { value: party.id, label: party.name, meta: [party.gstin, party.pan].filter(Boolean).join(" · ") || undefined };
+  return {
+    value: party.id,
+    label: party.name,
+    meta: [party.gstin, party.pan].filter(Boolean).join(" · ") || undefined,
+    // chalan / broker-slip keep their own broker lists — the created option
+    // carries the two-way name-link data so it links without a page reload
+    transportName: party.transportName ?? null,
+    ownerName: party.name,
+  };
 }
 
 export async function createVehicleInline(input: {

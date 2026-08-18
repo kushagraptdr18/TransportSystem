@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { DateInput } from "@/components/data/date-input";
-import { MasterCombobox } from "@/components/data/master-combobox";
+import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
 import { Field, NumInput, PartyCombobox, VehicleCombobox, enterAdvances } from "@/components/fleet/fields";
 import { LrPicker, SelectedLrList, type PendingLrRow } from "@/components/fleet/lr-picker";
 import { computeChalan, dieselAdvanceAmount } from "@/lib/calc/chalan";
@@ -296,10 +296,18 @@ export function ChalanForm({
     refreshAdvanceOptions();
   }, [refreshAdvanceOptions]);
 
+  // brokers created inline carry transportName/ownerName on the option —
+  // merged here so the two-way name link works without a page reload
+  const [createdBrokers, setCreatedBrokers] = React.useState<BrokerOption[]>([]);
+  const allBrokers = React.useMemo(
+    () => [...brokers, ...createdBrokers.filter((c) => !brokers.some((b) => b.value === c.value))],
+    [brokers, createdBrokers]
+  );
+
   // auto TDS pct from broker PAN
   React.useEffect(() => {
     if (!brokerId) return;
-    const b = brokers.find((x) => x.value === brokerId);
+    const b = allBrokers.find((x) => x.value === brokerId);
     const apply = (pan: string | null, mode: TdsMode | null) => {
       setBrokerTds({ pan, tdsMode: mode });
       if (!tdsOverridden) setTdsPct(tdsPctFromPan(pan, mode));
@@ -577,20 +585,40 @@ export function ChalanForm({
       })
     );
 
-  const brokerName = brokers.find((b) => b.value === brokerId)?.label;
+  const brokerName = allBrokers.find((b) => b.value === brokerId)?.label;
 
   // Owner ↔ Transport Name two-way link, mapped in the Owner Master:
   // picking either one fills the other automatically
-  const selectBroker = (v: string | null) => {
+  const selectBroker = (v: string | null, createdOpt?: MasterOption) => {
     setBrokerId(v);
     setTdsOverridden(false);
-    const b = brokers.find((x) => x.value === v);
+    // a just-created broker isn't in the props list yet — take the name-link
+    // data straight off the created option and remember it locally
+    const extra = createdOpt as
+      | (MasterOption & { transportName?: string | null; ownerName?: string | null })
+      | undefined;
+    if (v && extra && extra.value === v && !allBrokers.some((b) => b.value === v)) {
+      const nb: BrokerOption = {
+        value: extra.value,
+        label: extra.label,
+        meta: extra.meta,
+        pan: null,
+        tdsMode: null,
+        transportName: extra.transportName ?? null,
+        ownerName: extra.ownerName ?? extra.label,
+      };
+      setCreatedBrokers((prev) => [...prev, nb]);
+      setTransportName(nb.transportName ?? "");
+      setOwnerName(nb.ownerName ?? nb.label);
+      return;
+    }
+    const b = allBrokers.find((x) => x.value === v);
     if (b) {
       setTransportName(b.transportName ?? "");
       setOwnerName(b.ownerName ?? b.label);
     }
   };
-  const transportOptions = brokers
+  const transportOptions = allBrokers
     .filter((b) => b.transportName)
     .map((b) => ({ value: b.value, label: b.transportName as string, meta: b.label }));
 
@@ -634,9 +662,9 @@ export function ChalanForm({
           </Field>
           <Field label="Broker / Owner">
             <PartyCombobox
-              options={brokers}
+              options={allBrokers}
               value={brokerId}
-              onChange={(v) => selectBroker(v)}
+              onChange={(v, opt) => selectBroker(v, opt)}
               ledgerGroup="OWNER_BROKER"
               placeholder="Select broker..."
             />
@@ -646,7 +674,7 @@ export function ChalanForm({
               options={transportOptions}
               value={
                 brokerId &&
-                brokers.find((b) => b.value === brokerId)?.transportName === transportName &&
+                allBrokers.find((b) => b.value === brokerId)?.transportName === transportName &&
                 transportName
                   ? brokerId
                   : null
