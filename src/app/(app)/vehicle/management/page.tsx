@@ -5,6 +5,7 @@ import { TabNav, type TabDef } from "@/components/app/tab-nav";
 import { VehicleExpensesTab } from "./expenses-tab";
 import { VehicleExpenseAllocationTab } from "./allocation-tab";
 import { VehicleExpenseSummaryTab } from "./summary-tab";
+import { VehicleExpenseDetailTab } from "./expense-detail-tab";
 import { VehicleFinanceTab } from "./finance-tab";
 import { VehicleTrackingTab } from "./tracking-tab";
 import { VehiclePnlTab } from "./pnl-tab";
@@ -17,6 +18,7 @@ const TABS: TabDef[] = [
   { value: "expenses", label: "Vehicle Expenses" },
   { value: "allocation", label: "Expense Allocation" },
   { value: "summary", label: "Expense Summary" },
+  { value: "expense-detail", label: "Expense Detail" },
   { value: "finance", label: "Finance" },
   { value: "tracking", label: "Vehicle Tracking" },
   { value: "pnl", label: "Trip Profit & Loss" },
@@ -27,6 +29,8 @@ const SUBTITLE: Record<string, string> = {
   allocation:
     "Bulk stock already purchased, handed to the vehicles that use it — on the date they use it.",
   summary: "The same expenses rolled up per vehicle and head.",
+  "expense-detail":
+    "Vehicle kholo, head kholo — har diesel fill, tyre aur repair entry ki poori list.",
   finance: "Loans running against the fleet, their EMIs and what is still outstanding.",
   tracking: "Where each vehicle is and what it is running.",
   pnl: "Earnings less running costs, per vehicle.",
@@ -53,6 +57,7 @@ export default async function VehicleManagementPage({
       {tab === "expenses" && <VehicleExpensesTab searchParams={searchParams} />}
       {tab === "allocation" && <VehicleExpenseAllocationTab searchParams={searchParams} />}
       {tab === "summary" && <VehicleExpenseSummaryTab searchParams={searchParams} />}
+      {tab === "expense-detail" && <VehicleExpenseDetailTab searchParams={searchParams} />}
       {tab === "finance" && <VehicleFinanceTab />}
       {tab === "tracking" && <VehicleTrackingTab />}
       {tab === "pnl" && <VehiclePnlTab searchParams={searchParams} />}
