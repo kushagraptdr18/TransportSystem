@@ -593,26 +593,6 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
       if (data.type === "CONTRA") {
         entries.push({ ...common, partyId: data.partyId, side: counterSide, amount: netAmount });
       } else {
-        // the party is settled for the GROSS amount — deductions and
-        // adjustments are posted to their own heads so nothing stays
-        // outstanding against the party
-        if (postParty && (data.partyId || data.accountHeadId)) {
-          entries.push({
-            ...common,
-            partyId: data.partyId || null,
-            accountHeadId: data.partyId ? null : data.accountHeadId,
-            side: counterSide,
-            amount: data.amount,
-          });
-        }
-        if (postVehicle && data.vehicleId) {
-          entries.push({
-            ...common,
-            vehicleId: data.vehicleId,
-            side: counterSide,
-            amount: data.amount,
-          });
-        }
         // Header deductions post to the COMMON ledger head for each concept —
         // TDS to the statutory payable/receivable ledger (never a "TDS
         // Adjustment" head), shortage to the one Shortage ledger the chalan
@@ -636,6 +616,53 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         const directShortage = round2(
           Math.max(0, data.deduction - rowOther - registeredShortage)
         );
+        const totalShortage = round2(registeredShortage + directShortage);
+
+        // the party is settled for the GROSS amount — deductions and
+        // adjustments are posted to their own heads so nothing stays
+        // outstanding against the party. The party/vehicle ledger shows the
+        // settlement the way the voucher was typed: the money portion plus
+        // each deduction as its own labelled line (like Round Off below).
+        // The lines sum to the same gross, so balances never change.
+        const vLabel = `${data.type.toLowerCase()} voucher ${data.voucherNo}`;
+        const grossBreakup: { amount: number; narration: string }[] = (() => {
+          const main = round2(data.amount - data.tdsAmt - totalShortage - rowOther);
+          if (main < 0 || (data.tdsAmt <= 0 && totalShortage <= 0 && rowOther <= 0)) {
+            return [{ amount: data.amount, narration }];
+          }
+          const parts: { amount: number; narration: string }[] = [];
+          if (main > 0) parts.push({ amount: main, narration });
+          if (data.tdsAmt > 0)
+            parts.push({ amount: round2(data.tdsAmt), narration: `TDS deducted — ${vLabel}` });
+          if (totalShortage > 0)
+            parts.push({ amount: totalShortage, narration: `Shortage — ${vLabel}` });
+          if (rowOther > 0)
+            parts.push({ amount: rowOther, narration: `Other deduction — ${vLabel}` });
+          return parts;
+        })();
+        if (postParty && (data.partyId || data.accountHeadId)) {
+          for (const part of grossBreakup) {
+            entries.push({
+              ...common,
+              partyId: data.partyId || null,
+              accountHeadId: data.partyId ? null : data.accountHeadId,
+              side: counterSide,
+              amount: part.amount,
+              narration: part.narration,
+            });
+          }
+        }
+        if (postVehicle && data.vehicleId) {
+          for (const part of grossBreakup) {
+            entries.push({
+              ...common,
+              vehicleId: data.vehicleId,
+              side: counterSide,
+              amount: part.amount,
+              narration: part.narration,
+            });
+          }
+        }
         const legacy: [string, number, "bank" | "counter"][] = [
           [tdsHead(data.type), data.tdsAmt, "bank"],
           ["Shortage", directShortage, "bank"],
