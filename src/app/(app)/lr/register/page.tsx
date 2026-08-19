@@ -1,5 +1,7 @@
+import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
+import { Button } from "@/components/ui/button";
 import { withTenant } from "@/lib/db";
 import { formatDate, toNum } from "@/lib/utils";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
@@ -100,6 +102,7 @@ export default async function LrRegisterPage({
       obdNo: lr.obdNo ?? "",
       invoiceNo: lr.invoiceNo ?? "",
       refNo: lr.refNo ?? "",
+      product: lr.items.map((i) => i.productName).filter(Boolean).join(", "),
       rate: lr.items.length ? Math.max(...lr.items.map((i) => toNum(i.rate))) : 0,
       status: lr.status,
       isDummy: lr.isDummy,
@@ -142,7 +145,12 @@ export default async function LrRegisterPage({
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">LR Register</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">LR Register</h1>
+        <Button asChild size="sm">
+          <Link href="/lr">+ New LR</Link>
+        </Button>
+      </div>
       <FilterBar filters={filters} />
       <LrRegisterTable rows={lrs} canDelete={canDelete} />
     </div>

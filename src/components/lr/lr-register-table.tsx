@@ -43,6 +43,8 @@ export interface LrRegisterRow {
   obdNo: string;
   invoiceNo: string;
   refNo: string;
+  /** item product names, comma-joined */
+  product: string;
   rate: number;
 }
 
@@ -111,6 +113,7 @@ export function LrRegisterTable({
       { accessorKey: "obdNo", header: "OBD No" },
       { accessorKey: "invoiceNo", header: "Invoice No" },
       { accessorKey: "refNo", header: "Ref No" },
+      { accessorKey: "product", header: "Product" },
       {
         accessorKey: "qty",
         header: "Qty",
@@ -240,6 +243,7 @@ export function LrRegisterTable({
     { header: "OBD No", key: "obdNo" },
     { header: "Invoice No", key: "invoiceNo" },
     { header: "Ref No", key: "refNo" },
+    { header: "Product", key: "product" },
     { header: "Qty", key: "qty", numeric: true },
     { header: "Actual Wt", key: "actualWt", numeric: true },
     { header: "Charge Wt", key: "chargeWt", numeric: true },
