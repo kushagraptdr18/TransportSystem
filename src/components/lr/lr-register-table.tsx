@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Copy, GitBranch, Pencil, Printer, Trash2 } from "lucide-react";
+import { Copy, GitBranch, Lock, Pencil, Printer, Trash2 } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
 import { deleteLr, getLrLifecycle, type LrLifecycle } from "@/app/(app)/lr/actions";
 import { Badge } from "@/components/ui/badge";
@@ -186,11 +186,24 @@ export function LrRegisterTable({
           const editHref = `/lr?id=${lr.id}`;
           return (
             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-              <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
-                <Link href={editHref} title="View / Edit">
-                  <Pencil className="h-3.5 w-3.5" />
-                </Link>
-              </Button>
+              {/* a billed LR is edited only through its bill's preview, so the
+                  bill's figures always change in front of the user's eyes */}
+              {lr.status === "BILLED" ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 cursor-not-allowed text-muted-foreground"
+                  title="Bill ban chuka hai — edit Billing Register se bill kholkar, preview ke Edit se karein"
+                >
+                  <Lock className="h-3.5 w-3.5" />
+                </Button>
+              ) : (
+                <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
+                  <Link href={editHref} title="View / Edit">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              )}
               <Button variant="ghost" size="icon" className="h-7 w-7" asChild>
                 <Link href={`/print/lr/${lr.id}`} target="_blank" title="Print">
                   <Printer className="h-3.5 w-3.5" />

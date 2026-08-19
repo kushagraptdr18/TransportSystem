@@ -11,6 +11,8 @@ export interface LrFormData {
   mode: "create" | "edit";
   lrId?: string;
   isDummy: boolean;
+  /** billed LRs are edited only via the bill preview — the /lr page blocks them */
+  isBilled: boolean;
   defaults: LrFormValues;
   gstPct: number;
   cityOptions: MasterOption[];
@@ -196,6 +198,7 @@ export async function loadLrFormData(editId?: string, copyId?: string): Promise<
       mode: existing && !isCopy ? ("edit" as const) : ("create" as const),
       lrId: isCopy ? undefined : existing?.id,
       isDummy: existing?.isDummy ?? false,
+      isBilled: !isCopy && existing?.status === "BILLED",
       defaults,
       gstPct,
       cityOptions: cities.map((c) => ({ value: c.id, label: c.name, meta: c.state.name })),
