@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
 import { invoiceSettlement, payableSettlement } from "@/lib/settlement";
@@ -12,6 +13,7 @@ export default async function ChalanRegisterPage({
   searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
+  await authorize(session, "chalan", "view");
   const { date_from, date_to, q, broker, vehicle, status, payment, ownership, shortage } =
     searchParams;
   // two registers in one screen: MARKET (payable workflow, the default) and

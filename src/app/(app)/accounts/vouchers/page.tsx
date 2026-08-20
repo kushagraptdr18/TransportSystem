@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { peekDocNumber } from "@/lib/sequences";
 import { getPartyOptions, getBankOptions, getVehicleOptions } from "@/lib/lookups";
@@ -31,6 +32,7 @@ export default async function VouchersPage({
   searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
+  await authorize(session, "vouchers", "view");
 
   const tab = TABS.some((t) => t.value === searchParams.tab)
     ? (searchParams.tab as string)

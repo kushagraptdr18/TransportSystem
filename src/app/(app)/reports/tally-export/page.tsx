@@ -40,7 +40,7 @@ export default async function TallyExportPage({
   searchParams: { date_from?: string; date_to?: string; module?: string };
 }) {
   const session = requireSession();
-  await authorize(session, "reports", "view");
+  await authorize(session, "tally", "view");
 
   const activeModule = (MODULES.some((m) => m.value === searchParams.module)
     ? searchParams.module

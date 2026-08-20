@@ -31,6 +31,7 @@ export const MODULES: { key: string; label: string }[] = [
   { key: "maintenance", label: "Vehicle & Driver" },
   { key: "vouchers", label: "Accounts / Vouchers" },
   { key: "reports", label: "Reports" },
+  { key: "tally", label: "Tally Export" },
   { key: "summary", label: "Summary" },
   { key: "masters", label: "Masters" },
   { key: "settings", label: "Settings" },

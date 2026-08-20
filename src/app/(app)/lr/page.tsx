@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { Lock } from "lucide-react";
+import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { Button } from "@/components/ui/button";
 import { LrForm } from "@/components/lr/lr-form";
 import { loadLrFormData } from "./form-data";
@@ -11,6 +13,7 @@ export default async function LrEntryPage({
 }: {
   searchParams: { id?: string; copy?: string };
 }) {
+  await authorize(requireSession(), "lr", "view");
   const data = await loadLrFormData(searchParams.id, searchParams.copy);
 
   // a billed LR changes only through its bill's preview — editing it here

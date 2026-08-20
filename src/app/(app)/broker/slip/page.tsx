@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { peekDocNumber } from "@/lib/sequences";
 import { BrokerSlipForm, type BrokerSlipFormData } from "@/components/broker/slip-form";
@@ -22,6 +23,7 @@ export default async function BrokerSlipPage({
   searchParams: { id?: string };
 }) {
   const session = requireSession();
+  await authorize(session, "broker", "view");
 
   const { nextNo, cities, parties, brokers, vehicles, products, accountHeads, bankCash, slip } =
     await withTenant(session.tenantId, async (tx) => {

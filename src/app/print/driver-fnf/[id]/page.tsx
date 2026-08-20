@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { PrintToolbar } from "./print-toolbar";
@@ -11,6 +12,7 @@ const label = "border border-black bg-neutral-100 px-2 py-1 font-semibold";
 
 export default async function DriverFnfPrintPage({ params }: { params: { id: string } }) {
   const session = requireSession();
+  await authorize(session, "maintenance", "print");
   const data = await withTenant(session.tenantId, async (tx) => {
     const fnf = await tx.driverFnf.findFirst({
       // firm-scoped: another firm's settlement must not print under this session

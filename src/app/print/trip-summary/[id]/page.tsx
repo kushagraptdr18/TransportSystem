@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { round2 } from "@/lib/calc/tds";
@@ -62,6 +63,7 @@ function KV({ items }: { items: [string, React.ReactNode][] }) {
 
 export default async function TripSummaryPage({ params }: { params: { id: string } }) {
   const session = requireSession();
+  await authorize(session, "maintenance", "print");
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const trip = await tx.trip.findFirst({

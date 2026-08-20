@@ -41,7 +41,7 @@ export async function runTallyExport(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const data = parsed.data;
-  await authorize(session, "reports", "view");
+  await authorize(session, "tally", "export");
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
@@ -115,7 +115,7 @@ export async function runTallyMasters(
     .object({ module: moduleSchema, dateFrom: z.string().nullish(), dateTo: z.string().nullish() })
     .safeParse(input);
   if (!parsed.success) return { ok: false, error: "Invalid input" };
-  await authorize(session, "reports", "view");
+  await authorize(session, "tally", "export");
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const { masters } = await buildModuleDocs(

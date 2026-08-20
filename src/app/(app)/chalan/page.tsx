@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { nextChalanNumber } from "@/lib/sequences";
 import { toNum } from "@/lib/utils";
@@ -13,6 +14,7 @@ export default async function ChalanPage({
   searchParams: { id?: string };
 }) {
   const session = requireSession();
+  await authorize(session, "chalan", "view");
 
   const [nextNo, brokers, vehicles, banks, accountHeads, record] = await withTenant(
     session.tenantId,

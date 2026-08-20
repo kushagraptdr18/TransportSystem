@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { round2 } from "@/lib/calc/tds";
@@ -19,6 +20,7 @@ export const dynamic = "force-dynamic";
 
 export default async function InvoicePrintPage({ params }: { params: { id: string } }) {
   const session = requireSession();
+  await authorize(session, "billing", "print");
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const invoice = await tx.invoice.findFirst({

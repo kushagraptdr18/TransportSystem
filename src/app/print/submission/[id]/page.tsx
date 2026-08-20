@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { amountInWords } from "@/lib/num-to-words";
@@ -10,6 +11,7 @@ export const dynamic = "force-dynamic";
 /** Covering letter for a bill submission — print / save as PDF. */
 export default async function SubmissionPrintPage({ params }: { params: { id: string } }) {
   const session = requireSession();
+  await authorize(session, "billing", "print");
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const sub = await tx.invoiceSubmission.findFirst({

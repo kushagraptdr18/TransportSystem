@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { round2 } from "@/lib/calc/tds";
 import { payableSettlement } from "@/lib/settlement";
@@ -27,6 +28,7 @@ export default async function BrokerRegisterPage({
   searchParams: SearchParams;
 }) {
   const session = requireSession();
+  await authorize(session, "broker", "view");
 
   const { rows, vPos, vehicles, brokers, cityById, partyById, vehicleById, userById } = await withTenant(
     session.tenantId,

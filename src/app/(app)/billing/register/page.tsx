@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { InvoiceKind, Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
 import { invoiceSettlement } from "@/lib/settlement";
@@ -29,6 +30,7 @@ export default async function BillingRegisterPage({
   searchParams: SearchParams;
 }) {
   const session = requireSession();
+  await authorize(session, "billing", "view");
 
   const { rows, parties, settle } = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.InvoiceWhereInput = {

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { payableSettlement } from "@/lib/settlement";
@@ -15,6 +16,7 @@ export default async function ChalanPrintPage({
   searchParams: { copies?: string };
 }) {
   const session = requireSession();
+  await authorize(session, "chalan", "print");
   const copies = Math.min(3, Math.max(1, parseInt(searchParams.copies ?? "1", 10) || 1));
 
   const data = await withTenant(session.tenantId, async (tx) => {

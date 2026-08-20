@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { Button } from "@/components/ui/button";
 import { withTenant } from "@/lib/db";
 import { formatDate, toNum } from "@/lib/utils";
@@ -19,6 +20,7 @@ export default async function LrRegisterPage({
   searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
+  await authorize(session, "lr", "view");
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
 
   const where: Prisma.LrWhereInput = {

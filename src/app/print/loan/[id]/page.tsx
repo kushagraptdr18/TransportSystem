@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, formatMoney, toNum } from "@/lib/utils";
 import { LOAN_TYPE_LABEL, nextDueDate } from "@/lib/loan";
@@ -14,6 +15,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function LoanPrintPage({ params }: { params: { id: string } }) {
   const session = requireSession();
+  await authorize(session, "vouchers", "print");
 
   const data = await withTenant(session.tenantId, async (tx) => {
     const loan = await tx.loan.findFirst({

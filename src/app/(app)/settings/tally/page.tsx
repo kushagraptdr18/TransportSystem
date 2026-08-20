@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import {
   BILLING_CONCEPTS,
@@ -24,6 +25,7 @@ const concepts = (module: string, list: TallyConcept[]): MapSection["rows"] =>
  *  against the Tally ledger name the user types. One-time setup. */
 export default async function TallyMappingPage() {
   const session = requireSession();
+  await authorize(session, "tally", "view");
 
   const { heads, moneyParties, rows } = await withTenant(session.tenantId, async (tx) => {
     const [heads, moneyParties, rows] = await Promise.all([

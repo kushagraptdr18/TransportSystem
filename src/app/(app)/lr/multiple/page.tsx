@@ -1,9 +1,12 @@
+import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { loadLrFormData } from "../form-data";
 import { MultiLrBatch } from "@/components/lr/multi-lr-form";
 
 export const dynamic = "force-dynamic";
 
 export default async function MultipleLrPage() {
+  await authorize(requireSession(), "lr", "view");
   const data = await loadLrFormData();
   // strip fields the batch wrapper supplies itself
   const { mode: _mode, lrId: _lrId, isDummy: _isDummy, ...formProps } = data;

@@ -21,7 +21,7 @@ export async function saveTallyMapping(
   const session = requireSession();
   const parsed = z.array(rowSchema).safeParse(input);
   if (!parsed.success) return { ok: false, error: "Invalid mapping rows" };
-  await authorize(session, "masters", "edit");
+  await authorize(session, "tally", "edit");
   try {
     await withTenant(session.tenantId, async (tx) => {
       await tx.tallyLedgerMap.deleteMany({ where: { firmId: session.firmId } });

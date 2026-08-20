@@ -1,5 +1,6 @@
 import type { InvoiceKind } from "@prisma/client";
 import { requireSession } from "@/lib/session";
+import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { stateCodeFromGstin } from "@/lib/calc/gst";
 import { firmImageUrl } from "@/lib/branding";
@@ -24,6 +25,7 @@ export async function InvoiceEntryPage({
   searchParams: { id?: string };
 }) {
   const session = requireSession();
+  await authorize(session, "billing", "view");
 
   const { firm, parties, banks, suggestedNo, prevInvoiceNo, chargeHeads, states } = await withTenant(
     session.tenantId,
