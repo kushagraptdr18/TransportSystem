@@ -49,6 +49,7 @@ const SECTIONS: { title: string; links: { label: string; href: string; icon: typ
       { label: "TDS Payable", href: "/reports/browser?src=TDS_PAY", icon: Scale, desc: "TDS we deducted, month-wise" },
       { label: "TDS Receivable", href: "/reports/browser?src=TDS_RECV", icon: Scale, desc: "TDS deducted from us, month-wise" },
       { label: "TDS Report – Quarterly Wise", href: "/reports/tds-quarterly", icon: Scale, desc: "Payable TDS: party × rate × Q1–Q4, with drill-down" },
+      { label: "Purchase & Sale Register", href: "/reports/purchase-sale", icon: ReceiptText, desc: "Party × month matrix with TDS — bills, chalans and slips" },
       { label: "Company Operational P&L", href: "/accounts/operational-pnl", icon: BarChart3, desc: "Operational income vs expense" },
     ],
   },
