@@ -2,6 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Extension-proof dialog layout: some browser extensions (AI sidebars etc.)
+   inject styles that reflow dialog children side-by-side, squeezing the
+   title into a sliver and pushing buttons out of the box. Pin the stacked
+   single-column grid with !important so injected CSS can never win. */
+.app-dialog {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-auto-flow: row !important;
+}
+.app-dialog > * {
+  grid-column: 1 !important;
+  min-width: 0 !important;
+}
+
 @layer base {
   :root {
     /* Light theme — clean white surfaces with a golden-yellow primary */
