@@ -1,4 +1,4 @@
-import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon, Percent, Truck, UserSearch } from "lucide-react";
+import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon, Percent, UserSearch } from "lucide-react";
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
@@ -417,21 +417,6 @@ export default async function DashboardPage() {
           </Card>
         </a>
 
-        <a href="/vehicle-360" target="_blank" rel="noreferrer" className="group">
-          <Card className="h-full transition-all hover:border-primary/40 hover:shadow-card">
-            <CardContent className="flex items-start gap-3 p-5">
-              <span className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Truck className="h-6 w-6" />
-              </span>
-              <span className="min-w-0">
-                <span className="flex items-center gap-1.5 text-lg font-semibold group-hover:text-primary">
-                  Vehicle 360°
-                  <InfoHint>A vehicle&apos;s complete profile — earnings, expenses, EMI, documents and drivers</InfoHint>
-                </span>
-              </span>
-            </CardContent>
-          </Card>
-        </a>
       </div>
     </div>
   );
