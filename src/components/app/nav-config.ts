@@ -175,6 +175,7 @@ export const NAV: NavGroup[] = [
       { label: "Firm Settings", href: "/settings/firm" },
       { label: "Users", href: "/settings/users" },
       { label: "Role Permissions", href: "/settings/permissions" },
+      { label: "Tally Mapping", href: "/settings/tally" },
       { label: "Audit Log", href: "/settings/audit" },
     ],
   },

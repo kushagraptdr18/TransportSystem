@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tally Export — Working Demo</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --baseline:#c3c2b7; --border:rgba(11,11,11,.10);
+    --accent:#2a78d6; --good:#006300; --chip:#eef3fe; --open:#f4f7fc;
+    --dr:#8a4d0f; --cr:#1a5e20;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+      --grid:#2c2c2a; --baseline:#383835; --border:rgba(255,255,255,.10);
+      --accent:#3987e5; --good:#0ca30c; --chip:#1d2637; --open:#1d2431;
+      --dr:#e5a562; --cr:#7fce9e;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --baseline:#383835; --border:rgba(255,255,255,.10);
+    --accent:#3987e5; --good:#0ca30c; --chip:#1d2637; --open:#1d2431;
+    --dr:#e5a562; --cr:#7fce9e;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+  .page{max-width:1080px;margin:0 auto;padding:24px 20px 48px}
+  .crumb{font-size:12px;color:var(--muted)}
+  h1{font-size:21px;font-weight:650;margin:4px 0 2px}
+  .sub{color:var(--ink2);font-size:13px;margin:0 0 16px}
+  .tag{display:inline-block;vertical-align:3px;margin-left:10px;background:var(--chip);color:var(--accent);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+  .card h2{font-size:14.5px;font-weight:650;margin:0 0 2px}
+  .hint{font-size:12px;color:var(--muted);margin:0 0 12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+  label{display:block;font-size:11.5px;color:var(--muted);margin-bottom:3px}
+  input[type=text]{width:100%;border:1px solid var(--baseline);border-radius:6px;padding:7px 10px;font:inherit;font-size:13px;background:var(--surface);color:var(--ink)}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  .btn{display:inline-block;background:var(--accent);color:#fff;font-weight:600;font-size:13px;padding:9px 18px;border-radius:7px;border:0;cursor:pointer}
+  .btn:hover{filter:brightness(1.1)}
+  .btn.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  .pill{border:1px solid var(--baseline);border-radius:6px;padding:6px 10px;font-size:13px}
+  .ok{color:var(--good);font-weight:600;font-size:12.5px}
+
+  .vch{border:1px solid var(--grid);border-radius:8px;margin:10px 0;overflow:hidden}
+  .vch-h{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--open);padding:7px 12px;font-size:12.5px}
+  .vch-h b{font-size:13px}
+  .vtype{background:var(--accent);color:#fff;font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:999px;letter-spacing:.04em}
+  .ref{margin-left:auto;color:var(--muted);font-size:11.5px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  td{padding:5px 12px;border-top:1px solid var(--grid)}
+  td.amt{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .dr{color:var(--dr);font-weight:600}.cr{color:var(--cr);font-weight:600}
+  .nar{font-size:11.5px;color:var(--muted);padding:4px 12px 7px;border-top:1px dashed var(--grid)}
+  .chalan-pick{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+  .chalan-pick label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);border:1px solid var(--baseline);border-radius:7px;padding:7px 12px;cursor:pointer;margin:0}
+  .note{background:var(--chip);border-radius:8px;padding:9px 12px;font-size:12.5px;color:var(--ink2);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumb">Reports &rsaquo; Tally Export</div>
+  <h1>Tally Export — Chalan Vouchers<span class="tag">Working Demo</span></h1>
+  <p class="sub">Neeche sab <b>chalta hai</b>: ledger naam badlo → preview turant badlega → "Download Tally XML" se asli import file banegi (Tally Prime mein Alt+O → Transactions se try kar sakte ho). Sample data hai.</p>
+
+  <!-- mapping -->
+  <div class="card">
+    <h2>Tally Ledger Mapping <span style="font-weight:400;color:var(--muted)">(ek baar set karna hai — asli mein Settings mein save rahega)</span></h2>
+    <p class="hint">Yahan wahi naam likho jo aapke Tally mein hain — naam badalte hi neeche preview badal jata hai ✍️</p>
+    <div class="grid">
+      <div><label>Transporting Exp (Declaration broker)</label><input type="text" id="m_decl" value="TRANSPORTING EXP RGH DECL"></div>
+      <div><label>Transporting Exp (TDS broker)</label><input type="text" id="m_tds_exp" value="TRANSPORTING EXP RGH TDS"></div>
+      <div><label>TDS Payable ledger</label><input type="text" id="m_tds" value="TDS ON TRANSPORT 194C"></div>
+      <div><label>Commission ledger</label><input type="text" id="m_comm" value="COMMISSION RECEIVED"></div>
+      <div><label>Mamool ledger</label><input type="text" id="m_mamool" value="MAMOOL RECEIVED"></div>
+      <div><label>Courier ledger</label><input type="text" id="m_courier" value="COURIER CHARGES"></div>
+      <div><label>Bank ledger</label><input type="text" id="m_bank" value="HDFC BANK 0015"></div>
+      <div><label>Cash ledger</label><input type="text" id="m_cash" value="CASH"></div>
+    </div>
+  </div>
+
+  <!-- period + chalans -->
+  <div class="card">
+    <h2>Kya export karna hai</h2>
+    <p class="hint">Period: <b>Aug 2026</b> — 2 sample chalans mile. Tick/untick karke dekho:</p>
+    <div class="chalan-pick" id="picks"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn" id="dl">⬇ Download Tally XML</button>
+      <span class="ok" id="okmsg"></span>
+    </div>
+  </div>
+
+  <!-- preview -->
+  <div class="card">
+    <h2>Preview — Tally mein yeh vouchers banenge <span style="font-weight:400;color:var(--muted)">(bilkul aapke style mein)</span></h2>
+    <p class="hint">Purchase (Reg No = chalan no) → Journal (TDS+Comm+Mamool ek saath) → Journal (Courier alag) → Receipt (bank/cash) — sab <b>bill-by-bill</b> (New Ref / Agst Ref)</p>
+    <div id="preview"></div>
+    <div class="note">💡 Asli version mein yeh sab aapke asli chalans se banega — DECL vs TDS broker ka ledger bhi apne aap chunega (party master ke TDS mode se), jaise neeche dono chalans mein dikh raha hai.</div>
+  </div>
+</div>
+
+<script>
+// ---------------- sample data (asli mein software ke chalans se aayega) ----------------
+const CHALANS = [
+  {
+    no: "225", date: "20260812", dateTxt: "12/08/2026",
+    broker: "VERMA CARRIERS", tdsMode: "TDS",
+    vehicle: "OD14 K 2210", route: "Raigarh → Vikarabad",
+    freightTotal: 105000,           // freight+detention (purchase)
+    tds: 1000, comm: 5000, mamool: 500, courier: 200,
+    advances: [
+      { label: "Diesel advance — HP Pump", via: "bank", amt: 30000, dateTxt: "02/08/2026", date: "20260802" },
+      { label: "Cash advance — driver",    via: "cash", amt: 10000, dateTxt: "02/08/2026", date: "20260802" },
+    ],
+    balance: { amt: 58300, via: "bank", dateTxt: "18/08/2026", date: "20260818" },
+  },
+  {
+    no: "226", date: "20260814", dateTxt: "14/08/2026",
+    broker: "KAMAL ROADWAYS", tdsMode: "DECL",
+    vehicle: "CG04 JA 7781", route: "Raigarh → Nagpur",
+    freightTotal: 82000,
+    tds: 0, comm: 4100, mamool: 500, courier: 0,
+    advances: [ { label: "Cash advance", via: "cash", amt: 20000, dateTxt: "14/08/2026", date: "20260814" } ],
+    balance: { amt: 57400, via: "bank", dateTxt: "20/08/2026", date: "20260820" },
+  },
+];
+const picked = new Set(CHALANS.map(c => c.no));
+
+const $ = (id) => document.getElementById(id);
+const map = () => ({
+  decl: $("m_decl").value, tdsExp: $("m_tds_exp").value, tds: $("m_tds").value,
+  comm: $("m_comm").value, mamool: $("m_mamool").value, courier: $("m_courier").value,
+  bank: $("m_bank").value, cash: $("m_cash").value,
+});
+const inr = (n) => "₹" + n.toLocaleString("en-IN");
+
+// -------- build voucher objects (yehi structure XML mein bhi jata hai) --------
+function vouchersFor(c, m) {
+  const expLedger = c.tdsMode === "TDS" ? m.tdsExp : m.decl;
+  const v = [];
+  v.push({
+    type: "Purchase", date: c.date, dateTxt: c.dateTxt, ref: c.no,
+    nar: `Chalan ${c.no} — ${c.vehicle}, ${c.route}`,
+    lines: [
+      { l: expLedger, dr: c.freightTotal },
+      { l: c.broker, cr: c.freightTotal, bill: { name: c.no, type: "New Ref" } },
+    ],
+  });
+  const dedLines = [];
+  if (c.tds) dedLines.push({ l: m.tds, cr: c.tds });
+  if (c.comm) dedLines.push({ l: m.comm, cr: c.comm });
+  if (c.mamool) dedLines.push({ l: m.mamool, cr: c.mamool });
+  if (dedLines.length) {
+    const tot = dedLines.reduce((s, x) => s + x.cr, 0);
+    v.push({
+      type: "Journal", date: c.date, dateTxt: c.dateTxt, ref: c.no,
+      nar: `TDS / Commission / Mamool — chalan ${c.no}`,
+      lines: [{ l: c.broker, dr: tot, bill: { name: c.no, type: "Agst Ref" } }, ...dedLines],
+    });
+  }
+  if (c.courier) {
+    v.push({
+      type: "Journal", date: c.date, dateTxt: c.dateTxt, ref: c.no,
+      nar: `Courier — chalan ${c.no}`,
+      lines: [
+        { l: c.broker, dr: c.courier, bill: { name: c.no, type: "Agst Ref" } },
+        { l: m.courier, cr: c.courier },
+      ],
+    });
+  }
+  for (const a of c.advances) {
+    v.push({
+      type: "Receipt", date: a.date, dateTxt: a.dateTxt, ref: c.no,
+      nar: `${a.label} — chalan ${c.no}`,
+      lines: [
+        { l: c.broker, dr: a.amt, bill: { name: c.no, type: "Agst Ref" } },
+        { l: a.via === "bank" ? m.bank : m.cash, cr: a.amt },
+      ],
+    });
+  }
+  v.push({
+    type: "Receipt", date: c.balance.date, dateTxt: c.balance.dateTxt, ref: c.no,
+    nar: `Balance payment — chalan ${c.no}`,
+    lines: [
+      { l: c.broker, dr: c.balance.amt, bill: { name: c.no, type: "Agst Ref" } },
+      { l: c.balance.via === "bank" ? m.bank : m.cash, cr: c.balance.amt },
+    ],
+  });
+  return v;
+}
+
+// ---------------- preview render ----------------
+function render() {
+  const m = map();
+  const host = $("preview");
+  host.innerHTML = "";
+  for (const c of CHALANS) {
+    if (!picked.has(c.no)) continue;
+    for (const v of vouchersFor(c, m)) {
+      const box = document.createElement("div");
+      box.className = "vch";
+      const rows = v.lines.map((ln) => {
+        const isDr = ln.dr != null;
+        const bill = ln.bill ? ` <span style="color:var(--muted);font-size:11px">[${ln.bill.type}: ${ln.bill.name}]</span>` : "";
+        return `<tr><td><span class="${isDr ? "dr" : "cr"}">${isDr ? "Dr" : "&nbsp;&nbsp;&nbsp;Cr"}</span> ${ln.l}${bill}</td><td class="amt">${inr(isDr ? ln.dr : ln.cr)}</td></tr>`;
+      }).join("");
+      box.innerHTML =
+        `<div class="vch-h"><span class="vtype">${v.type.toUpperCase()}</span><b>${v.dateTxt}</b>` +
+        (v.type === "Purchase" ? `<span>Reg No (Supplier Inv): <b>${v.ref}</b></span>` : "") +
+        `<span class="ref">Chalan ${v.ref}</span></div><table>${rows}</table><div class="nar">Narration: ${v.nar}</div>`;
+      host.appendChild(box);
+    }
+  }
+  if (!host.innerHTML) host.innerHTML = '<p class="hint">Koi chalan select nahi — upar tick karo.</p>';
+}
+
+// ---------------- Tally XML (asli import format) ----------------
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function buildXml() {
+  const m = map();
+  let msgs = "";
+  for (const c of CHALANS) {
+    if (!picked.has(c.no)) continue;
+    for (const v of vouchersFor(c, m)) {
+      const lines = v.lines.map((ln) => {
+        const isDr = ln.dr != null;
+        const amt = isDr ? -(ln.dr) : ln.cr; // Tally: debit = negative
+        const bill = ln.bill
+          ? `<BILLALLOCATIONS.LIST><NAME>${esc(ln.bill.name)}</NAME><BILLTYPE>${ln.bill.type}</BILLTYPE><AMOUNT>${amt.toFixed(2)}</AMOUNT></BILLALLOCATIONS.LIST>`
+          : "";
+        return `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${esc(ln.l)}</LEDGERNAME><ISDEEMEDPOSITIVE>${isDr ? "Yes" : "No"}</ISDEEMEDPOSITIVE><AMOUNT>${amt.toFixed(2)}</AMOUNT>${bill}</ALLLEDGERENTRIES.LIST>`;
+      }).join("");
+      msgs +=
+        `<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="${v.type}" ACTION="Create">` +
+        `<DATE>${v.date}</DATE><EFFECTIVEDATE>${v.date}</EFFECTIVEDATE>` +
+        `<VOUCHERTYPENAME>${v.type}</VOUCHERTYPENAME>` +
+        (v.type === "Purchase" ? `<REFERENCE>${esc(v.ref)}</REFERENCE>` : "") +
+        `<NARRATION>${esc(v.nar)}</NARRATION><ISINVOICE>No</ISINVOICE>` +
+        lines + `</VOUCHER></TALLYMESSAGE>`;
+    }
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?><ENVELOPE><HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER><BODY><IMPORTDATA><REQUESTDESC><REPORTNAME>Vouchers</REPORTNAME></REQUESTDESC><REQUESTDATA>${msgs}</REQUESTDATA></IMPORTDATA></BODY></ENVELOPE>`;
+}
+
+$("dl").addEventListener("click", () => {
+  const blob = new Blob([buildXml()], { type: "application/xml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "tally-chalan-aug-2026.xml";
+  a.click();
+  URL.revokeObjectURL(a.href);
+  $("okmsg").textContent = "✓ File download hui — Tally Prime: Alt+O → Transactions → yeh file";
+});
+
+// chalan checkboxes
+const picksHost = $("picks");
+for (const c of CHALANS) {
+  const lb = document.createElement("label");
+  lb.innerHTML = `<input type="checkbox" checked> <b>Chalan ${c.no}</b> — ${c.broker} (${c.tdsMode === "TDS" ? "TDS wala" : "Declaration"}) · ${inr(c.freightTotal)}`;
+  lb.querySelector("input").addEventListener("change", (e) => {
+    if (e.target.checked) picked.add(c.no); else picked.delete(c.no);
+    render();
+  });
+  picksHost.appendChild(lb);
+}
+document.querySelectorAll('input[type=text]').forEach((i) => i.addEventListener("input", render));
+render();
+</script>
+</body>
+</html>

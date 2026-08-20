@@ -27,6 +27,7 @@ const schema = z.object({
   ownerName: optStr,
   vendorCode: optStr,
   transportName: optStr,
+  tallyName: optStr,
   openingBalance: z.coerce.number().default(0),
   // no silent default: a form may leave the side unchosen, and an opening
   // amount without a chosen Dr/Cr is rejected below rather than assumed
@@ -77,6 +78,7 @@ export async function saveParty(input: unknown): Promise<ActionResult> {
         ownerName: data.ownerName,
         vendorCode: data.vendorCode,
         transportName: data.ledgerGroup === "OWNER_BROKER" ? data.transportName : null,
+        tallyName: data.tallyName ? data.tallyName.toUpperCase() : null,
         openingBalance: data.openingBalance,
         // zero opening carries no direction — DEBIT is just the storage value
         openingSide: data.openingSide ?? "DEBIT",

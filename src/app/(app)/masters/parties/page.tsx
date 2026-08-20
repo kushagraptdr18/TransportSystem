@@ -58,6 +58,7 @@ export default async function PartiesPage({
         email: r.email,
         ownerName: r.ownerName,
         transportName: r.transportName,
+        tallyName: r.tallyName,
         vendorCode: r.vendorCode,
         openingBalance: toNum(String(r.openingBalance)),
         openingSide: r.openingSide,

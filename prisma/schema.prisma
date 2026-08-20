@@ -413,6 +413,9 @@ model Party {
   openingSide        EntrySide   @default(DEBIT)
   // broker TDS handling
   tdsMode            TdsMode?
+  /** Tally export: ledger name override when the party already exists in
+   *  Tally under a different name (blank = same name as here) */
+  tallyName          String?
   bankName           String?
   bankAccount        String?
   bankBranch         String?
@@ -2698,6 +2701,38 @@ model VehicleExpenseItem {
   @@index([tenantId, vehicleId])
   @@index([voucherId])
   @@index([tenantId, allocDate])
+}
+
+// ============ TALLY EXPORT ============
+
+// One row per software-side concept/head/bank → the Tally ledger name the
+// user typed on the Settings → Tally Mapping screen. Blank/missing mapping
+// falls back to the software-side name (Tally auto-creates the ledger).
+model TallyLedgerMap {
+  id        String   @id @default(cuid())
+  tenantId  String
+  firmId    String
+  module    String // CHALAN | BILLING | SLIP | HEAD | BANKCASH | ...
+  sourceKey String // concept key ("freight_decl") or AccountHead/Party id
+  tallyName String
+  updatedAt DateTime @updatedAt
+
+  @@unique([firmId, module, sourceKey])
+  @@index([tenantId])
+}
+
+// Export register: which generated voucher (key) went out, with a content
+// hash — so re-exports skip unchanged vouchers and flag edited documents.
+model TallyExportEntry {
+  id         String   @id @default(cuid())
+  tenantId   String
+  firmId     String
+  key        String // e.g. "CHALAN:<id>:MAIN"
+  hash       String
+  exportedAt DateTime @default(now())
+
+  @@unique([firmId, key])
+  @@index([tenantId])
 }
 
 // ============ VEHICLE TRACKING (live register) ============

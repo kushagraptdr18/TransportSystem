@@ -460,6 +460,9 @@ export function ChalanRegisterClient({
               { header: "Bill Status", key: "billStatus" },
             ]}
           />
+          <Button asChild size="sm" variant="outline">
+            <Link href="/reports/tally-export">Tally Export</Link>
+          </Button>
           <Button asChild size="sm">
             <Link href="/chalan">+ New Chalan</Link>
           </Button>

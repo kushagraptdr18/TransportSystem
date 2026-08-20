@@ -1,0 +1,199 @@
+"use client";
+
+import * as React from "react";
+import { useRouter } from "next/navigation";
+import { formatDate, formatMoney } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useToast } from "@/components/ui/use-toast";
+import {
+  runTallyChalanExport,
+  runTallyChalanMasters,
+} from "@/app/(app)/reports/tally-export/actions";
+
+export interface TallyExportRow {
+  chalanId: string;
+  chalanNo: string;
+  dateIso: string;
+  broker: string;
+  vehicle: string;
+  ownership: string;
+  grandTotal: number;
+  voucherCount: number;
+  /** never exported */
+  fresh: number;
+  /** exported earlier but the chalan changed since */
+  changed: number;
+  /** exported and unchanged */
+  done: number;
+}
+
+function download(fileName: string, xml: string) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([xml], { type: "application/xml" }));
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+export function TallyExportClient({
+  rows,
+  dateFrom,
+  dateTo,
+}: {
+  rows: TallyExportRow[];
+  dateFrom: string | null;
+  dateTo: string | null;
+}) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const [busy, setBusy] = React.useState(false);
+  const [includeExported, setIncludeExported] = React.useState(false);
+  // default selection: everything that has something new/changed to send
+  const [selected, setSelected] = React.useState<Set<string>>(
+    () => new Set(rows.filter((r) => r.fresh + r.changed > 0).map((r) => r.chalanId))
+  );
+
+  const toggle = (id: string, on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  const doExport = async () => {
+    if (!selected.size) {
+      toast({ variant: "destructive", title: "Koi chalan select nahi hai" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await runTallyChalanExport({
+        dateFrom,
+        dateTo,
+        chalanIds: Array.from(selected),
+        includeExported,
+      });
+      if (res.ok) {
+        download(res.fileName, res.xml);
+        toast({
+          title: `${res.exported} vouchers exported`,
+          description:
+            res.skipped > 0 ? `${res.skipped} pehle se exported the — skip hue` : undefined,
+        });
+        router.refresh();
+      } else {
+        toast({ variant: "destructive", title: res.error });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doMasters = async () => {
+    setBusy(true);
+    try {
+      const res = await runTallyChalanMasters({ dateFrom, dateTo });
+      if (res.ok) {
+        download(res.fileName, res.xml);
+        toast({ title: `${res.count} party masters exported` });
+      } else {
+        toast({ variant: "destructive", title: res.error });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const status = (r: TallyExportRow) => {
+    if (r.fresh === r.voucherCount) return <Badge variant="outline">NEW</Badge>;
+    if (r.changed > 0) return <Badge variant="destructive">CHANGED</Badge>;
+    if (r.fresh > 0) return <Badge variant="secondary">PARTIAL</Badge>;
+    return (
+      <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-400">
+        EXPORTED
+      </Badge>
+    );
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={() => void doExport()} disabled={busy}>
+          {busy ? "Working..." : "⬇ Download Tally XML"}
+        </Button>
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <Checkbox
+            checked={includeExported}
+            onCheckedChange={(c) => setIncludeExported(c === true)}
+          />
+          Include already exported (full re-export)
+        </label>
+        <Button variant="outline" onClick={() => void doMasters()} disabled={busy}>
+          Download Party Masters XML
+        </Button>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <th className="px-3 py-2">
+                <Checkbox
+                  checked={rows.length > 0 && selected.size === rows.length}
+                  onCheckedChange={(c) =>
+                    setSelected(c === true ? new Set(rows.map((r) => r.chalanId)) : new Set())
+                  }
+                />
+              </th>
+              <th className="px-3 py-2">Chalan No</th>
+              <th className="px-3 py-2">Date</th>
+              <th className="px-3 py-2">Broker</th>
+              <th className="px-3 py-2">Vehicle</th>
+              <th className="px-3 py-2">Type</th>
+              <th className="px-3 py-2 text-right">Grand Total</th>
+              <th className="px-3 py-2 text-right">Vouchers</th>
+              <th className="px-3 py-2">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.chalanId} className="border-b hover:bg-muted/40">
+                <td className="px-3 py-2">
+                  <Checkbox
+                    checked={selected.has(r.chalanId)}
+                    onCheckedChange={(c) => toggle(r.chalanId, c === true)}
+                  />
+                </td>
+                <td className="px-3 py-2 font-medium">{r.chalanNo}</td>
+                <td className="px-3 py-2">{formatDate(r.dateIso)}</td>
+                <td className="px-3 py-2">{r.broker}</td>
+                <td className="px-3 py-2">{r.vehicle}</td>
+                <td className="px-3 py-2">
+                  <Badge variant="secondary">{r.ownership}</Badge>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatMoney(r.grandTotal)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {r.voucherCount}
+                  <span className="ml-1 text-xs text-muted-foreground">
+                    ({r.fresh} new{r.changed ? `, ${r.changed} changed` : ""})
+                  </span>
+                </td>
+                <td className="px-3 py-2">{status(r)}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                  Is period mein koi final Broker/Relative chalan nahi mila.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

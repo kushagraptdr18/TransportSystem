@@ -23,6 +23,8 @@ export interface PartyRow {
   email: string | null;
   ownerName: string | null;
   transportName: string | null;
+  /** Tally export: ledger name in Tally when it differs from the name here */
+  tallyName: string | null;
   vendorCode: string | null;
   openingBalance: number;
   openingSide: string;
@@ -146,6 +148,12 @@ export function PartiesClient({
           span2: true,
         },
         { name: "alias", label: "Alias / Short Name", type: "text" },
+        {
+          name: "tallyName",
+          label: "Tally Name (sirf tab bharo jab Tally mein naam alag ho)",
+          type: "text",
+          uppercase: true,
+        },
         { name: "vendorCode", label: "Vendor Code", type: "text" },
         { name: "address1", label: "Address 1", type: "text", span2: true },
         { name: "address2", label: "Address 2", type: "text", span2: true },

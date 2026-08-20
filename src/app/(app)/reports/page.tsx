@@ -69,6 +69,17 @@ const SECTIONS: { title: string; links: { label: string; href: string; icon: typ
       },
     ],
   },
+  {
+    title: "Integration",
+    links: [
+      {
+        label: "Tally Export",
+        href: "/reports/tally-export",
+        icon: BookOpen,
+        desc: "Chalan vouchers as a Tally Prime import file (Alt+O → Import)",
+      },
+    ],
+  },
 ];
 
 export default function ReportsHubPage() {
