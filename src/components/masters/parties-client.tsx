@@ -57,6 +57,11 @@ const columns: ColumnDef<PartyRow, unknown>[] = [
     header: "Group",
     cell: ({ row }) => <Badge variant="secondary">{groupLabel(row.original.ledgerGroup)}</Badge>,
   },
+  {
+    accessorKey: "transportName",
+    header: "Transport Name",
+    cell: ({ row }) => row.original.transportName ?? "—",
+  },
   { accessorKey: "gstin", header: "GSTIN" },
   { accessorKey: "pan", header: "PAN" },
   { accessorKey: "mobile", header: "Mobile" },
@@ -113,7 +118,7 @@ export function PartiesClient({
       ]}
       exportName="parties"
       filters={[
-        { type: "text", key: "q", label: "Search name / GSTIN / PAN..." },
+        { type: "text", key: "q", label: "Search name / transport / GSTIN / PAN..." },
         {
           type: "select",
           key: "group",
