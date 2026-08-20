@@ -1,4 +1,5 @@
 import { requireSession } from "@/lib/session";
+import { syncDocumentStatuses } from "@/lib/document-status";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate } from "@/lib/utils";
@@ -16,6 +17,9 @@ export default async function DocumentsStatusPage() {
   await authorize(session, "masters", "view");
 
   const { rows, docTypes, vehicles } = await withTenant(session.tenantId, async (tx) => {
+    // shared flip: entering the reminder window turns DONE into PENDING —
+    // the dashboard and documents register run the same sync
+    await syncDocumentStatuses(tx);
     const [allDocs, docTypes, vehicles] = await Promise.all([
       tx.vehicleDocument.findMany({ include: { docType: true }, orderBy: { expiryDate: "asc" } }),
       tx.documentType.findMany({ orderBy: { name: "asc" } }),
@@ -31,28 +35,6 @@ export default async function DocumentsStatusPage() {
       windowEnd.setDate(windowEnd.getDate() + (d.docType.reminderDays ?? 30));
       return d.expiryDate <= windowEnd;
     });
-    // first appearance on the board = renewal work starts: DONE flips to
-    // PENDING automatically — but ONLY when the DONE mark predates the
-    // document's entry into its reminder window. A user who deliberately
-    // marks DONE while the document is already on the board (updatedAt is
-    // inside the window) is respected, so the flip can never loop.
-    const windowEntry = (d: (typeof docs)[number]) => {
-      const w = new Date(d.expiryDate as Date);
-      w.setDate(w.getDate() - (d.docType.reminderDays ?? 30));
-      return w;
-    };
-    const toPending = docs
-      .filter((d) => d.status === "DONE" && d.updatedAt < windowEntry(d))
-      .map((d) => d.id);
-    if (toPending.length) {
-      await tx.vehicleDocument.updateMany({
-        where: { id: { in: toPending } },
-        data: { status: "PENDING" },
-      });
-      docs.forEach((d) => {
-        if (toPending.includes(d.id)) d.status = "PENDING";
-      });
-    }
     return { docs, docTypes, vehicles };
   }).then(({ docs, docTypes, vehicles }) => {
     const vname = new Map(vehicles.map((v) => [v.id, v.number]));

@@ -2,6 +2,7 @@
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
+import { syncDocumentStatuses } from "@/lib/document-status";
 import { formatDate } from "@/lib/utils";
 import { VehicleDocumentsClient } from "@/components/masters/vehicle-documents-client";
 
@@ -17,6 +18,9 @@ export async function DocumentRegistrationTab({
   const today = new Date();
 
   const { rows, docTypes, vehicles } = await withTenant(session.tenantId, async (tx) => {
+    // entering the reminder window flips DONE → PENDING here too, so the
+    // register never shows a stale DONE (same sync as dashboard/status board)
+    await syncDocumentStatuses(tx);
     const where: Prisma.VehicleDocumentWhereInput = {};
     if (searchParams.vehicle) where.vehicleId = searchParams.vehicle;
     if (searchParams.docType) where.docTypeId = searchParams.docType;

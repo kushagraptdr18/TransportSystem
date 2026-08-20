@@ -1,5 +1,6 @@
 import { ClipboardCheck, FileCheck2, IndianRupee, Map as MapIcon, Percent } from "lucide-react";
 import { requireSession } from "@/lib/session";
+import { syncDocumentStatuses } from "@/lib/document-status";
 import { withTenant } from "@/lib/db";
 import { Card, CardContent } from "@/components/ui/card";
 import { FinanceCardsSection } from "./finance-cards";
@@ -61,7 +62,10 @@ export default async function DashboardPage() {
         else upcomingCount++;
       }
       // document counts follow each type's reminderDays window (Document
-      // Master), exactly like the status page itself
+      // Master), exactly like the status page itself — and the same DONE →
+      // PENDING flip runs here, so opening the dashboard is enough for a
+      // document entering its window to show as pending everywhere
+      await syncDocumentStatuses(tx);
       const docs = await tx.vehicleDocument.findMany({
         where: { expiryDate: { not: null } },
         include: { docType: true },
