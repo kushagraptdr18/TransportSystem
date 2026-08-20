@@ -95,6 +95,9 @@ export async function bulkSetVehicleDocStatus(input: {
         where: { id: { in: input.ids } },
         data: {
           status: input.status,
+          // explicit renewal-status action — this is the only stamp the auto
+          // DONE→PENDING flip respects (a mere create/edit stays flippable)
+          statusSetAt: new Date(),
           ...(input.remarks?.trim() ? { remarks: input.remarks.trim() } : {}),
         },
       });

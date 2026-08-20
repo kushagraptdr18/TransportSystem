@@ -561,14 +561,16 @@ model VehicleDocument {
   vehicleId     String
   companyName   String?
   status        String       @default("DONE") // DONE | PENDING
+  // stamped ONLY by the explicit renewal-status action (status board / bulk
+  // update). The auto DONE→PENDING flip respects a deliberate DONE made
+  // inside the reminder window; a doc merely created/edited stays flippable.
+  statusSetAt   DateTime?
   entryDate     DateTime
   effectiveDate DateTime?
   expiryDate    DateTime?
   remarks       String?
   filePath      String? // uploaded document (pdf/jpg/png)
   fileName      String?
-  // when the row last changed — the status board flips DONE→PENDING only for
-  // marks that predate the document entering its reminder window
   updatedAt DateTime @default(now()) @updatedAt
 
   @@index([tenantId, expiryDate])
