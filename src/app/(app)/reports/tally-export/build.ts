@@ -126,6 +126,19 @@ const crLine = (ledger: string, amount: number, bill?: { name: string; type: "Ne
   ...(bill ? { bills: [{ name: bill.name, type: bill.type, amount: round2(amount) }] } : {}),
 });
 
+/**
+ * Merge lines that resolve to the SAME Tally ledger (e.g. the user maps
+ * Commission and Mamool to one combined ledger) — one line, summed amount.
+ */
+function mergeSameLedger(list: [string, number][]): [string, number][] {
+  const out = new Map<string, number>();
+  for (const [ledger, amount] of list) {
+    if (amount <= 0) continue;
+    out.set(ledger, round2((out.get(ledger) ?? 0) + amount));
+  }
+  return Array.from(out.entries());
+}
+
 /** Split settlement: bank Receipt alone, Shortage journal alone, Round-off alone. */
 function settlementVouchers(opts: {
   keyBase: string;
@@ -274,7 +287,7 @@ export async function buildChalanDocs(
         narration: `${what} — ${tag}`,
         lines: [
           drLine(brokerLedger, total, { name: refNo, type: "Agst Ref" }),
-          ...credits.filter(([, a]) => a > 0).map(([l, a]) => crLine(l, a)),
+          ...mergeSameLedger(credits).map(([l, a]) => crLine(l, a)),
         ],
       });
     };
@@ -663,7 +676,7 @@ export async function buildSlipDocs(
             date: sDate,
             narration: `${what} — ${tag}`,
             lines: [
-              ...debits.filter(([, a]) => a > 0).map(([l, a]) => drLine(l, a)),
+              ...mergeSameLedger(debits).map(([l, a]) => drLine(l, a)),
               crLine(pLedger, total, { name: refNo, type: "Agst Ref" }),
             ],
           });
@@ -786,7 +799,7 @@ export async function buildSlipDocs(
             narration: `${what} — ${tag} (owner side)`,
             lines: [
               drLine(oLedger, total, { name: refNo, type: "Agst Ref" }),
-              ...credits.filter(([, a]) => a > 0).map(([l, a]) => crLine(l, a)),
+              ...mergeSameLedger(credits).map(([l, a]) => crLine(l, a)),
             ],
           });
         };
@@ -909,6 +922,7 @@ export async function buildExpenseDocs(
           }
         : {}),
     },
+    include: { items: { select: { vehicleId: true } } },
     orderBy: [{ date: "asc" }, { voucherNo: "asc" }],
   });
 
@@ -920,7 +934,20 @@ export async function buildExpenseDocs(
     if (amount <= 0) continue;
     const isExpense = v.txnType !== "INCOME";
     const head = headLedger(ctx, v.headId);
-    const nar = `${v.voucherNo}${v.itemName ? ` — ${v.itemName}` : ""}${v.qty ? ` (${toNum(v.qty)})` : ""}${v.remarks ? ` — ${v.remarks}` : ""}`;
+    // allocated vehicles ride the narration, so the Tally entry says which
+    // trucks took the cost (max 4 numbers, then a +count)
+    const vehicleNos = Array.from(
+      new Set(
+        v.items
+          .map((it) => ctx.vehicleById.get(it.vehicleId)?.number)
+          .filter((n): n is string => !!n)
+      )
+    );
+    const vehicleBits =
+      vehicleNos.length === 0
+        ? ""
+        : ` — ${vehicleNos.slice(0, 4).join(", ")}${vehicleNos.length > 4 ? ` +${vehicleNos.length - 4}` : ""}`;
+    const nar = `${v.voucherNo}${v.itemName ? ` — ${v.itemName}` : ""}${v.qty ? ` (${toNum(v.qty)})` : ""}${vehicleBits}${v.remarks ? ` — ${v.remarks}` : ""}`;
     const paid = !!v.paymentMode && !!v.bankPartyId;
 
     let voucher: TallyVoucher;
