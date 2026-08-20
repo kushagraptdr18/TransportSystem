@@ -4,6 +4,7 @@ import {
   BILLING_CONCEPTS,
   CHALAN_CONCEPTS,
   SLIP_P_CONCEPTS,
+  VOUCHER_CONCEPTS,
   type TallyConcept,
 } from "@/lib/tally-map";
 import { TallyMappingClient, type MapSection } from "@/components/settings/tally-mapping-client";
@@ -51,6 +52,11 @@ export default async function TallyMappingPage() {
       title: "🚛 Broker Slip — Party Side",
       desc: "Owner side chalan wale hi ledgers use karta hai (upar wale)",
       rows: concepts("SLIP_P", SLIP_P_CONCEPTS),
+    },
+    {
+      title: "💳 Receipt / Payment Vouchers",
+      desc: "Accounts ke vouchers ki katauti lines (TDS, shortage, other, round off)",
+      rows: concepts("VOUCHER", VOUCHER_CONCEPTS),
     },
     {
       title: "⛽ Income / Expense Heads",

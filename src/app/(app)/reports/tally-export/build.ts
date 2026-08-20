@@ -5,30 +5,26 @@ import { tallyDate, voucherHash, type TallyLedgerMaster, type TallyVoucher } fro
 import { makeTallyLookup, type TallyLookup } from "@/lib/tally-map";
 
 /**
- * Chalan → Tally vouchers, in the user's exact entry style:
- *   PURCHASE  — component-wise Dr lines (freight/detention/ODC/fine/other,
- *               DECL vs TDS transporting ledger picked from the broker's TDS
- *               mode), one Cr to the broker [New Ref: chalan no]
- *   JOURNAL   — TDS alone
- *   JOURNAL   — Commission + Mamool together
- *   JOURNAL   — Courier alone; LD and Shortage each alone
- *   JOURNALS  — head advances: Dr broker / Cr the advance's mapped head
- *   RECEIPTS  — bank/cash advances and the balance payment (their style books
- *               bank payments as Receipt vouchers)
- *   ADVANCE_ADJ rows post nothing (the advance voucher already did).
- *
- * OWNERSHIP FILTER (user's hard rule): only BROKER and RELATIVE vehicles'
- * chalans export — an OWN vehicle's chalan never goes to Tally.
+ * Software documents → Tally vouchers, in the user's exact entry style.
+ * Shared rules (see the Tally spec memory):
+ *  - GST-unregistered firm: no GST anywhere.
+ *  - OWNERSHIP: an OWN vehicle's chalan never exports; an OWN vehicle's
+ *    broker slip exports its PARTY side only.
+ *  - Chalan/slip earnings are COMPONENT-WISE; billing sales is ONE total.
+ *  - TDS journals alone; Commission+Mamool together; everything bill-by-bill.
+ *  - Settlements split: bank Receipt alone, Shortage alone, Round-off alone.
+ *  - ADVANCE_ADJ rows post nothing (the advance voucher already did).
  */
 
-export interface ChalanVoucherDoc {
-  chalanId: string;
-  chalanNo: string;
+export type TallyModule = "CHALAN" | "BILLING" | "SLIP" | "VOUCHERS" | "EXPENSES" | "OFFICE";
+
+export interface ExportDoc {
+  id: string;
+  refNo: string;
   dateIso: string;
-  broker: string;
-  vehicle: string;
-  ownership: string;
-  grandTotal: number;
+  party: string;
+  detail: string;
+  amount: number;
   vouchers: TallyVoucher[];
 }
 
@@ -37,49 +33,40 @@ interface Session {
   fyId: string;
 }
 
-export async function buildChalanVouchers(
-  tx: Tx,
-  session: Session,
-  opts: { dateFrom: Date | null; dateTo: Date | null }
-): Promise<{ docs: ChalanVoucherDoc[]; masters: TallyLedgerMaster[] }> {
-  // the period matches ANY activity on the chalan — the chalan itself, an
-  // advance, or the balance payment. A July chalan whose balance was paid in
-  // August must surface in August's export, or its receipt never reaches
-  // Tally (the export register keeps re-listed chalans duplicate-safe).
-  const range =
-    opts.dateFrom || opts.dateTo
-      ? {
-          ...(opts.dateFrom ? { gte: opts.dateFrom } : {}),
-          ...(opts.dateTo ? { lte: opts.dateTo } : {}),
-        }
-      : null;
-  const [chalans, parties, heads, mapRows] = await Promise.all([
-    tx.chalan.findMany({
-      where: {
-        firmId: session.firmId,
-        fyId: session.fyId,
-        deletedAt: null,
-        cancelledAt: null,
-        isFinal: true, // drafts are not accounting yet
-        ...(range
-          ? {
-              OR: [
-                { chalanDate: range },
-                { balPaymentDate: range },
-                { advances: { some: { date: range } } },
-              ],
-            }
-          : {}),
-      },
-      include: { advances: true },
-      orderBy: [{ chalanDate: "asc" }, { chalanNo: "asc" }],
-    }),
+interface Range {
+  dateFrom: Date | null;
+  dateTo: Date | null;
+}
+
+interface Ctx {
+  look: TallyLookup;
+  partyById: Map<
+    string,
+    {
+      id: string;
+      name: string;
+      tallyName: string | null;
+      tdsMode: string | null;
+      ledgerGroup: string;
+      pan: string | null;
+      mobile: string | null;
+      address1: string | null;
+      address2: string | null;
+    }
+  >;
+  headById: Map<string, string>;
+  vehicleById: Map<string, { id: string; number: string; ownershipType: string }>;
+}
+
+async function loadCtx(tx: Tx, session: Session): Promise<Ctx> {
+  const [parties, heads, mapRows, vehicles] = await Promise.all([
     tx.party.findMany({
       select: {
         id: true,
         name: true,
         tallyName: true,
         tdsMode: true,
+        ledgerGroup: true,
         pan: true,
         mobile: true,
         address1: true,
@@ -88,25 +75,161 @@ export async function buildChalanVouchers(
     }),
     tx.accountHead.findMany({ select: { id: true, name: true } }),
     tx.tallyLedgerMap.findMany({ where: { firmId: session.firmId } }),
+    tx.vehicle.findMany({ select: { id: true, number: true, ownershipType: true } }),
   ]);
-  const vehicles = await tx.vehicle.findMany({
-    select: { id: true, number: true, ownershipType: true },
+  return {
+    look: makeTallyLookup(mapRows),
+    partyById: new Map(parties.map((p) => [p.id, { ...p, tdsMode: p.tdsMode as string | null }])),
+    headById: new Map(heads.map((h) => [h.id, h.name])),
+    vehicleById: new Map(vehicles.map((v) => [v.id, v])),
+  };
+}
+
+function partyLedger(ctx: Ctx, partyId: string | null | undefined, fallback = "SUSPENSE"): string {
+  const p = partyId ? ctx.partyById.get(partyId) : null;
+  return p ? p.tallyName?.trim() || p.name : fallback;
+}
+
+function moneyLedger(ctx: Ctx, partyId: string | null | undefined, fallback: string): string {
+  const p = partyId ? ctx.partyById.get(partyId) : null;
+  return p ? ctx.look("BANKCASH", p.id, p.tallyName?.trim() || p.name) : fallback;
+}
+
+function headLedger(ctx: Ctx, headId: string | null | undefined, fallback = "OTHER EXPENSE"): string {
+  return headId
+    ? ctx.look("HEAD", headId, (ctx.headById.get(headId) ?? fallback).toUpperCase())
+    : fallback;
+}
+
+function masterOf(ctx: Ctx, partyId: string, parent: string): TallyLedgerMaster | null {
+  const p = ctx.partyById.get(partyId);
+  if (!p) return null;
+  return {
+    name: p.tallyName?.trim() || p.name,
+    parent,
+    address: [p.address1, p.address2].filter(Boolean).join(", ") || undefined,
+    pan: p.pan ?? undefined,
+    mobile: p.mobile ?? undefined,
+  };
+}
+
+const drLine = (ledger: string, amount: number, bill?: { name: string; type: "New Ref" | "Agst Ref" }): TallyVoucher["lines"][number] => ({
+  ledger,
+  amount: round2(amount),
+  side: "DR",
+  ...(bill ? { bills: [{ name: bill.name, type: bill.type, amount: round2(amount) }] } : {}),
+});
+const crLine = (ledger: string, amount: number, bill?: { name: string; type: "New Ref" | "Agst Ref" }): TallyVoucher["lines"][number] => ({
+  ledger,
+  amount: round2(amount),
+  side: "CR",
+  ...(bill ? { bills: [{ name: bill.name, type: bill.type, amount: round2(amount) }] } : {}),
+});
+
+/** Split settlement: bank Receipt alone, Shortage journal alone, Round-off alone. */
+function settlementVouchers(opts: {
+  keyBase: string;
+  counterLedger: string;
+  refNo: string;
+  date: string;
+  narrationBase: string;
+  /** DR = counter debited (paying them / their deduction), CR = counter credited */
+  counterSide: "DR" | "CR";
+  paid: number;
+  payLedger: string;
+  shortage: number;
+  shortageLedger: string;
+  roundOff: number;
+  roundOffLedger: string;
+}): TallyVoucher[] {
+  const out: TallyVoucher[] = [];
+  const counter = (amount: number): TallyVoucher["lines"][number] =>
+    opts.counterSide === "DR"
+      ? drLine(opts.counterLedger, amount, { name: opts.refNo, type: "Agst Ref" })
+      : crLine(opts.counterLedger, amount, { name: opts.refNo, type: "Agst Ref" });
+  const opposite = (ledger: string, amount: number) =>
+    opts.counterSide === "DR" ? crLine(ledger, amount) : drLine(ledger, amount);
+
+  if (opts.paid > 0.009) {
+    out.push({
+      key: `${opts.keyBase}:BAL`,
+      type: "Receipt",
+      date: opts.date,
+      narration: `Balance ${opts.counterSide === "DR" ? "payment" : "received"} — ${opts.narrationBase}`,
+      lines: [counter(opts.paid), opposite(opts.payLedger, opts.paid)],
+    });
+  }
+  if (opts.shortage > 0.009) {
+    out.push({
+      key: `${opts.keyBase}:BALSHORT`,
+      type: "Journal",
+      date: opts.date,
+      narration: `Shortage on balance — ${opts.narrationBase}`,
+      lines: [counter(opts.shortage), opposite(opts.shortageLedger, opts.shortage)],
+    });
+  }
+  if (Math.abs(opts.roundOff) > 0.009) {
+    const amt = round2(Math.abs(opts.roundOff));
+    const knockedOff = opts.roundOff > 0;
+    out.push({
+      key: `${opts.keyBase}:BALRO`,
+      type: "Journal",
+      date: opts.date,
+      narration: `Round off on balance — ${opts.narrationBase}`,
+      lines: knockedOff
+        ? [counter(amt), opposite(opts.roundOffLedger, amt)]
+        : [
+            opts.counterSide === "DR"
+              ? crLine(opts.counterLedger, amt, { name: opts.refNo, type: "Agst Ref" })
+              : drLine(opts.counterLedger, amt, { name: opts.refNo, type: "Agst Ref" }),
+            opts.counterSide === "DR" ? drLine(opts.roundOffLedger, amt) : crLine(opts.roundOffLedger, amt),
+          ],
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- CHALAN
+
+export async function buildChalanDocs(
+  tx: Tx,
+  session: Session,
+  r: Range
+): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
+  const ctx = await loadCtx(tx, session);
+  const range =
+    r.dateFrom || r.dateTo
+      ? { ...(r.dateFrom ? { gte: r.dateFrom } : {}), ...(r.dateTo ? { lte: r.dateTo } : {}) }
+      : null;
+  const chalans = await tx.chalan.findMany({
+    where: {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+      cancelledAt: null,
+      isFinal: true,
+      ...(range
+        ? {
+            OR: [
+              { chalanDate: range },
+              { balPaymentDate: range },
+              { advances: { some: { date: range } } },
+            ],
+          }
+        : {}),
+    },
+    include: { advances: true },
+    orderBy: [{ chalanDate: "asc" }, { chalanNo: "asc" }],
   });
 
-  const partyById = new Map(parties.map((p) => [p.id, p]));
-  const headById = new Map(heads.map((h) => [h.id, h.name]));
-  const vehicleById = new Map(vehicles.map((v) => [v.id, v]));
-  const look: TallyLookup = makeTallyLookup(mapRows);
-  const C = (key: string, fallback: string) => look("CHALAN", key, fallback);
-
-  const docs: ChalanVoucherDoc[] = [];
+  const docs: ExportDoc[] = [];
   const masterIds = new Set<string>();
+  const C = (key: string, fb: string) => ctx.look("CHALAN", key, fb);
 
   for (const c of chalans) {
-    const vehicle = vehicleById.get(c.vehicleId);
-    // hard rule: OWN vehicles' chalans never go to Tally (no payable to self)
-    if (!vehicle || vehicle.ownershipType === "OWNER") continue;
-    const broker = partyById.get(c.brokerId);
+    const vehicle = ctx.vehicleById.get(c.vehicleId);
+    if (!vehicle || vehicle.ownershipType === "OWNER") continue; // own gaadi: never
+    const broker = ctx.partyById.get(c.brokerId);
     if (!broker) continue;
     const brokerLedger = broker.tallyName?.trim() || broker.name;
     masterIds.add(broker.id);
@@ -116,15 +239,11 @@ export async function buildChalanVouchers(
     const refNo = c.chalanNo;
     const tag = `chalan ${c.chalanNo} — ${vehicle.number}`;
 
-    // ---- PURCHASE: earnings component-wise, each on its own mapped ledger
-    const freight = toNum(c.freight);
     const isDecl = broker.tdsMode === "DECLARATION";
     const components: [string, number][] = [
       [
-        isDecl
-          ? C("freight_decl", "TRANSPORTING EXP (DECLARATION)")
-          : C("freight_tds", "TRANSPORTING EXP (TDS)"),
-        freight,
+        isDecl ? C("freight_decl", "TRANSPORTING EXP (DECLARATION)") : C("freight_tds", "TRANSPORTING EXP (TDS)"),
+        toNum(c.freight),
       ],
       [C("detention", "DETENTION CHARGES"), toNum(c.detention)],
       [C("odc", "ODC CHARGES"), toNum(c.odcAmt)],
@@ -140,58 +259,30 @@ export async function buildChalanVouchers(
         reference: refNo,
         narration: `Chalan ${c.chalanNo} — ${vehicle.number}${c.remarks ? ` — ${c.remarks}` : ""}`,
         lines: [
-          ...components
-            .filter(([, a]) => a > 0)
-            .map(([ledger, a]): TallyVoucher["lines"][number] => ({
-              ledger,
-              amount: round2(a),
-              side: "DR",
-            })),
-          {
-            ledger: brokerLedger,
-            amount: earnTotal,
-            side: "CR",
-            bills: [{ name: refNo, type: "New Ref", amount: earnTotal }],
-          },
+          ...components.filter(([, a]) => a > 0).map(([l, a]) => drLine(l, a)),
+          crLine(brokerLedger, earnTotal, { name: refNo, type: "New Ref" }),
         ],
       });
     }
 
-    // ---- deduction journals, grouped the user's way
-    const journal = (
-      keySuffix: string,
-      total: number,
-      credits: [string, number][],
-      what: string
-    ) => {
-      if (total <= 0) return;
+    const dedJournal = (suffix: string, total: number, credits: [string, number][], what: string) => {
+      if (total <= 0.009) return;
       vouchers.push({
-        key: `CHALAN:${c.id}:${keySuffix}`,
+        key: `CHALAN:${c.id}:${suffix}`,
         type: "Journal",
         date: chDate,
         narration: `${what} — ${tag}`,
         lines: [
-          {
-            ledger: brokerLedger,
-            amount: round2(total),
-            side: "DR",
-            bills: [{ name: refNo, type: "Agst Ref", amount: round2(total) }],
-          },
-          ...credits
-            .filter(([, a]) => a > 0)
-            .map(([ledger, a]): TallyVoucher["lines"][number] => ({
-              ledger,
-              amount: round2(a),
-              side: "CR",
-            })),
+          drLine(brokerLedger, total, { name: refNo, type: "Agst Ref" }),
+          ...credits.filter(([, a]) => a > 0).map(([l, a]) => crLine(l, a)),
         ],
       });
     };
-    const tdsAmt = toNum(c.tdsAmt);
-    journal("TDS", tdsAmt, [[C("tds", "TDS ON TRANSPORT 194C"), tdsAmt]], "TDS");
+    const tds = toNum(c.tdsAmt);
+    dedJournal("TDS", tds, [[C("tds", "TDS ON TRANSPORT 194C"), tds]], "TDS");
     const comm = toNum(c.commissionAmt);
     const mamool = toNum(c.mamool);
-    journal(
+    dedJournal(
       "COMM",
       round2(comm + mamool),
       [
@@ -201,40 +292,32 @@ export async function buildChalanVouchers(
       "Commission / Mamool"
     );
     const courier = toNum(c.courierCharge);
-    journal("COURIER", courier, [[C("courier", "COURIER CHARGES"), courier]], "Courier");
+    dedJournal("COURIER", courier, [[C("courier", "COURIER CHARGES"), courier]], "Courier");
     const ld = toNum(c.ldCharge);
-    journal("LD", ld, [[C("ld", "LD CHARGE RECOVERED"), ld]], "LD charge");
+    dedJournal("LD", ld, [[C("ld", "LD CHARGE RECOVERED"), ld]], "LD charge");
     const shortage = toNum(c.shortageAmt);
-    journal("SHORT", shortage, [[C("shortage", "SHORTAGE RECOVERY"), shortage]], "Shortage");
+    dedJournal("SHORT", shortage, [[C("shortage", "SHORTAGE RECOVERY"), shortage]], "Shortage");
 
-    // ---- advances: bank/cash → Receipt (their style); head → Journal
     for (const a of c.advances) {
       const amt = toNum(a.amount);
-      if (amt <= 0) continue;
-      if (a.type === "ADVANCE_ADJ") continue; // reference link only — no entry
+      if (amt <= 0 || a.type === "ADVANCE_ADJ") continue;
       const aDate = a.date ? tallyDate(a.date) : chDate;
       const dieselBits =
         a.dieselQty && toNum(a.dieselQty) > 0
           ? ` ${toNum(a.dieselQty)} L${a.dieselRate ? ` @ ${toNum(a.dieselRate)}` : ""}`
           : "";
       const narration = `${a.type.replace(/_/g, " ")} advance${dieselBits}${a.supplierName ? ` — ${a.supplierName}` : ""} — ${tag}${a.remarks ? ` — ${a.remarks}` : ""}`;
-      const brokerLine: TallyVoucher["lines"][number] = {
-        ledger: brokerLedger,
-        amount: amt,
-        side: "DR",
-        bills: [{ name: refNo, type: "Agst Ref", amount: amt }],
-      };
+      const brokerDr = drLine(brokerLedger, amt, { name: refNo, type: "Agst Ref" });
       if (a.type === "BANK") {
-        const bank = a.bankPartyId ? partyById.get(a.bankPartyId) : null;
-        const bankLedger = bank
-          ? look("BANKCASH", bank.id, bank.tallyName?.trim() || bank.name)
+        const ledger = a.bankPartyId
+          ? moneyLedger(ctx, a.bankPartyId, a.bankName?.trim() || "BANK")
           : a.bankName?.trim() || "BANK";
         vouchers.push({
           key: `CHALAN:${c.id}:ADV:${a.id}`,
           type: "Receipt",
           date: aDate,
           narration,
-          lines: [brokerLine, { ledger: bankLedger, amount: amt, side: "CR" }],
+          lines: [brokerDr, crLine(ledger, amt)],
         });
       } else if (a.type === "CASH") {
         vouchers.push({
@@ -242,136 +325,787 @@ export async function buildChalanVouchers(
           type: "Receipt",
           date: aDate,
           narration,
-          lines: [brokerLine, { ledger: C("cash", "CASH"), amount: amt, side: "CR" }],
+          lines: [brokerDr, crLine(C("cash", "CASH"), amt)],
         });
       } else {
-        // expense given on the broker's behalf — credits the chosen head so
-        // the head nets off (the purchase from the supplier booked the debit)
-        const headLedger = a.headId
-          ? look("HEAD", a.headId, (headById.get(a.headId) ?? "OTHER EXPENSE").toUpperCase())
+        const ledger = a.headId
+          ? headLedger(ctx, a.headId)
           : `${a.type.charAt(0)}${a.type.slice(1).toLowerCase().replace(/_/g, " ")} Advance (Chalan)`.toUpperCase();
         vouchers.push({
           key: `CHALAN:${c.id}:ADV:${a.id}`,
           type: "Journal",
           date: aDate,
           narration,
-          lines: [brokerLine, { ledger: headLedger, amount: amt, side: "CR" }],
+          lines: [brokerDr, crLine(ledger, amt)],
         });
       }
     }
 
-    // ---- balance payment (only when marked PAID on the chalan itself).
-    // The user's Tally style keeps the settlement SPLIT: the bank receipt,
-    // the shortage journal and the round-off journal are separate vouchers.
     if (c.paymentStatus === "PAID") {
-      const paid = toNum(c.balPaidAmount);
-      const ro = toNum(c.balRoundOff);
-      const short = toNum(c.balShortage);
-      const balDate = c.balPaymentDate ? tallyDate(c.balPaymentDate) : chDate;
-      const balTag = `Balance — ${tag}${c.balRemarks ? ` — ${c.balRemarks}` : ""}`;
-      if (paid > 0.009) {
-        const payHead = c.balPaymentHeadId ? partyById.get(c.balPaymentHeadId) : null;
-        const payLedger = payHead
-          ? look("BANKCASH", payHead.id, payHead.tallyName?.trim() || payHead.name)
-          : C("cash", "CASH");
-        vouchers.push({
-          key: `CHALAN:${c.id}:BAL`,
-          type: "Receipt",
-          date: balDate,
-          narration: `Balance payment — ${tag}${c.balRemarks ? ` — ${c.balRemarks}` : ""}`,
-          lines: [
-            {
-              ledger: brokerLedger,
-              amount: paid,
-              side: "DR",
-              bills: [{ name: refNo, type: "Agst Ref", amount: paid }],
+      vouchers.push(
+        ...settlementVouchers({
+          keyBase: `CHALAN:${c.id}`,
+          counterLedger: brokerLedger,
+          refNo,
+          date: c.balPaymentDate ? tallyDate(c.balPaymentDate) : chDate,
+          narrationBase: `${tag}${c.balRemarks ? ` — ${c.balRemarks}` : ""}`,
+          counterSide: "DR",
+          paid: toNum(c.balPaidAmount),
+          payLedger: c.balPaymentHeadId
+            ? moneyLedger(ctx, c.balPaymentHeadId, C("cash", "CASH"))
+            : C("cash", "CASH"),
+          shortage: toNum(c.balShortage),
+          shortageLedger: C("shortage", "SHORTAGE RECOVERY"),
+          roundOff: toNum(c.balRoundOff),
+          roundOffLedger: C("round_off", "ROUND OFF"),
+        })
+      );
+    }
+
+    if (!vouchers.length) continue;
+    docs.push({
+      id: c.id,
+      refNo: c.chalanNo,
+      dateIso: c.chalanDate.toISOString(),
+      party: broker.name,
+      detail: `${vehicle.number} · ${vehicle.ownershipType === "BROKER" ? "Broker" : "Relative"}`,
+      amount: toNum(c.grandTotal),
+      vouchers,
+    });
+  }
+  const masters = Array.from(masterIds)
+    .map((id) => masterOf(ctx, id, "Sundry Creditors"))
+    .filter(Boolean) as TallyLedgerMaster[];
+  return { docs, masters };
+}
+
+// ---------------------------------------------------------------- BILLING
+
+export async function buildBillingDocs(
+  tx: Tx,
+  session: Session,
+  r: Range
+): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
+  const ctx = await loadCtx(tx, session);
+  const invoices = await tx.invoice.findMany({
+    where: {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+      kind: { not: "GST" }, // unregistered firm — GST-kind bills out of scope
+      ...(r.dateFrom || r.dateTo
+        ? {
+            invoiceDate: {
+              ...(r.dateFrom ? { gte: r.dateFrom } : {}),
+              ...(r.dateTo ? { lte: r.dateTo } : {}),
             },
-            { ledger: payLedger, amount: paid, side: "CR" },
-          ],
-        });
-      }
-      if (short > 0.009) {
-        vouchers.push({
-          key: `CHALAN:${c.id}:BALSHORT`,
-          type: "Journal",
-          date: balDate,
-          narration: `Shortage on balance — ${balTag}`,
+          }
+        : {}),
+    },
+    orderBy: [{ invoiceDate: "asc" }, { invoiceNo: "asc" }],
+  });
+
+  const B = (key: string, fb: string) => ctx.look("BILLING", key, fb);
+  const docs: ExportDoc[] = [];
+  const masterIds = new Set<string>();
+
+  for (const inv of invoices) {
+    const total = toNum(inv.netTotal);
+    if (total <= 0) continue;
+    const party = ctx.partyById.get(inv.partyId);
+    if (!party) continue;
+    masterIds.add(party.id);
+    const ledger = party.tallyName?.trim() || party.name;
+    docs.push({
+      id: inv.id,
+      refNo: inv.invoiceNo,
+      dateIso: inv.invoiceDate.toISOString(),
+      party: party.name,
+      detail: inv.kind.replace(/_/g, " "),
+      amount: total,
+      vouchers: [
+        {
+          key: `BILL:${inv.id}:MAIN`,
+          type: "Sales",
+          date: tallyDate(inv.invoiceDate),
+          reference: inv.invoiceNo,
+          // pura bill amount EK saath — the user's billing rule; breakup
+          // (freight/detention/charges) stays in the narration only
+          narration: `Invoice ${inv.invoiceNo} (${inv.kind.replace(/_/g, " ")})${inv.vehicleText ? ` — ${inv.vehicleText}` : ""}${inv.remarks ? ` — ${inv.remarks}` : ""}`,
           lines: [
-            {
-              ledger: brokerLedger,
-              amount: short,
-              side: "DR",
-              bills: [{ name: refNo, type: "Agst Ref", amount: short }],
-            },
-            { ledger: C("shortage", "SHORTAGE RECOVERY"), amount: short, side: "CR" },
+            drLine(ledger, total, { name: inv.invoiceNo, type: "New Ref" }),
+            crLine(B("sales", "FREIGHT RECEIPTS"), total),
           ],
+        },
+      ],
+    });
+  }
+  const masters = Array.from(masterIds)
+    .map((id) => masterOf(ctx, id, "Sundry Debtors"))
+    .filter(Boolean) as TallyLedgerMaster[];
+  return { docs, masters };
+}
+
+// ---------------------------------------------------------------- VOUCHERS (receipts & payments)
+
+export async function buildVoucherDocs(
+  tx: Tx,
+  session: Session,
+  r: Range
+): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
+  const ctx = await loadCtx(tx, session);
+  const vouchers = await tx.voucher.findMany({
+    where: {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+      type: { in: ["RECEIPT", "PAYMENT"] },
+      ...(r.dateFrom || r.dateTo
+        ? {
+            voucherDate: {
+              ...(r.dateFrom ? { gte: r.dateFrom } : {}),
+              ...(r.dateTo ? { lte: r.dateTo } : {}),
+            },
+          }
+        : {}),
+    },
+    include: { allocations: true },
+    orderBy: [{ voucherDate: "asc" }, { voucherNo: "asc" }],
+  });
+
+  const V = (key: string, fb: string) => ctx.look("VOUCHER", key, fb);
+  const docs: ExportDoc[] = [];
+  const masterIds = new Set<string>();
+
+  for (const v of vouchers) {
+    // money must actually move through a mapped bank/cash/card account
+    if (!v.bankPartyId) continue;
+    const isReceipt = v.type === "RECEIPT";
+    const amount = toNum(v.amount);
+    const tds = toNum(v.tdsAmt);
+    const deduction = toNum(v.deduction);
+    const headerOther = toNum(v.otherAmt);
+    const net = toNum(v.netAmount);
+    const allocRoundOff = round2(v.allocations.reduce((s, a) => s + toNum(a.roundOff), 0));
+    const rowOther = round2(v.allocations.reduce((s, a) => s + toNum(a.otherAmt), 0));
+    const shortage = round2(Math.max(0, deduction - rowOther));
+    if (net <= 0.009 && tds <= 0.009 && deduction <= 0.009) continue;
+
+    const counterLedger = v.partyId
+      ? partyLedger(ctx, v.partyId)
+      : headLedger(ctx, v.accountHeadId, "SUSPENSE");
+    if (v.partyId) {
+      const p = ctx.partyById.get(v.partyId);
+      if (p) masterIds.add(p.id);
+    }
+    const bankLedgerName = moneyLedger(ctx, v.bankPartyId, "BANK");
+
+    // bill refs: each allocation's fully-settled portion against its document
+    const counterTotal = round2(amount + allocRoundOff);
+    const bills = v.allocations
+      .map((a) => ({
+        name: a.refNo,
+        type: "Agst Ref" as const,
+        amount: round2(
+          toNum(a.amount) + toNum(a.tdsAmt) + toNum(a.deduction) + toNum(a.otherAmt) + toNum(a.roundOff)
+        ),
+      }))
+      .filter((b) => Math.abs(b.amount) > 0.009);
+    const billsTotal = round2(bills.reduce((s, b) => s + b.amount, 0));
+    if (Math.abs(billsTotal - counterTotal) > 0.009) {
+      // remainder is on-account — its own Advance ref keeps Tally balanced
+      bills.push({
+        name: v.voucherNo,
+        type: "Advance" as unknown as "Agst Ref",
+        amount: round2(counterTotal - billsTotal),
+      });
+    }
+
+    const nar = `${isReceipt ? "Receipt" : "Payment"} voucher ${v.voucherNo}${v.remarks ? ` — ${v.remarks}` : ""}`;
+    const moneySide = (ledger: string, amt: number) =>
+      isReceipt ? drLine(ledger, amt) : crLine(ledger, amt);
+    const counterSideLine: TallyVoucher["lines"][number] = {
+      ledger: counterLedger,
+      amount: counterTotal,
+      side: isReceipt ? "CR" : "DR",
+      bills: bills.map((b) => ({ ...b })),
+    };
+
+    const lines: TallyVoucher["lines"] = [counterSideLine];
+    if (net > 0.009) lines.push(moneySide(bankLedgerName, net));
+    if (tds > 0.009)
+      lines.push(
+        moneySide(isReceipt ? V("tds_recv", "TDS RECEIVABLE 194C") : V("tds_pay", "TDS ON TRANSPORT 194C"), tds)
+      );
+    if (shortage > 0.009) lines.push(moneySide(V("shortage", "SHORTAGE"), shortage));
+    if (rowOther > 0.009) lines.push(moneySide(V("other_ded", "OTHER CHARGES"), rowOther));
+    // header otherAmt is an ADDED charge — it sits on the counter side
+    if (headerOther > 0.009)
+      lines.push(
+        isReceipt ? crLine(V("other_ded", "OTHER CHARGES"), headerOther) : drLine(V("other_ded", "OTHER CHARGES"), headerOther)
+      );
+    if (allocRoundOff > 0.009) lines.push(moneySide(V("round_off", "ROUND OFF"), allocRoundOff));
+    else if (allocRoundOff < -0.009)
+      lines.push(
+        isReceipt ? crLine(V("round_off", "ROUND OFF"), Math.abs(allocRoundOff)) : drLine(V("round_off", "ROUND OFF"), Math.abs(allocRoundOff))
+      );
+
+    docs.push({
+      id: v.id,
+      refNo: v.voucherNo,
+      dateIso: v.voucherDate.toISOString(),
+      party: v.partyId ? ctx.partyById.get(v.partyId)?.name ?? "" : ctx.headById.get(v.accountHeadId ?? "") ?? "",
+      detail: `${v.type}${v.allocations.length ? ` · ${v.allocations.map((a) => a.refNo).join(", ")}` : ""}`,
+      amount,
+      vouchers: [
+        {
+          key: `VOUCHER:${v.id}`,
+          type: isReceipt ? "Receipt" : "Payment",
+          date: tallyDate(v.voucherDate),
+          narration: nar,
+          lines,
+        },
+      ],
+    });
+  }
+  const masters = Array.from(masterIds)
+    .map((id) => {
+      const p = ctx.partyById.get(id)!;
+      return masterOf(ctx, id, p.ledgerGroup === "CONSIGNEE_CONSIGNOR" ? "Sundry Debtors" : "Sundry Creditors");
+    })
+    .filter(Boolean) as TallyLedgerMaster[];
+  return { docs, masters };
+}
+
+// ---------------------------------------------------------------- BROKER SLIP
+
+interface SlipAdvance {
+  side?: "P" | "V";
+  type?: string;
+  headKind?: string | null;
+  headId?: string | null;
+  supplierName?: string | null;
+  bankName?: string | null;
+  dieselQty?: number | null;
+  dieselRate?: number | null;
+  amount?: number;
+  date?: string | null;
+  remarks?: string | null;
+}
+
+export async function buildSlipDocs(
+  tx: Tx,
+  session: Session,
+  r: Range
+): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
+  const ctx = await loadCtx(tx, session);
+  const range =
+    r.dateFrom || r.dateTo
+      ? { ...(r.dateFrom ? { gte: r.dateFrom } : {}), ...(r.dateTo ? { lte: r.dateTo } : {}) }
+      : null;
+  const slips = await tx.brokerSlip.findMany({
+    where: {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+      ...(range
+        ? { OR: [{ slipDate: range }, { pPaymentDate: range }, { vPaymentDate: range }] }
+        : {}),
+    },
+    orderBy: [{ slipDate: "asc" }, { slipNo: "asc" }],
+  });
+
+  const P = (key: string, fb: string) => ctx.look("SLIP_P", key, fb);
+  const C = (key: string, fb: string) => ctx.look("CHALAN", key, fb);
+  const docs: ExportDoc[] = [];
+  const masterIds = new Map<string, string>(); // partyId -> parent group
+
+  for (const s of slips) {
+    const vehicle = s.vehicleId ? ctx.vehicleById.get(s.vehicleId) : null;
+    const ownVehicle = vehicle?.ownershipType === "OWNER";
+    const vouchers: TallyVoucher[] = [];
+    const sDate = tallyDate(s.slipDate);
+    const refNo = s.slipNo;
+    const tag = `broker slip ${s.slipNo}${vehicle ? ` — ${vehicle.number}` : ""}`;
+    const advances: SlipAdvance[] = Array.isArray(s.advances) ? (s.advances as SlipAdvance[]) : [];
+
+    // ---------- PARTY SIDE (receivable) — always exports when present
+    if (s.partyId) {
+      const party = ctx.partyById.get(s.partyId);
+      if (party) {
+        const pLedger = party.tallyName?.trim() || party.name;
+        masterIds.set(party.id, "Sundry Debtors");
+        const pComponents: [string, number][] = [
+          [P("freight_income", "FREIGHT RECEIPTS"), toNum(s.pFreight)],
+          [P("detention_income", "DETENTION INCOME"), toNum(s.pDetention)],
+          [P("odc_income", "ODC INCOME"), toNum(s.pOdcAmt)],
+          [P("fine_income", "FINE SLIP INCOME"), toNum(s.pFineSlip)],
+        ];
+        const pTotal = round2(pComponents.reduce((sum, [, a]) => sum + a, 0));
+        if (pTotal > 0) {
+          vouchers.push({
+            key: `SLIP:${s.id}:PMAIN`,
+            type: "Sales",
+            date: sDate,
+            reference: refNo,
+            narration: `Broker slip ${s.slipNo}${vehicle ? ` — ${vehicle.number}` : ""}${s.pRemarks ? ` — ${s.pRemarks}` : ""}`,
+            lines: [
+              drLine(pLedger, pTotal, { name: refNo, type: "New Ref" }),
+              ...pComponents.filter(([, a]) => a > 0).map(([l, a]) => crLine(l, a)),
+            ],
+          });
+        }
+        const pDed = (suffix: string, total: number, debits: [string, number][], what: string) => {
+          if (total <= 0.009) return;
+          vouchers.push({
+            key: `SLIP:${s.id}:${suffix}`,
+            type: "Journal",
+            date: sDate,
+            narration: `${what} — ${tag}`,
+            lines: [
+              ...debits.filter(([, a]) => a > 0).map(([l, a]) => drLine(l, a)),
+              crLine(pLedger, total, { name: refNo, type: "Agst Ref" }),
+            ],
+          });
+        };
+        const pTds = toNum(s.pTdsAmt);
+        pDed("PTDS", pTds, [[P("tds_recv", "TDS RECEIVABLE 194C"), pTds]], "TDS");
+        const pComm = toNum(s.pCommAmt);
+        const pMamool = toNum(s.pMamool);
+        pDed(
+          "PCOMM",
+          round2(pComm + pMamool),
+          [
+            [P("comm_allowed", "COMMISSION ALLOWED"), pComm],
+            [P("mamool_allowed", "MAMOOL ALLOWED"), pMamool],
+          ],
+          "Commission / Mamool"
+        );
+        const pLd = toNum(s.pLdCharge);
+        pDed("PLD", pLd, [[P("ld_allowed", "LD CHARGE ALLOWED"), pLd]], "LD charge");
+        const pPc = toNum(s.pPaymentCharge);
+        pDed("PPC", pPc, [[P("payment_charge", "PAYMENT CHARGES"), pPc]], "Payment charge");
+        const pShort = toNum(s.pShortageAmt);
+        pDed("PSHORT", pShort, [[P("shortage", "SHORTAGE"), pShort]], "Shortage");
+
+        // advances received from the party
+        advances.forEach((a, i) => {
+          if (a.side !== "P") return;
+          const amt = round2(toNum(a.amount ?? 0));
+          if (amt <= 0 || a.type === "ADVANCE_ADJ") return;
+          const aDate = a.date ? tallyDate(new Date(`${a.date}T00:00:00`)) : sDate;
+          const nar = `${(a.type ?? "").replace(/_/g, " ")} advance received${a.remarks ? ` — ${a.remarks}` : ""} — ${tag}`;
+          const partyCr = crLine(pLedger, amt, { name: refNo, type: "Agst Ref" });
+          if (a.headKind === "BANK" || a.headKind === "CASH") {
+            vouchers.push({
+              key: `SLIP:${s.id}:PADV:${i}`,
+              type: "Receipt",
+              date: aDate,
+              narration: nar,
+              lines: [moneyLedgerLine(ctx, a, C), partyCr],
+            });
+          } else {
+            vouchers.push({
+              key: `SLIP:${s.id}:PADV:${i}`,
+              type: "Journal",
+              date: aDate,
+              narration: nar,
+              lines: [drLine(headLedger(ctx, a.headId ?? null), amt), partyCr],
+            });
+          }
+          function moneyLedgerLine(cx: Ctx, adv: SlipAdvance, look: typeof C): TallyVoucher["lines"][number] {
+            const ledger =
+              adv.headKind === "CASH"
+                ? look("cash", "CASH")
+                : adv.headId
+                  ? moneyLedger(cx, adv.headId, adv.bankName?.trim() || "BANK")
+                  : adv.bankName?.trim() || "BANK";
+            return drLine(ledger, amt);
+          }
         });
-      }
-      if (Math.abs(ro) > 0.009) {
-        const amt = round2(Math.abs(ro));
-        vouchers.push({
-          key: `CHALAN:${c.id}:BALRO`,
-          type: "Journal",
-          date: balDate,
-          narration: `Round off on balance — ${balTag}`,
-          lines:
-            ro > 0
-              ? [
-                  // knocked off the payable — broker debited, round-off income
-                  {
-                    ledger: brokerLedger,
-                    amount: amt,
-                    side: "DR",
-                    bills: [{ name: refNo, type: "Agst Ref", amount: amt }],
-                  },
-                  { ledger: C("round_off", "ROUND OFF"), amount: amt, side: "CR" },
-                ]
-              : [
-                  // paid a little extra — round-off expense, broker credited
-                  { ledger: C("round_off", "ROUND OFF"), amount: amt, side: "DR" },
-                  {
-                    ledger: brokerLedger,
-                    amount: amt,
-                    side: "CR",
-                    bills: [{ name: refNo, type: "Agst Ref", amount: amt }],
-                  },
-                ],
-        });
+
+        if (s.pPaymentStatus === "RECEIVED") {
+          vouchers.push(
+            ...settlementVouchers({
+              keyBase: `SLIP:${s.id}:P`,
+              counterLedger: pLedger,
+              refNo,
+              date: s.pPaymentDate ? tallyDate(s.pPaymentDate) : sDate,
+              narrationBase: `${tag}${s.pPaymentRemarks ? ` — ${s.pPaymentRemarks}` : ""}`,
+              counterSide: "CR", // party credited — money came IN
+              paid: toNum(s.pPaidAmount),
+              payLedger: s.pPaymentHeadId
+                ? moneyLedger(ctx, s.pPaymentHeadId, C("cash", "CASH"))
+                : C("cash", "CASH"),
+              shortage: toNum(s.pShortage),
+              shortageLedger: P("shortage", "SHORTAGE"),
+              roundOff: toNum(s.pRoundOff),
+              roundOffLedger: C("round_off", "ROUND OFF"),
+            })
+          );
+        }
       }
     }
 
-    if (vouchers.length === 0) continue;
+    // ---------- OWNER SIDE (payable) — skipped for OWN vehicles
+    if (s.ownerId && !ownVehicle) {
+      const owner = ctx.partyById.get(s.ownerId);
+      if (owner) {
+        const oLedger = owner.tallyName?.trim() || owner.name;
+        masterIds.set(owner.id, "Sundry Creditors");
+        const isDecl = owner.tdsMode === "DECLARATION";
+        const vComponents: [string, number][] = [
+          [
+            isDecl ? C("freight_decl", "TRANSPORTING EXP (DECLARATION)") : C("freight_tds", "TRANSPORTING EXP (TDS)"),
+            toNum(s.vFreight),
+          ],
+          [C("detention", "DETENTION CHARGES"), toNum(s.vDetention)],
+          [C("odc", "ODC CHARGES"), toNum(s.vOdcAmt)],
+          [C("fine_slip", "FINE SLIP CHARGES"), toNum(s.vFineAmt)],
+        ];
+        const vTotal = round2(vComponents.reduce((sum, [, a]) => sum + a, 0));
+        if (vTotal > 0) {
+          vouchers.push({
+            key: `SLIP:${s.id}:VMAIN`,
+            type: "Purchase",
+            date: sDate,
+            reference: refNo,
+            narration: `Broker slip ${s.slipNo} (owner side)${vehicle ? ` — ${vehicle.number}` : ""}${s.vRemarks ? ` — ${s.vRemarks}` : ""}`,
+            lines: [
+              ...vComponents.filter(([, a]) => a > 0).map(([l, a]) => drLine(l, a)),
+              crLine(oLedger, vTotal, { name: refNo, type: "New Ref" }),
+            ],
+          });
+        }
+        const vDed = (suffix: string, total: number, credits: [string, number][], what: string) => {
+          if (total <= 0.009) return;
+          vouchers.push({
+            key: `SLIP:${s.id}:${suffix}`,
+            type: "Journal",
+            date: sDate,
+            narration: `${what} — ${tag} (owner side)`,
+            lines: [
+              drLine(oLedger, total, { name: refNo, type: "Agst Ref" }),
+              ...credits.filter(([, a]) => a > 0).map(([l, a]) => crLine(l, a)),
+            ],
+          });
+        };
+        const vTds = toNum(s.vTdsAmt);
+        vDed("VTDS", vTds, [[C("tds", "TDS ON TRANSPORT 194C"), vTds]], "TDS");
+        const vComm = toNum(s.vCommAmt);
+        const vMamool = toNum(s.vMamool);
+        vDed(
+          "VCOMM",
+          round2(vComm + vMamool),
+          [
+            [C("commission", "COMMISSION INCOME"), vComm],
+            [C("mamool", "MAMOOL INCOME"), vMamool],
+          ],
+          "Commission / Mamool"
+        );
+        const vLd = toNum(s.vLdCharge);
+        vDed("VLD", vLd, [[C("ld", "LD CHARGE RECOVERED"), vLd]], "LD charge");
+        const vPc = toNum(s.vPaymentAmt);
+        vDed("VPC", vPc, [[C("payment_charge", "PAYMENT CHARGES RECOVERED"), vPc]], "Payment charge");
+        const vShort = toNum(s.vShortageAmt);
+        vDed("VSHORT", vShort, [[C("shortage", "SHORTAGE RECOVERY"), vShort]], "Shortage");
+
+        advances.forEach((a, i) => {
+          if (a.side !== "V") return;
+          const amt = round2(toNum(a.amount ?? 0));
+          if (amt <= 0 || a.type === "ADVANCE_ADJ") return;
+          const aDate = a.date ? tallyDate(new Date(`${a.date}T00:00:00`)) : sDate;
+          const dieselBits =
+            a.dieselQty && toNum(a.dieselQty) > 0
+              ? ` ${toNum(a.dieselQty)} L${a.dieselRate ? ` @ ${toNum(a.dieselRate)}` : ""}`
+              : "";
+          const nar = `${(a.type ?? "").replace(/_/g, " ")} advance paid${dieselBits}${a.supplierName ? ` — ${a.supplierName}` : ""} — ${tag}${a.remarks ? ` — ${a.remarks}` : ""}`;
+          const ownerDr = drLine(oLedger, amt, { name: refNo, type: "Agst Ref" });
+          if (a.headKind === "BANK" || a.headKind === "CASH") {
+            const ledger =
+              a.headKind === "CASH"
+                ? C("cash", "CASH")
+                : a.headId
+                  ? moneyLedger(ctx, a.headId, a.bankName?.trim() || "BANK")
+                  : a.bankName?.trim() || "BANK";
+            vouchers.push({
+              key: `SLIP:${s.id}:VADV:${i}`,
+              type: "Receipt",
+              date: aDate,
+              narration: nar,
+              lines: [ownerDr, crLine(ledger, amt)],
+            });
+          } else {
+            vouchers.push({
+              key: `SLIP:${s.id}:VADV:${i}`,
+              type: "Journal",
+              date: aDate,
+              narration: nar,
+              lines: [ownerDr, crLine(headLedger(ctx, a.headId ?? null), amt)],
+            });
+          }
+        });
+
+        if (s.vPaymentStatus === "PAID") {
+          vouchers.push(
+            ...settlementVouchers({
+              keyBase: `SLIP:${s.id}:V`,
+              counterLedger: oLedger,
+              refNo,
+              date: s.vPaymentDate ? tallyDate(s.vPaymentDate) : sDate,
+              narrationBase: `${tag} (owner side)${s.vPaymentRemarks ? ` — ${s.vPaymentRemarks}` : ""}`,
+              counterSide: "DR", // owner debited — money went OUT
+              paid: toNum(s.vPaidAmount),
+              payLedger: s.vPaymentHeadId
+                ? moneyLedger(ctx, s.vPaymentHeadId, C("cash", "CASH"))
+                : C("cash", "CASH"),
+              shortage: toNum(s.vShortage),
+              shortageLedger: C("shortage", "SHORTAGE RECOVERY"),
+              roundOff: toNum(s.vRoundOff),
+              roundOffLedger: C("round_off", "ROUND OFF"),
+            })
+          );
+        }
+      }
+    }
+
+    if (!vouchers.length) continue;
     docs.push({
-      chalanId: c.id,
-      chalanNo: c.chalanNo,
-      dateIso: c.chalanDate.toISOString(),
-      broker: broker.name,
-      vehicle: vehicle.number,
-      ownership: vehicle.ownershipType,
-      grandTotal: toNum(c.grandTotal),
+      id: s.id,
+      refNo: s.slipNo,
+      dateIso: s.slipDate.toISOString(),
+      party: s.partyId ? ctx.partyById.get(s.partyId)?.name ?? "" : "",
+      detail: `${vehicle ? `${vehicle.number} · ` : ""}${ownVehicle ? "Own gaadi (party side only)" : "dono side"}`,
+      amount: toNum(s.pNetAmt) || toNum(s.vNetAmt),
       vouchers,
     });
   }
 
-  const masters: TallyLedgerMaster[] = Array.from(masterIds).map((id) => {
-    const p = partyById.get(id)!;
-    return {
-      name: p.tallyName?.trim() || p.name,
-      parent: "Sundry Creditors",
-      address: [p.address1, p.address2].filter(Boolean).join(", ") || undefined,
-      pan: p.pan ?? undefined,
-      mobile: p.mobile ?? undefined,
-    };
+  const masters = Array.from(masterIds.entries())
+    .map(([id, parent]) => masterOf(ctx, id, parent))
+    .filter(Boolean) as TallyLedgerMaster[];
+  return { docs, masters };
+}
+
+// ---------------------------------------------------------------- VEHICLE EXPENSES
+
+export async function buildExpenseDocs(
+  tx: Tx,
+  session: Session,
+  r: Range
+): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
+  const ctx = await loadCtx(tx, session);
+  const vouchers = await tx.vehicleExpenseVoucher.findMany({
+    where: {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+      ...(r.dateFrom || r.dateTo
+        ? {
+            date: {
+              ...(r.dateFrom ? { gte: r.dateFrom } : {}),
+              ...(r.dateTo ? { lte: r.dateTo } : {}),
+            },
+          }
+        : {}),
+    },
+    orderBy: [{ date: "asc" }, { voucherNo: "asc" }],
   });
 
+  const docs: ExportDoc[] = [];
+  const masterIds = new Set<string>();
+
+  for (const v of vouchers) {
+    const amount = toNum(v.amount);
+    if (amount <= 0) continue;
+    const isExpense = v.txnType !== "INCOME";
+    const head = headLedger(ctx, v.headId);
+    const nar = `${v.voucherNo}${v.itemName ? ` — ${v.itemName}` : ""}${v.qty ? ` (${toNum(v.qty)})` : ""}${v.remarks ? ` — ${v.remarks}` : ""}`;
+    const paid = !!v.paymentMode && !!v.bankPartyId;
+
+    let voucher: TallyVoucher;
+    if (paid) {
+      const money = moneyLedger(ctx, v.bankPartyId, "CASH");
+      const date = tallyDate(v.paymentDate ?? v.date);
+      voucher = isExpense
+        ? {
+            key: `VEX:${v.id}`,
+            type: "Payment",
+            date,
+            narration: nar,
+            lines: [drLine(head, amount), crLine(money, amount)],
+          }
+        : {
+            key: `VEX:${v.id}`,
+            type: "Receipt",
+            date,
+            narration: nar,
+            lines: [drLine(money, amount), crLine(head, amount)],
+          };
+    } else if (v.partyId) {
+      // udhaar — supplier's ledger carries it until the payment voucher
+      const supplier = partyLedger(ctx, v.partyId);
+      masterIds.add(v.partyId);
+      voucher = isExpense
+        ? {
+            key: `VEX:${v.id}`,
+            type: "Journal",
+            date: tallyDate(v.date),
+            narration: nar,
+            lines: [
+              drLine(head, amount),
+              crLine(supplier, amount, { name: v.voucherNo, type: "New Ref" }),
+            ],
+          }
+        : {
+            key: `VEX:${v.id}`,
+            type: "Journal",
+            date: tallyDate(v.date),
+            narration: nar,
+            lines: [
+              drLine(supplier, amount, { name: v.voucherNo, type: "New Ref" }),
+              crLine(head, amount),
+            ],
+          };
+    } else {
+      continue; // neither paid nor a supplier — nothing to post
+    }
+
+    docs.push({
+      id: v.id,
+      refNo: v.voucherNo,
+      dateIso: v.date.toISOString(),
+      party: v.partyId ? ctx.partyById.get(v.partyId)?.name ?? "" : (v.paymentMode ?? ""),
+      detail: `${isExpense ? "Expense" : "Income"} · ${ctx.headById.get(v.headId) ?? ""}`,
+      amount,
+      vouchers: [voucher],
+    });
+  }
+  const masters = Array.from(masterIds)
+    .map((id) => masterOf(ctx, id, "Sundry Creditors"))
+    .filter(Boolean) as TallyLedgerMaster[];
   return { docs, masters };
+}
+
+// ---------------------------------------------------------------- OFFICE
+
+export async function buildOfficeDocs(
+  tx: Tx,
+  session: Session,
+  r: Range
+): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
+  const ctx = await loadCtx(tx, session);
+  const txns = await tx.officeTransaction.findMany({
+    where: {
+      firmId: session.firmId,
+      fyId: session.fyId,
+      deletedAt: null,
+      ...(r.dateFrom || r.dateTo
+        ? {
+            date: {
+              ...(r.dateFrom ? { gte: r.dateFrom } : {}),
+              ...(r.dateTo ? { lte: r.dateTo } : {}),
+            },
+          }
+        : {}),
+    },
+    include: { lines: true },
+    orderBy: [{ date: "asc" }, { voucherNo: "asc" }],
+  });
+
+  const docs: ExportDoc[] = [];
+  const masterIds = new Set<string>();
+
+  for (const t of txns) {
+    const amount = toNum(t.amount);
+    if (amount <= 0) continue;
+    const isExpense = t.txnType !== "INCOME";
+    // multi-head txns split line-wise; single-head uses the header head
+    const headLines: [string, number][] = t.lines.length
+      ? t.lines.map((l): [string, number] => [headLedger(ctx, l.headId), toNum(l.amount)])
+      : [[headLedger(ctx, t.headId), amount]];
+    const nar = `${t.voucherNo}${t.refNo ? ` — ${t.refNo}` : ""}${t.remarks ? ` — ${t.remarks}` : ""}`;
+    const paid = !!t.paymentMode && !!t.bankPartyId;
+
+    let voucher: TallyVoucher;
+    if (paid) {
+      const money = moneyLedger(ctx, t.bankPartyId, "CASH");
+      voucher = {
+        key: `OFC:${t.id}`,
+        type: isExpense ? "Payment" : "Receipt",
+        date: tallyDate(t.date),
+        narration: nar,
+        lines: isExpense
+          ? [...headLines.filter(([, a]) => a > 0).map(([l, a]) => drLine(l, a)), crLine(money, amount)]
+          : [drLine(money, amount), ...headLines.filter(([, a]) => a > 0).map(([l, a]) => crLine(l, a))],
+      };
+    } else if (t.partyId) {
+      const supplier = partyLedger(ctx, t.partyId);
+      masterIds.add(t.partyId);
+      voucher = {
+        key: `OFC:${t.id}`,
+        type: "Journal",
+        date: tallyDate(t.date),
+        narration: nar,
+        lines: isExpense
+          ? [
+              ...headLines.filter(([, a]) => a > 0).map(([l, a]) => drLine(l, a)),
+              crLine(supplier, amount, { name: t.voucherNo, type: "New Ref" }),
+            ]
+          : [
+              drLine(supplier, amount, { name: t.voucherNo, type: "New Ref" }),
+              ...headLines.filter(([, a]) => a > 0).map(([l, a]) => crLine(l, a)),
+            ],
+      };
+    } else {
+      continue;
+    }
+
+    docs.push({
+      id: t.id,
+      refNo: t.voucherNo,
+      dateIso: t.date.toISOString(),
+      party: t.partyId ? ctx.partyById.get(t.partyId)?.name ?? "" : (t.paymentMode ?? ""),
+      detail: `${isExpense ? "Expense" : "Income"} · ${ctx.headById.get(t.headId) ?? ""}`,
+      amount,
+      vouchers: [voucher],
+    });
+  }
+  const masters = Array.from(masterIds)
+    .map((id) => masterOf(ctx, id, "Sundry Creditors"))
+    .filter(Boolean) as TallyLedgerMaster[];
+  return { docs, masters };
+}
+
+// ---------------------------------------------------------------- dispatcher
+
+export async function buildModuleDocs(
+  tx: Tx,
+  session: Session,
+  module: TallyModule,
+  r: Range
+): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
+  switch (module) {
+    case "CHALAN":
+      return buildChalanDocs(tx, session, r);
+    case "BILLING":
+      return buildBillingDocs(tx, session, r);
+    case "SLIP":
+      return buildSlipDocs(tx, session, r);
+    case "VOUCHERS":
+      return buildVoucherDocs(tx, session, r);
+    case "EXPENSES":
+      return buildExpenseDocs(tx, session, r);
+    case "OFFICE":
+      return buildOfficeDocs(tx, session, r);
+  }
 }
 
 /** Status of one generated voucher against the export register. */
 export type VoucherStatus = "NEW" | "EXPORTED" | "CHANGED";
 
 export function voucherStatuses(
-  docs: ChalanVoucherDoc[],
+  docs: ExportDoc[],
   registry: Map<string, string> // key -> hash
 ): Map<string, VoucherStatus> {
   const out = new Map<string, VoucherStatus>();

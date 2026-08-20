@@ -38,6 +38,7 @@ export const CHALAN_CONCEPTS: TallyConcept[] = [
   { key: "ld", label: "LD Charge", fallback: "LD CHARGE RECOVERED" },
   { key: "shortage", label: "Shortage", fallback: "SHORTAGE RECOVERY" },
   { key: "round_off", label: "Round Off", fallback: "ROUND OFF" },
+  { key: "payment_charge", label: "Payment Charge", fallback: "PAYMENT CHARGES RECOVERED" },
   { key: "cash", label: "Cash ledger (cash advances)", fallback: "CASH" },
 ];
 
@@ -61,9 +62,16 @@ export const SLIP_P_CONCEPTS: TallyConcept[] = [
   { key: "mamool_allowed", label: "Mamool (party ne kata)", fallback: "MAMOOL ALLOWED" },
   { key: "tds_recv", label: "TDS Receivable (party ne kata)", fallback: "TDS RECEIVABLE 194C" },
   { key: "shortage", label: "Shortage (party side)", fallback: "SHORTAGE" },
+  { key: "ld_allowed", label: "LD Charge (party ne kata)", fallback: "LD CHARGE ALLOWED" },
+  { key: "payment_charge", label: "Payment Charge (party ne kata)", fallback: "PAYMENT CHARGES" },
 ];
 
-export const OFFICE_CONCEPTS: TallyConcept[] = [
+/** Receipt / Payment voucher deduction legs (Accounts module). */
+export const VOUCHER_CONCEPTS: TallyConcept[] = [
+  { key: "tds_recv", label: "TDS Receivable (receipts — party ne kata)", fallback: "TDS RECEIVABLE 194C" },
+  { key: "tds_pay", label: "TDS Payable (payments — aapne kata)", fallback: "TDS ON TRANSPORT 194C" },
+  { key: "shortage", label: "Shortage", fallback: "SHORTAGE" },
+  { key: "other_ded", label: "Other Deduction / Charges", fallback: "OTHER CHARGES" },
   { key: "round_off", label: "Round Off", fallback: "ROUND OFF" },
 ];
 

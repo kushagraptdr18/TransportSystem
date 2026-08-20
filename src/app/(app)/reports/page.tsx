@@ -76,7 +76,7 @@ const SECTIONS: { title: string; links: { label: string; href: string; icon: typ
         label: "Tally Export",
         href: "/reports/tally-export",
         icon: BookOpen,
-        desc: "Chalan vouchers as a Tally Prime import file (Alt+O → Import)",
+        desc: "Chalan, billing, slips, vouchers & expenses as Tally Prime import files",
       },
     ],
   },

@@ -7,23 +7,19 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/components/ui/use-toast";
-import {
-  runTallyChalanExport,
-  runTallyChalanMasters,
-} from "@/app/(app)/reports/tally-export/actions";
+import { runTallyExport, runTallyMasters } from "@/app/(app)/reports/tally-export/actions";
 
 export interface TallyExportRow {
-  chalanId: string;
-  chalanNo: string;
+  docId: string;
+  refNo: string;
   dateIso: string;
-  broker: string;
-  vehicle: string;
-  ownership: string;
-  grandTotal: number;
+  party: string;
+  detail: string;
+  amount: number;
   voucherCount: number;
   /** never exported */
   fresh: number;
-  /** exported earlier but the chalan changed since */
+  /** exported earlier but the document changed since */
   changed: number;
   /** exported and unchanged */
   done: number;
@@ -39,10 +35,12 @@ function download(fileName: string, xml: string) {
 
 export function TallyExportClient({
   rows,
+  module,
   dateFrom,
   dateTo,
 }: {
   rows: TallyExportRow[];
+  module: string;
   dateFrom: string | null;
   dateTo: string | null;
 }) {
@@ -52,7 +50,7 @@ export function TallyExportClient({
   const [includeExported, setIncludeExported] = React.useState(false);
   // default selection: everything that has something new/changed to send
   const [selected, setSelected] = React.useState<Set<string>>(
-    () => new Set(rows.filter((r) => r.fresh + r.changed > 0).map((r) => r.chalanId))
+    () => new Set(rows.filter((r) => r.fresh + r.changed > 0).map((r) => r.docId))
   );
 
   const toggle = (id: string, on: boolean) =>
@@ -65,15 +63,16 @@ export function TallyExportClient({
 
   const doExport = async () => {
     if (!selected.size) {
-      toast({ variant: "destructive", title: "Koi chalan select nahi hai" });
+      toast({ variant: "destructive", title: "Kuch select nahi hai" });
       return;
     }
     setBusy(true);
     try {
-      const res = await runTallyChalanExport({
+      const res = await runTallyExport({
+        module,
         dateFrom,
         dateTo,
-        chalanIds: Array.from(selected),
+        docIds: Array.from(selected),
         includeExported,
       });
       if (res.ok) {
@@ -95,7 +94,7 @@ export function TallyExportClient({
   const doMasters = async () => {
     setBusy(true);
     try {
-      const res = await runTallyChalanMasters({ dateFrom, dateTo });
+      const res = await runTallyMasters({ module, dateFrom, dateTo });
       if (res.ok) {
         download(res.fileName, res.xml);
         toast({ title: `${res.count} party masters exported` });
@@ -144,37 +143,33 @@ export function TallyExportClient({
                 <Checkbox
                   checked={rows.length > 0 && selected.size === rows.length}
                   onCheckedChange={(c) =>
-                    setSelected(c === true ? new Set(rows.map((r) => r.chalanId)) : new Set())
+                    setSelected(c === true ? new Set(rows.map((r) => r.docId)) : new Set())
                   }
                 />
               </th>
-              <th className="px-3 py-2">Chalan No</th>
+              <th className="px-3 py-2">Ref No</th>
               <th className="px-3 py-2">Date</th>
-              <th className="px-3 py-2">Broker</th>
-              <th className="px-3 py-2">Vehicle</th>
-              <th className="px-3 py-2">Type</th>
-              <th className="px-3 py-2 text-right">Grand Total</th>
+              <th className="px-3 py-2">Party</th>
+              <th className="px-3 py-2">Detail</th>
+              <th className="px-3 py-2 text-right">Amount</th>
               <th className="px-3 py-2 text-right">Vouchers</th>
               <th className="px-3 py-2">Status</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.chalanId} className="border-b hover:bg-muted/40">
+              <tr key={r.docId} className="border-b hover:bg-muted/40">
                 <td className="px-3 py-2">
                   <Checkbox
-                    checked={selected.has(r.chalanId)}
-                    onCheckedChange={(c) => toggle(r.chalanId, c === true)}
+                    checked={selected.has(r.docId)}
+                    onCheckedChange={(c) => toggle(r.docId, c === true)}
                   />
                 </td>
-                <td className="px-3 py-2 font-medium">{r.chalanNo}</td>
+                <td className="px-3 py-2 font-medium">{r.refNo}</td>
                 <td className="px-3 py-2">{formatDate(r.dateIso)}</td>
-                <td className="px-3 py-2">{r.broker}</td>
-                <td className="px-3 py-2">{r.vehicle}</td>
-                <td className="px-3 py-2">
-                  <Badge variant="secondary">{r.ownership}</Badge>
-                </td>
-                <td className="px-3 py-2 text-right tabular-nums">{formatMoney(r.grandTotal)}</td>
+                <td className="px-3 py-2">{r.party || "—"}</td>
+                <td className="px-3 py-2 text-muted-foreground">{r.detail}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatMoney(r.amount)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">
                   {r.voucherCount}
                   <span className="ml-1 text-xs text-muted-foreground">
@@ -186,8 +181,8 @@ export function TallyExportClient({
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
-                  Is period mein koi final Broker/Relative chalan nahi mila.
+                <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
+                  Is period mein is module ka kuch nahi mila.
                 </td>
               </tr>
             )}

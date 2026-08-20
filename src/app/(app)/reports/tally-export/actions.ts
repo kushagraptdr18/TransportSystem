@@ -6,21 +6,30 @@ import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { buildMastersXml, buildVouchersXml, voucherHash } from "@/lib/tally";
-import { buildChalanVouchers } from "./build";
+import { buildModuleDocs, type TallyModule } from "./build";
+
+const moduleSchema = z.enum(["CHALAN", "BILLING", "SLIP", "VOUCHERS", "EXPENSES", "OFFICE"]);
 
 const exportSchema = z.object({
+  module: moduleSchema,
   dateFrom: z.string().nullish(), // ISO yyyy-mm-dd
   dateTo: z.string().nullish(),
-  chalanIds: z.array(z.string()).min(1, "Select at least one chalan"),
+  docIds: z.array(z.string()).min(1, "Select at least one document"),
   /** false (default): only NEW / CHANGED vouchers; true: everything selected */
   includeExported: z.boolean().default(false),
 });
 
+const toRange = (from?: string | null, to?: string | null) => ({
+  dateFrom: from ? new Date(`${from}T00:00:00`) : null,
+  dateTo: to ? new Date(`${to}T23:59:59`) : null,
+});
+
 /**
- * Generate the Tally vouchers XML for the selected chalans and stamp the
- * export register (firm+key → content hash) so the next run skips them.
+ * Generate the Tally vouchers XML for the selected documents of one module
+ * and stamp the export register (firm+key → content hash) so the next run
+ * skips unchanged vouchers.
  */
-export async function runTallyChalanExport(
+export async function runTallyExport(
   input: unknown
 ): Promise<
   | { ok: true; xml: string; fileName: string; exported: number; skipped: number }
@@ -36,11 +45,13 @@ export async function runTallyChalanExport(
 
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const { docs } = await buildChalanVouchers(tx, session, {
-        dateFrom: data.dateFrom ? new Date(`${data.dateFrom}T00:00:00`) : null,
-        dateTo: data.dateTo ? new Date(`${data.dateTo}T23:59:59`) : null,
-      });
-      const wanted = docs.filter((d) => data.chalanIds.includes(d.chalanId));
+      const { docs } = await buildModuleDocs(
+        tx,
+        session,
+        data.module as TallyModule,
+        toRange(data.dateFrom, data.dateTo)
+      );
+      const wanted = docs.filter((d) => data.docIds.includes(d.id));
       const keys = wanted.flatMap((d) => d.vouchers.map((v) => v.key));
       const registry = new Map(
         (
@@ -50,7 +61,7 @@ export async function runTallyChalanExport(
         ).map((r) => [r.key, r.hash])
       );
 
-      const out: typeof wanted[number]["vouchers"] = [];
+      const out: (typeof wanted)[number]["vouchers"] = [];
       let skipped = 0;
       for (const d of wanted) {
         for (const v of d.vouchers) {
@@ -71,20 +82,21 @@ export async function runTallyChalanExport(
       if (out.length === 0) {
         return {
           ok: false as const,
-          error: "Sab kuch pehle se exported hai — naya kuch nahi mila. (Full re-export chahiye toh 'include already exported' tick karo.)",
+          error:
+            "Sab kuch pehle se exported hai — naya kuch nahi mila. (Full re-export chahiye toh 'include already exported' tick karo.)",
         };
       }
       await audit(tx, session, {
         entity: "TallyExport",
         entityId: session.firmId,
         action: "CREATE",
-        after: { module: "CHALAN", vouchers: out.length, skipped },
+        after: { module: data.module, vouchers: out.length, skipped },
       });
       const range = [data.dateFrom, data.dateTo].filter(Boolean).join("_to_") || "all";
       return {
         ok: true as const,
         xml: buildVouchersXml(out),
-        fileName: `tally-chalan-${range}.xml`,
+        fileName: `tally-${data.module.toLowerCase()}-${range}.xml`,
         exported: out.length,
         skipped,
       };
@@ -94,27 +106,31 @@ export async function runTallyChalanExport(
   }
 }
 
-/** Party ledger masters (brokers on the period's chalans) — first-time import. */
-export async function runTallyChalanMasters(
+/** Party ledger masters for the module's documents — first-time import. */
+export async function runTallyMasters(
   input: unknown
 ): Promise<{ ok: true; xml: string; fileName: string; count: number } | { ok: false; error: string }> {
   const session = requireSession();
   const parsed = z
-    .object({ dateFrom: z.string().nullish(), dateTo: z.string().nullish() })
+    .object({ module: moduleSchema, dateFrom: z.string().nullish(), dateTo: z.string().nullish() })
     .safeParse(input);
   if (!parsed.success) return { ok: false, error: "Invalid input" };
   await authorize(session, "reports", "view");
   try {
     return await withTenant(session.tenantId, async (tx) => {
-      const { masters } = await buildChalanVouchers(tx, session, {
-        dateFrom: parsed.data.dateFrom ? new Date(`${parsed.data.dateFrom}T00:00:00`) : null,
-        dateTo: parsed.data.dateTo ? new Date(`${parsed.data.dateTo}T23:59:59`) : null,
-      });
-      if (!masters.length) return { ok: false as const, error: "Is period mein koi broker nahi mila." };
+      const { masters } = await buildModuleDocs(
+        tx,
+        session,
+        parsed.data.module as TallyModule,
+        toRange(parsed.data.dateFrom, parsed.data.dateTo)
+      );
+      if (!masters.length) {
+        return { ok: false as const, error: "Is period mein koi party nahi mili." };
+      }
       return {
         ok: true as const,
         xml: buildMastersXml(masters),
-        fileName: "tally-party-masters.xml",
+        fileName: `tally-masters-${parsed.data.module.toLowerCase()}.xml`,
         count: masters.length,
       };
     });
