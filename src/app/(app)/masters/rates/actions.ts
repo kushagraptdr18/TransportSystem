@@ -14,7 +14,8 @@ const basis = z.nativeEnum(RateBasis);
 const schema = z.object({
   id: z.string().optional(),
   partyId: z.string().min(1, "Party is required"),
-  productId: z.string().nullable().optional(),
+  /** Every listed product shares this row's rate; empty = ALL products. */
+  productIds: z.array(z.string()).default([]),
   sourceCityId: z.string().min(1, "Source city is required"),
   destCityId: z.string().min(1, "Destination city is required"),
   rate: z.coerce.number().default(0),
@@ -40,7 +41,42 @@ export async function saveRate(input: unknown): Promise<ActionResult> {
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
       const { id: rowId, ...values } = data;
-      const payload = { ...values, productId: values.productId || null };
+      const productIds = Array.from(new Set(values.productIds.filter(Boolean)));
+
+      // one product must not carry two competing rates on the same party+route —
+      // block the save and point at the row that already owns it
+      const siblings = await tx.rateMaster.findMany({
+        where: {
+          partyId: values.partyId,
+          sourceCityId: values.sourceCityId,
+          destCityId: values.destCityId,
+          ...(rowId ? { id: { not: rowId } } : {}),
+        },
+      });
+      const rowProducts = (r: (typeof siblings)[number]) =>
+        r.productIds.length ? r.productIds : r.productId ? [r.productId] : [];
+      if (productIds.length) {
+        const clashing = new Set(
+          siblings.flatMap((s) => rowProducts(s).filter((p) => productIds.includes(p)))
+        );
+        if (clashing.size) {
+          const names = await tx.product.findMany({ where: { id: { in: Array.from(clashing) } } });
+          throw new Error(
+            `${names.map((p) => p.name).join(", ")} already has a rate for this party & route in another row — edit that row instead.`
+          );
+        }
+      } else if (siblings.some((s) => rowProducts(s).length === 0)) {
+        throw new Error(
+          "An ALL-products rate already exists for this party & route — edit that row instead."
+        );
+      }
+
+      const payload = {
+        ...values,
+        productIds,
+        // legacy single-product column stays in sync for old lookups/exports
+        productId: productIds.length === 1 ? productIds[0] : null,
+      };
       if (rowId) {
         const before = await tx.rateMaster.findUniqueOrThrow({ where: { id: rowId } });
         const row = await tx.rateMaster.update({ where: { id: rowId }, data: payload });
@@ -97,7 +133,9 @@ const BASIS_ALIASES: Record<string, RateBasis> = {
  * Import rates from an .xlsx file. Expected headers in row 1 (case-insensitive):
  * Party | Product | Source | Destination | Rate | Basis | Hamali | Pre Bhada |
  * D Charge | Stationery | Crossing. Party, Source, Destination, Rate required;
- * names are matched against master records — unknown names are reported, not created.
+ * names are matched against master records — unknown names are reported, not
+ * created. The Product cell may list several products (comma / slash / plus
+ * separated) — they land on ONE multi-product rate row.
  */
 export async function importRatesFromExcel(formData: FormData): Promise<RateImportResult> {
   const session = requireSession();
@@ -179,12 +217,19 @@ export async function importRatesFromExcel(formData: FormData): Promise<RateImpo
       const party = partyMap.get(partyName.toUpperCase());
       const source = cityMap.get(text(row, cSource).toUpperCase());
       const dest = cityMap.get(text(row, cDest).toUpperCase());
-      const productName = text(row, cProduct);
-      const product = productName ? productMap.get(productName.toUpperCase()) : undefined;
+      // one cell may carry several products — they share one rate row
+      const productNames = text(row, cProduct)
+        .split(/[,/+|]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
       if (!party) { errors.push(`Row ${i}: party "${partyName}" not found in masters.`); continue; }
       if (!source) { errors.push(`Row ${i}: source city "${text(row, cSource)}" not found.`); continue; }
       if (!dest) { errors.push(`Row ${i}: destination city "${text(row, cDest)}" not found.`); continue; }
-      if (productName && !product) { errors.push(`Row ${i}: product "${productName}" not found.`); continue; }
+      const missing = productNames.find((n) => !productMap.get(n.toUpperCase()));
+      if (missing) { errors.push(`Row ${i}: product "${missing}" not found.`); continue; }
+      const productIds = Array.from(
+        new Set(productNames.map((n) => productMap.get(n.toUpperCase())!.id))
+      );
 
       const basisText = text(row, cBasis).toUpperCase();
       const rateBasis = BASIS_ALIASES[basisText] ?? "CHARGE_WT";
@@ -198,26 +243,41 @@ export async function importRatesFromExcel(formData: FormData): Promise<RateImpo
         crossing: num(row, cCrossing),
       };
 
-      const existing = await tx.rateMaster.findFirst({
-        where: {
-          partyId: party.id,
-          productId: product?.id ?? null,
-          sourceCityId: source.id,
-          destCityId: dest.id,
-        },
+      const candidates = await tx.rateMaster.findMany({
+        where: { partyId: party.id, sourceCityId: source.id, destCityId: dest.id },
       });
+      const rowProducts = (r: (typeof candidates)[number]) =>
+        r.productIds.length ? r.productIds : r.productId ? [r.productId] : [];
+      const sameSet = (a: string[], b: string[]) =>
+        a.length === b.length && a.every((x) => b.includes(x));
+      const existing = candidates.find((c) => sameSet(rowProducts(c), productIds));
+      const persisted = {
+        ...values,
+        productIds,
+        productId: productIds.length === 1 ? productIds[0] : null,
+      };
       if (existing) {
-        await tx.rateMaster.update({ where: { id: existing.id }, data: values });
+        await tx.rateMaster.update({ where: { id: existing.id }, data: persisted });
         updated++;
       } else {
+        const clash = candidates.find((c) =>
+          productIds.length
+            ? rowProducts(c).some((p) => productIds.includes(p))
+            : rowProducts(c).length === 0
+        );
+        if (clash) {
+          errors.push(
+            `Row ${i}: some of these products already have a rate for this party & route in another row — fix it on the Rate Setup screen.`
+          );
+          continue;
+        }
         await tx.rateMaster.create({
           data: {
             tenantId: session.tenantId,
             partyId: party.id,
-            productId: product?.id ?? null,
             sourceCityId: source.id,
             destCityId: dest.id,
-            ...values,
+            ...persisted,
           },
         });
         created++;

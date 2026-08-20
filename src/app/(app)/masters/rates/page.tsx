@@ -42,8 +42,11 @@ export default async function RatesPage({
           id: r.id,
           partyId: r.partyId,
           partyName: partyById.get(r.partyId) ?? "",
-          productId: r.productId,
-          productName: (r.productId && productById.get(r.productId)) || "ALL",
+          // legacy single-product rows fold into the array view
+          productIds: r.productIds.length ? r.productIds : r.productId ? [r.productId] : [],
+          productNames: (r.productIds.length ? r.productIds : r.productId ? [r.productId] : [])
+            .map((id) => productById.get(id) ?? "?")
+            .sort(),
           sourceCityId: r.sourceCityId,
           sourceName: cityById.get(r.sourceCityId) ?? "",
           destCityId: r.destCityId,

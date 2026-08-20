@@ -27,6 +27,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { DataTable } from "@/components/data/data-table";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
 import { MasterCombobox, type MasterOption } from "@/components/data/master-combobox";
+import { MultiCombobox } from "@/components/data/multi-combobox";
 import { DateInput } from "@/components/data/date-input";
 import { ExportButton, type ExportColumn } from "@/components/data/export-button";
 import { ImportButton, type ImportConfig } from "@/components/data/import-button";
@@ -44,7 +45,7 @@ export interface CreateDialogProps {
 export interface FieldDef {
   name: string;
   label: string;
-  type: "text" | "number" | "textarea" | "switch" | "select" | "combobox" | "date" | "radio";
+  type: "text" | "number" | "textarea" | "switch" | "select" | "combobox" | "multicombobox" | "date" | "radio";
   options?: MasterOption[];
   placeholder?: string;
   /** Render field only when true. */
@@ -276,6 +277,16 @@ export function SimpleMaster<T>({
         );
         break;
       }
+      case "multicombobox":
+        control = (
+          <MultiCombobox
+            options={f.options ?? []}
+            values={Array.isArray(value) ? (value as string[]) : []}
+            onChange={(vals) => set(f.name, vals)}
+            placeholder={f.placeholder ?? "Select..."}
+          />
+        );
+        break;
       case "date":
         control = (
           <DateInput

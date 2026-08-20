@@ -519,6 +519,9 @@ model RateMaster {
   tenantId        String
   partyId         String
   productId       String?
+  /** Multi-product rate: every listed product shares this row's rate.
+      Empty + null productId = applies to ALL products (fallback). */
+  productIds      String[]  @default([])
   sourceCityId    String
   destCityId      String
   rate            Decimal   @default(0) @db.Decimal(12, 2)

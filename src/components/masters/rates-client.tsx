@@ -14,8 +14,9 @@ export interface RateRow {
   id: string;
   partyId: string;
   partyName: string;
-  productId: string | null;
-  productName: string;
+  /** all products sharing this rate row; empty = ALL products */
+  productIds: string[];
+  productNames: string[];
   sourceCityId: string;
   sourceName: string;
   destCityId: string;
@@ -45,7 +46,32 @@ const basisLabel = (b: string) => BASIS.find((x) => x.value === b)?.label ?? b;
 
 const columns: ColumnDef<RateRow, unknown>[] = [
   { accessorKey: "partyName", header: "Party" },
-  { accessorKey: "productName", header: "Product" },
+  {
+    accessorKey: "productNames",
+    header: "Products",
+    cell: ({ row }) => {
+      const names = row.original.productNames;
+      if (!names.length) return <span className="text-muted-foreground">ALL</span>;
+      const shown = names.slice(0, 3);
+      return (
+        <span className="flex flex-wrap items-center gap-1">
+          {shown.map((n) => (
+            <span
+              key={n}
+              className="rounded-md bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground"
+            >
+              {n}
+            </span>
+          ))}
+          {names.length > 3 && (
+            <span className="text-xs text-muted-foreground" title={names.join(", ")}>
+              +{names.length - 3} more
+            </span>
+          )}
+        </span>
+      );
+    },
+  },
   { accessorKey: "sourceName", header: "From" },
   { accessorKey: "destName", header: "To" },
   {
@@ -149,7 +175,7 @@ export function RatesClient({
           size="sm"
           disabled={importing}
           onClick={() => fileRef.current?.click()}
-          title="Excel with headers: Party, Product, Source, Destination, Rate, Basis, Hamali, Pre Bhada, D Charge, Stationery, Crossing"
+          title="Excel with headers: Party, Product, Source, Destination, Rate, Basis, Hamali, Pre Bhada, D Charge, Stationery, Crossing. Product cell mein comma se kai products ek saath likh sakte ho (PLATE, ANGLE, CHANNEL)"
         >
           <Upload className="h-4 w-4" />
           {importing ? "Importing..." : "Import from Excel"}
@@ -162,7 +188,7 @@ export function RatesClient({
       columns={columns}
       exportColumns={[
         { header: "Party", key: "partyName" },
-        { header: "Product", key: "productName" },
+        { header: "Products", accessor: (r) => r.productNames.join(", ") || "ALL" },
         { header: "From", key: "sourceName" },
         { header: "To", key: "destName" },
         { header: "Rate", key: "rate", numeric: true },
@@ -181,7 +207,14 @@ export function RatesClient({
       ]}
       fields={[
         { name: "partyId", label: "Party *", type: "combobox", options: partyOptions, span2: true },
-        { name: "productId", label: "Product (blank = all)", type: "combobox", options: productOptions, span2: true },
+        {
+          name: "productIds",
+          label: "Products (tick karke multiple chuno · blank = all)",
+          type: "multicombobox",
+          options: productOptions,
+          placeholder: "Type to search & tick products...",
+          span2: true,
+        },
         { name: "sourceCityId", label: "Source City *", type: "combobox", options: cityOptions },
         { name: "destCityId", label: "Destination City *", type: "combobox", options: cityOptions },
         ...amountWithBasis("rate", "Freight Rate", BASIS),
@@ -192,6 +225,7 @@ export function RatesClient({
         ...amountWithBasis("crossing", "Crossing", BASIS),
       ]}
       defaults={{
+        productIds: [],
         rate: 0,
         rateBasis: "CHARGE_WT",
         hamali: 0,

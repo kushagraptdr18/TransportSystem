@@ -240,15 +240,28 @@ export async function lookupRate(input: {
   destCityId: string;
 }) {
   const s = requireSession();
-  return withTenant(s.tenantId, (tx) =>
-    tx.rateMaster.findFirst({
-      where: {
-        partyId: input.partyId,
-        sourceCityId: input.sourceCityId,
-        destCityId: input.destCityId,
-        OR: [{ productId: input.productId ?? undefined }, { productId: null }],
-      },
-      orderBy: { productId: { sort: "desc", nulls: "last" } },
-    })
-  );
+  return withTenant(s.tenantId, async (tx) => {
+    const route = {
+      partyId: input.partyId,
+      sourceCityId: input.sourceCityId,
+      destCityId: input.destCityId,
+    };
+    // a rate row may list several products (productIds); the product-specific
+    // match wins, then the blank "ALL products" row
+    if (input.productId) {
+      const specific = await tx.rateMaster.findFirst({
+        where: {
+          ...route,
+          OR: [
+            { productIds: { has: input.productId } },
+            { productId: input.productId },
+          ],
+        },
+      });
+      if (specific) return specific;
+    }
+    return tx.rateMaster.findFirst({
+      where: { ...route, productId: null, productIds: { isEmpty: true } },
+    });
+  });
 }
