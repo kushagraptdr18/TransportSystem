@@ -37,8 +37,9 @@ export async function getPartyOptions(groups?: LedgerGroup[]): Promise<Option[]>
   return parties.map((p) => ({
     value: p.id,
     label: p.name,
-    // alias first: the combobox searches label+meta, so the short name matches
-    meta: [p.alias, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
+    // alias & transport name first: the combobox searches label+meta, so the
+    // short name or the transport's trade name both find the party
+    meta: [p.alias, p.transportName, p.gstin, p.pan].filter(Boolean).join(" · ") || undefined,
   }));
 }
 

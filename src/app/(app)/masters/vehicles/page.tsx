@@ -49,7 +49,14 @@ export default async function VehiclesPage({
         permitNo: r.permitNo,
         insuranceNo: r.insuranceNo,
       }))}
-      ownerOptions={owners.map((p) => ({ value: p.id, label: p.name, meta: p.pan ?? p.mobile ?? undefined }))}
+      // transport name & alias ride the meta so the search matches them too —
+      // "SHARMA ROADWAYS" finds the owner even when his ledger name differs
+      ownerOptions={owners.map((p) => ({
+        value: p.id,
+        label: p.name,
+        meta:
+          [p.transportName, p.alias, p.pan ?? p.mobile].filter(Boolean).join(" · ") || undefined,
+      }))}
       canDelete={canDelete}
     />
   );
