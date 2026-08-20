@@ -260,43 +260,82 @@ export async function buildChalanVouchers(
       }
     }
 
-    // ---- balance payment (only when marked PAID on the chalan itself)
+    // ---- balance payment (only when marked PAID on the chalan itself).
+    // The user's Tally style keeps the settlement SPLIT: the bank receipt,
+    // the shortage journal and the round-off journal are separate vouchers.
     if (c.paymentStatus === "PAID") {
       const paid = toNum(c.balPaidAmount);
       const ro = toNum(c.balRoundOff);
       const short = toNum(c.balShortage);
-      const settle = round2(paid + ro + short);
-      if (settle > 0.009 || (paid > 0.009 && settle > 0)) {
-        const lines: TallyVoucher["lines"] = [
-          {
-            ledger: brokerLedger,
-            amount: settle,
-            side: "DR",
-            bills: [{ name: refNo, type: "Agst Ref", amount: settle }],
-          },
-        ];
-        if (paid > 0.009) {
-          const payHead = c.balPaymentHeadId ? partyById.get(c.balPaymentHeadId) : null;
-          const payLedger = payHead
-            ? look("BANKCASH", payHead.id, payHead.tallyName?.trim() || payHead.name)
-            : C("cash", "CASH");
-          lines.push({ ledger: payLedger, amount: paid, side: "CR" });
-        }
-        if (short > 0.009) {
-          lines.push({ ledger: C("shortage", "SHORTAGE RECOVERY"), amount: short, side: "CR" });
-        }
-        if (ro > 0.009) {
-          lines.push({ ledger: C("round_off", "ROUND OFF"), amount: ro, side: "CR" });
-        } else if (ro < -0.009) {
-          // paid a little extra — round off is a debit, broker leg already nets it
-          lines.push({ ledger: C("round_off", "ROUND OFF"), amount: Math.abs(ro), side: "DR" });
-        }
+      const balDate = c.balPaymentDate ? tallyDate(c.balPaymentDate) : chDate;
+      const balTag = `Balance — ${tag}${c.balRemarks ? ` — ${c.balRemarks}` : ""}`;
+      if (paid > 0.009) {
+        const payHead = c.balPaymentHeadId ? partyById.get(c.balPaymentHeadId) : null;
+        const payLedger = payHead
+          ? look("BANKCASH", payHead.id, payHead.tallyName?.trim() || payHead.name)
+          : C("cash", "CASH");
         vouchers.push({
           key: `CHALAN:${c.id}:BAL`,
           type: "Receipt",
-          date: c.balPaymentDate ? tallyDate(c.balPaymentDate) : chDate,
+          date: balDate,
           narration: `Balance payment — ${tag}${c.balRemarks ? ` — ${c.balRemarks}` : ""}`,
-          lines,
+          lines: [
+            {
+              ledger: brokerLedger,
+              amount: paid,
+              side: "DR",
+              bills: [{ name: refNo, type: "Agst Ref", amount: paid }],
+            },
+            { ledger: payLedger, amount: paid, side: "CR" },
+          ],
+        });
+      }
+      if (short > 0.009) {
+        vouchers.push({
+          key: `CHALAN:${c.id}:BALSHORT`,
+          type: "Journal",
+          date: balDate,
+          narration: `Shortage on balance — ${balTag}`,
+          lines: [
+            {
+              ledger: brokerLedger,
+              amount: short,
+              side: "DR",
+              bills: [{ name: refNo, type: "Agst Ref", amount: short }],
+            },
+            { ledger: C("shortage", "SHORTAGE RECOVERY"), amount: short, side: "CR" },
+          ],
+        });
+      }
+      if (Math.abs(ro) > 0.009) {
+        const amt = round2(Math.abs(ro));
+        vouchers.push({
+          key: `CHALAN:${c.id}:BALRO`,
+          type: "Journal",
+          date: balDate,
+          narration: `Round off on balance — ${balTag}`,
+          lines:
+            ro > 0
+              ? [
+                  // knocked off the payable — broker debited, round-off income
+                  {
+                    ledger: brokerLedger,
+                    amount: amt,
+                    side: "DR",
+                    bills: [{ name: refNo, type: "Agst Ref", amount: amt }],
+                  },
+                  { ledger: C("round_off", "ROUND OFF"), amount: amt, side: "CR" },
+                ]
+              : [
+                  // paid a little extra — round-off expense, broker credited
+                  { ledger: C("round_off", "ROUND OFF"), amount: amt, side: "DR" },
+                  {
+                    ledger: brokerLedger,
+                    amount: amt,
+                    side: "CR",
+                    bills: [{ name: refNo, type: "Agst Ref", amount: amt }],
+                  },
+                ],
         });
       }
     }
