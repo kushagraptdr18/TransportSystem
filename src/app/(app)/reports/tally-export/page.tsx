@@ -72,12 +72,17 @@ export default async function TallyExportPage({
       </div>
       <p className="text-sm text-muted-foreground">
         Sirf Broker / Relative gaadiyon ke FINAL chalan (own gaadi ka chalan Tally mein nahi
-        jata). Download ke baad Tally Prime mein: <b>Alt+O → Import → Transactions</b>. Pehli
-        baar &quot;Party Masters&quot; bhi import kar lena. Har voucher ek hi baar jata hai —
-        badla hua chalan &quot;Changed&quot; dikhega aur dobara chala jayega.
+        jata). Period us chalan ki <b>kisi bhi entry</b> se match karta hai — chalan, advance ya
+        balance payment — taaki purane chalan ki nayi payment kabhi na chhoote. Download ke baad
+        Tally Prime mein: <b>Alt+O → Import → Transactions</b>. Pehli baar &quot;Party
+        Masters&quot; bhi import kar lena. Har voucher ek hi baar jata hai — badla hua chalan
+        &quot;Changed&quot; dikhega aur dobara chala jayega.
       </p>
-      <FilterBar filters={[{ type: "daterange", key: "date", label: "Chalan Date" }]} />
+      <FilterBar filters={[{ type: "daterange", key: "date", label: "Period (koi bhi entry)" }]} />
+      {/* key: a filter change remounts the client so the selection resets to
+          the fresh list's new/changed chalans instead of a stale set */}
       <TallyExportClient
+        key={`${searchParams.date_from ?? ""}:${searchParams.date_to ?? ""}`}
         rows={rows}
         dateFrom={searchParams.date_from ?? null}
         dateTo={searchParams.date_to ?? null}

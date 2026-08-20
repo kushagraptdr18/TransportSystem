@@ -42,6 +42,17 @@ export async function buildChalanVouchers(
   session: Session,
   opts: { dateFrom: Date | null; dateTo: Date | null }
 ): Promise<{ docs: ChalanVoucherDoc[]; masters: TallyLedgerMaster[] }> {
+  // the period matches ANY activity on the chalan — the chalan itself, an
+  // advance, or the balance payment. A July chalan whose balance was paid in
+  // August must surface in August's export, or its receipt never reaches
+  // Tally (the export register keeps re-listed chalans duplicate-safe).
+  const range =
+    opts.dateFrom || opts.dateTo
+      ? {
+          ...(opts.dateFrom ? { gte: opts.dateFrom } : {}),
+          ...(opts.dateTo ? { lte: opts.dateTo } : {}),
+        }
+      : null;
   const [chalans, parties, heads, mapRows] = await Promise.all([
     tx.chalan.findMany({
       where: {
@@ -50,12 +61,13 @@ export async function buildChalanVouchers(
         deletedAt: null,
         cancelledAt: null,
         isFinal: true, // drafts are not accounting yet
-        ...(opts.dateFrom || opts.dateTo
+        ...(range
           ? {
-              chalanDate: {
-                ...(opts.dateFrom ? { gte: opts.dateFrom } : {}),
-                ...(opts.dateTo ? { lte: opts.dateTo } : {}),
-              },
+              OR: [
+                { chalanDate: range },
+                { balPaymentDate: range },
+                { advances: { some: { date: range } } },
+              ],
             }
           : {}),
       },
