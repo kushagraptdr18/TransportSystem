@@ -11,17 +11,33 @@ import type { Tx } from "@/lib/db";
  * so it flips right back. (PROCESSING / PROBLEM are never touched.)
  */
 export async function syncDocumentStatuses(tx: Tx): Promise<void> {
-  const docs = await tx.vehicleDocument.findMany({
-    where: { expiryDate: { not: null }, status: "DONE" },
-    include: { docType: true },
+  // bound the scan to documents that can possibly be inside a window: the
+  // widest window is max(reminderDays) across types, so anything expiring
+  // later than now + that many days can never flip
+  const types = await tx.documentType.findMany({
+    where: { showReminder: true },
+    select: { id: true, reminderDays: true },
   });
+  if (!types.length) return;
+  const maxDays = Math.max(...types.map((t) => t.reminderDays ?? 30));
   const now = new Date();
+  const maxWindowEnd = new Date(now);
+  maxWindowEnd.setDate(maxWindowEnd.getDate() + maxDays);
+
+  const docs = await tx.vehicleDocument.findMany({
+    where: {
+      status: "DONE",
+      expiryDate: { not: null, lte: maxWindowEnd },
+      docTypeId: { in: types.map((t) => t.id) },
+    },
+    select: { id: true, docTypeId: true, expiryDate: true },
+  });
+  const daysByType = new Map(types.map((t) => [t.id, t.reminderDays ?? 30]));
   const toPending = docs
     .filter((d) => {
-      if (!d.docType.showReminder || !d.expiryDate) return false;
-      const reminderDays = d.docType.reminderDays ?? 30;
+      if (!d.expiryDate) return false;
       const windowEnd = new Date(now);
-      windowEnd.setDate(windowEnd.getDate() + reminderDays);
+      windowEnd.setDate(windowEnd.getDate() + (daysByType.get(d.docTypeId) ?? 30));
       return d.expiryDate <= windowEnd; // inside the window (or already expired)
     })
     .map((d) => d.id);
@@ -31,4 +47,18 @@ export async function syncDocumentStatuses(tx: Tx): Promise<void> {
       data: { status: "PENDING" },
     });
   }
+}
+
+// The dashboard used to run the sync on every view. Flips only matter at
+// day granularity (windows move at midnight), so once per interval per
+// tenant per server instance is plenty; the status board still syncs
+// unconditionally on its own page.
+const lastSyncAt = new Map<string, number>();
+const SYNC_INTERVAL_MS = 10 * 60 * 1000;
+
+export async function syncDocumentStatusesThrottled(tx: Tx, tenantId: string): Promise<void> {
+  const last = lastSyncAt.get(tenantId) ?? 0;
+  if (Date.now() - last < SYNC_INTERVAL_MS) return;
+  lastSyncAt.set(tenantId, Date.now());
+  await syncDocumentStatuses(tx);
 }

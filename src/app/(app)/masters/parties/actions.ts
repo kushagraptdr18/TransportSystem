@@ -1,11 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { LedgerGroup } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { runImport, num as importNum, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
+import { lookupTag } from "@/lib/cached-lookups";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { actionError, optStr, zodError, type ActionResult } from "../_lib/util";
@@ -99,6 +100,8 @@ export async function saveParty(input: unknown): Promise<ActionResult> {
       return row.id;
     });
     revalidatePath("/masters/parties");
+    revalidateTag(lookupTag.parties(session.tenantId));
+    revalidateTag(lookupTag.vehicles(session.tenantId));
     return { ok: true, id };
   } catch (e) {
     return actionError(e);
@@ -116,6 +119,8 @@ export async function deleteParty(id: string): Promise<ActionResult> {
       await audit(tx, session, { entity: "Party", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/masters/parties");
+    revalidateTag(lookupTag.parties(session.tenantId));
+    revalidateTag(lookupTag.vehicles(session.tenantId));
     return { ok: true, id };
   } catch (e) {
     return actionError(e);
@@ -127,7 +132,7 @@ export async function importParties(formData: FormData): Promise<ImportSummary> 
   const session = requireSession();
   await authorize(session, "masters", "create");
   const file = formData.get("file");
-  return withTenant(session.tenantId, async (tx) =>
+  const summary = await withTenant(session.tenantId, async (tx) =>
     runImport(file instanceof File ? file : null, ["NAME", "GROUP"], async (rec) => {
       const name = rec["NAME"].toUpperCase();
       if (!name) throw new Error("Party name is required");
@@ -177,4 +182,7 @@ export async function importParties(formData: FormData): Promise<ImportSummary> 
       return "created";
     })
   );
+  revalidateTag(lookupTag.parties(session.tenantId));
+  revalidateTag(lookupTag.vehicles(session.tenantId));
+  return summary;
 }

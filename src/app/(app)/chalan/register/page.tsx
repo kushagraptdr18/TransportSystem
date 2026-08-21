@@ -1,11 +1,15 @@
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
 import { invoiceSettlement, payableSettlement } from "@/lib/settlement";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { ChalanRegisterClient, type ChalanRegisterRow } from "./register-client";
 
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 100;
 
 export default async function ChalanRegisterPage({
   searchParams,
@@ -23,11 +27,20 @@ export default async function ChalanRegisterPage({
   // register entirely and live here until restored
   const view = searchParams.view === "CANCELLED" ? ("CANCELLED" as const) : ("ACTIVE" as const);
 
-  const [rows, brokers, vehicles, billStatusByChalan, payable] = await withTenant(
+  const page = parsePage(searchParams.page);
+  // the payment filter runs on the LIVE settled position computed after the
+  // query, so it cannot be pushed into SQL — with it set, the full filtered
+  // set is fetched and paged in memory instead of at the database
+  const dbPaged = !payment;
+
+  const [rows, totalCount, brokers, vehicles, billStatusByChalan, payable] = await withTenant(
     session.tenantId,
     async (tx) => {
     // ownership resolves to a vehicle-id list (it also covers vehicle type)
-    const allVehicles = await tx.vehicle.findMany({ orderBy: { number: "asc" } });
+    const allVehicles = await tx.vehicle.findMany({
+      orderBy: { number: "asc" },
+      select: { id: true, number: true, ownershipType: true, isActive: true },
+    });
     // the tab decides the ownership universe; the ownership filter can only
     // narrow WITHIN it (Own vs Relative on the OWNREL tab)
     const allowed = tab === "MARKET" ? ["BROKER"] : ["OWNER", "RELATIVE"];
@@ -36,9 +49,8 @@ export default async function ChalanRegisterPage({
       .filter((v) => effective.includes(v.ownershipType))
       .map((v) => v.id);
 
-    const chalans = await tx.chalan.findMany({
-      // date filter beats FY (FY continuity): dates set → any year's chalans
-      where: {
+    // date filter beats FY (FY continuity): dates set → any year's chalans
+    const where: Prisma.ChalanWhereInput = {
         firmId: session.firmId,
         ...(date_from || date_to ? {} : { fyId: session.fyId }),
         deletedAt: null,
@@ -65,15 +77,22 @@ export default async function ChalanRegisterPage({
           : shortage === "no"
             ? { lrs: { none: { lr: { pods: { some: { shortageWt: { gt: 0 } } } } } } }
             : {}),
-      },
-      include: {
-        lrs: { include: { lr: { include: { pods: true, invoiceLrs: { include: { invoice: true } } } } } },
-      },
-      orderBy: { chalanDate: "desc" },
-    });
+    };
+    const [chalans, totalCount] = await Promise.all([
+      tx.chalan.findMany({
+        where,
+        include: {
+          lrs: { include: { lr: { include: { pods: true, invoiceLrs: { include: { invoice: true } } } } } },
+        },
+        orderBy: { chalanDate: "desc" },
+        ...(dbPaged ? { take: PAGE_SIZE, skip: (page - 1) * PAGE_SIZE } : {}),
+      }),
+      tx.chalan.count({ where }),
+    ]);
     const brokers = await tx.party.findMany({
       where: { ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] }, isActive: true },
       orderBy: { name: "asc" },
+      select: { id: true, name: true },
     });
     const vehicles = allVehicles.filter((v) => v.isActive);
 
@@ -126,7 +145,7 @@ export default async function ChalanRegisterPage({
         ownAdvanceAdjusted: toNum(c.balAdvanceAdjusted),
       })),
     });
-    return [chalans, brokers, vehicles, billStatusByChalan, payable] as const;
+    return [chalans, totalCount, brokers, vehicles, billStatusByChalan, payable] as const;
     }
   );
 
@@ -166,22 +185,34 @@ export default async function ChalanRegisterPage({
     cancelReason: c.cancelReason ?? "",
   }));
 
-  const data =
+  const filtered =
     payment === "paid"
       ? mapped.filter((r) => r.paymentStatus === "PAID")
       : payment === "pending"
         ? // a cancelled chalan owes nothing, so it is neither paid nor pending
           mapped.filter((r) => r.paymentStatus !== "PAID" && !r.cancelled)
         : mapped;
+  const total = dbPaged ? totalCount : filtered.length;
+  // dbPaged → rows are already the page slice; otherwise slice the filtered set
+  const data = dbPaged ? filtered : filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   return (
-    <ChalanRegisterClient
-      rows={data}
-      mode={tab}
-      view={view}
-      brokers={brokers.map((b) => ({ value: b.id, label: b.name }))}
-      vehicles={vehicles.map((v) => ({ value: v.id, label: v.number }))}
-      canDelete={session.role === "ADMIN" || session.role === "OWNER"}
-    />
+    <div className="space-y-4">
+      <ChalanRegisterClient
+        rows={data}
+        mode={tab}
+        view={view}
+        brokers={brokers.map((b) => ({ value: b.id, label: b.name }))}
+        vehicles={vehicles.map((v) => ({ value: v.id, label: v.number }))}
+        canDelete={session.role === "ADMIN" || session.role === "OWNER"}
+      />
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/chalan/register"
+        searchParams={searchParams}
+      />
+    </div>
   );
 }

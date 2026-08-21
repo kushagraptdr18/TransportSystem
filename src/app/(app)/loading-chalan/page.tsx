@@ -4,39 +4,71 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, toNum } from "@/lib/utils";
 import { DocModule } from "@/components/data/doc-module";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { saveLoadingChalan, deleteLoadingChalan } from "./actions";
+
+const PAGE_SIZE = 100;
 
 export const dynamic = "force-dynamic";
 
 export default async function LoadingChalanPage({
   searchParams,
 }: {
-  searchParams: { date_from?: string; date_to?: string; vehicle?: string };
+  searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
   await authorize(session, "loading", "view");
 
-  const { rows, vehicles, brokers, cities } = await withTenant(session.tenantId, async (tx) => {
-    const where: Prisma.LoadingChalanWhereInput = {
-      firmId: session.firmId,
-      fyId: session.fyId,
-      deletedAt: null,
-    };
-    if (searchParams.vehicle) where.vehicleId = searchParams.vehicle;
-    if (searchParams.date_from || searchParams.date_to) {
-      where.chalanDate = {
-        ...(searchParams.date_from ? { gte: new Date(searchParams.date_from + "T00:00:00") } : {}),
-        ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
+  const page = parsePage(searchParams.page);
+  const { rows, total, totals, vehicles, brokers, cities } = await withTenant(
+    session.tenantId,
+    async (tx) => {
+      const where: Prisma.LoadingChalanWhereInput = {
+        firmId: session.firmId,
+        fyId: session.fyId,
+        deletedAt: null,
       };
+      if (searchParams.vehicle) where.vehicleId = searchParams.vehicle;
+      if (searchParams.date_from || searchParams.date_to) {
+        where.chalanDate = {
+          ...(searchParams.date_from ? { gte: new Date(searchParams.date_from + "T00:00:00") } : {}),
+          ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
+        };
+      }
+      const [rows, total, agg, vehicles, brokers, cities] = await Promise.all([
+        tx.loadingChalan.findMany({
+          where,
+          orderBy: [{ chalanDate: "desc" }, { chalanNo: "desc" }],
+          take: PAGE_SIZE,
+          skip: (page - 1) * PAGE_SIZE,
+        }),
+        tx.loadingChalan.count({ where }),
+        // footer totals over the FULL filtered set — the table only gets one page
+        tx.loadingChalan.aggregate({
+          where,
+          _sum: { totFreight: true, truckFreight: true, advance: true, netAmount: true },
+        }),
+        tx.vehicle.findMany({
+          where: { isActive: true },
+          orderBy: { number: "asc" },
+          select: { id: true, number: true },
+        }),
+        tx.party.findMany({
+          where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } },
+          orderBy: { name: "asc" },
+          select: { id: true, name: true },
+        }),
+        tx.city.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
+      ]);
+      const totals = {
+        totFreight: toNum(agg._sum.totFreight),
+        truckFreight: toNum(agg._sum.truckFreight),
+        advance: toNum(agg._sum.advance),
+        netAmount: toNum(agg._sum.netAmount),
+      };
+      return { rows, total, totals, vehicles, brokers, cities };
     }
-    const [rows, vehicles, brokers, cities] = await Promise.all([
-      tx.loadingChalan.findMany({ where, orderBy: [{ chalanDate: "desc" }, { chalanNo: "desc" }] }),
-      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
-      tx.party.findMany({ where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } }, orderBy: { name: "asc" } }),
-      tx.city.findMany({ orderBy: { name: "asc" } }),
-    ]);
-    return { rows, vehicles, brokers, cities };
-  });
+  );
 
   const vehicleById = new Map(vehicles.map((v) => [v.id, v.number]));
   const cityById = new Map(cities.map((c) => [c.id, c.name]));
@@ -46,7 +78,8 @@ export default async function LoadingChalanPage({
   const n = (v: unknown) => toNum(String(v));
 
   return (
-    <DocModule
+    <>
+      <DocModule
       title="Loading Challan"
       exportName="loading-chalans"
       canDelete={session.role === "ADMIN" || session.role === "OWNER"}
@@ -136,6 +169,17 @@ export default async function LoadingChalanPage({
         "cfCharge",
         "totCrossing",
       ]}
-    />
+      totals={totals}
+      />
+      <div className="px-4 pb-4">
+        <PaginationBar
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={total}
+          basePath="/loading-chalan"
+          searchParams={searchParams}
+        />
+      </div>
+    </>
   );
 }

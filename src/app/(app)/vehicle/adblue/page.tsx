@@ -4,25 +4,37 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
 import { AdblueClient, type AdblueRow } from "@/components/vehicle/adblue-client";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { settledByRef } from "@/lib/settlement";
+
+const PAGE_SIZE = 100;
+
+/** search-param value → derived row status it selects */
+const STATUS_FILTER: Record<string, string> = {
+  PENDING: "PENDING BILL",
+  BILLED: "BILL UPDATED",
+  PARTLY: "PARTLY PAID",
+  PAID: "PAID",
+};
 
 export const dynamic = "force-dynamic";
 
 export default async function AdbluePage({
   searchParams,
 }: {
-  searchParams: {
-    type?: string;
-    vehicle?: string;
-    status?: string;
-    date_from?: string;
-    date_to?: string;
-  };
+  searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
   await authorize(session, "maintenance", "view");
 
-  const { txns, allTxns, vehicles, banks, suppliers, settled } = await withTenant(
+  const page = parsePage(searchParams.page);
+  // status is derived per-row from settlement data (payment vouchers), so it
+  // cannot be pushed into the SQL where. With a status filter active we must
+  // fetch the whole filtered set anyway and paginate in memory; without one
+  // the DB does take/skip.
+  const wanted = searchParams.status ? STATUS_FILTER[searchParams.status] : null;
+
+  const { txns, dbTotal, allTxns, vehicles, banks, suppliers, settled } = await withTenant(
     session.tenantId,
     async (tx) => {
     // stock is a LIFETIME figure (FY continuity): 31 March's closing IS
@@ -46,17 +58,25 @@ export default async function AdbluePage({
         ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
       };
     }
-    const [txns, allTxns, vehicles, banks, suppliers] = await Promise.all([
-      tx.adblueTxn.findMany({ where, orderBy: [{ date: "desc" }, { createdAt: "desc" }] }),
+    const [txns, dbTotal, allTxns, vehicles, banks, suppliers] = await Promise.all([
+      tx.adblueTxn.findMany({
+        where,
+        orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+        // status filter needs every row's settlement state — paginate later
+        ...(wanted ? {} : { take: PAGE_SIZE, skip: (page - 1) * PAGE_SIZE }),
+      }),
+      tx.adblueTxn.count({ where }),
       tx.adblueTxn.groupBy({ by: ["type"], where: lifetime, _sum: { qty: true } }),
-      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
+      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" }, select: { id: true, number: true } }),
       tx.party.findMany({
         where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
         orderBy: { name: "asc" },
+        select: { id: true, name: true, ledgerGroup: true },
       }),
       tx.party.findMany({
         where: { isActive: true, ledgerGroup: { notIn: ["BANK", "CASH", "CARD"] } },
         orderBy: { name: "asc" },
+        select: { id: true, name: true },
       }),
     ]);
     // what payment vouchers have already settled against these bills
@@ -66,7 +86,7 @@ export default async function AdbluePage({
       refTypes: ["ADBLUE_PURCHASE"],
       refIds: txns.map((t) => t.id),
     });
-      return { txns, allTxns, vehicles, banks, suppliers, settled };
+      return { txns, dbTotal, allTxns, vehicles, banks, suppliers, settled };
     }
   );
 
@@ -122,14 +142,10 @@ export default async function AdbluePage({
         : null,
   }));
 
-  const STATUS_FILTER: Record<string, string> = {
-    PENDING: "PENDING BILL",
-    BILLED: "BILL UPDATED",
-    PARTLY: "PARTLY PAID",
-    PAID: "PAID",
-  };
-  const wanted = searchParams.status ? STATUS_FILTER[searchParams.status] : null;
-  const visible = wanted ? rows.filter((r) => r.status === wanted) : rows;
+  const filtered = wanted ? rows.filter((r) => r.status === wanted) : rows;
+  // without a status filter the DB already returned one page; with one, slice here
+  const total = wanted ? filtered.length : dbTotal;
+  const visible = wanted ? filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : filtered;
 
   return (
     <div className="space-y-4 p-4">
@@ -144,6 +160,13 @@ export default async function AdbluePage({
         bankOptions={banks.map((b) => ({ value: b.id, label: b.name, meta: b.ledgerGroup }))}
         partyOptions={suppliers.map((p) => ({ value: p.id, label: p.name }))}
         canDelete={session.role === "ADMIN" || session.role === "OWNER"}
+      />
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/vehicle/adblue"
+        searchParams={searchParams}
       />
     </div>
   );

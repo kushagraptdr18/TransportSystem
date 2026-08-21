@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Prisma } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
@@ -6,11 +7,15 @@ import { round2 } from "@/lib/calc/tds";
 import { payableSettlement } from "@/lib/settlement";
 import { Button } from "@/components/ui/button";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { BrokerRegisterTable, type BrokerRegisterRow } from "@/components/broker/register-table";
 
 export const dynamic = "force-dynamic";
 
+const PAGE_SIZE = 100;
+
 interface SearchParams {
+  [key: string]: string | undefined;
   date_from?: string;
   date_to?: string;
   q?: string; // slip no search
@@ -20,6 +25,7 @@ interface SearchParams {
   pod?: string; // yes | no
   pstatus?: string; // received | pending
   vstatus?: string; // paid | pending
+  page?: string;
 }
 
 export default async function BrokerRegisterPage({
@@ -30,11 +36,17 @@ export default async function BrokerRegisterPage({
   const session = requireSession();
   await authorize(session, "broker", "view");
 
-  const { rows, vPos, vehicles, brokers, cityById, partyById, vehicleById, userById } = await withTenant(
+  const page = parsePage(searchParams.page);
+  // vstatus filters on the LIVE settled position computed after the query, so
+  // it cannot be pushed into SQL — with vstatus set, the full filtered set is
+  // fetched and paged in memory instead of at the database
+  const dbPaged = !searchParams.vstatus;
+
+  const { rows, totalCount, vPos, vehicles, brokers, cityById, partyById, vehicleById, userById } = await withTenant(
     session.tenantId,
     async (tx) => {
       // date filter beats FY (FY continuity): dates set → any year's slips
-      const where: Record<string, unknown> = {
+      const where: Prisma.BrokerSlipWhereInput = {
         firmId: session.firmId,
         ...(searchParams.date_from || searchParams.date_to ? {} : { fyId: session.fyId }),
         deletedAt: null,
@@ -66,11 +78,24 @@ export default async function BrokerRegisterPage({
         }
       }
 
-      const [slips, vehicleRows, partyRows, cityRows, userRows] = await Promise.all([
-        tx.brokerSlip.findMany({ where, orderBy: [{ slipDate: "desc" }, { slipNo: "desc" }] }),
-        tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
-        tx.party.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
-        tx.city.findMany(),
+      const [slips, totalCount, vehicleRows, partyRows, cityRows, userRows] = await Promise.all([
+        tx.brokerSlip.findMany({
+          where,
+          orderBy: [{ slipDate: "desc" }, { slipNo: "desc" }],
+          ...(dbPaged ? { take: PAGE_SIZE, skip: (page - 1) * PAGE_SIZE } : {}),
+        }),
+        tx.brokerSlip.count({ where }),
+        tx.vehicle.findMany({
+          where: { isActive: true },
+          orderBy: { number: "asc" },
+          select: { id: true, number: true },
+        }),
+        tx.party.findMany({
+          where: { isActive: true },
+          orderBy: { name: "asc" },
+          select: { id: true, name: true, ledgerGroup: true },
+        }),
+        tx.city.findMany({ select: { id: true, name: true } }),
         tx.user.findMany({ select: { id: true, name: true } }),
       ]);
 
@@ -92,6 +117,7 @@ export default async function BrokerRegisterPage({
 
       return {
         rows: slips,
+        totalCount,
         vPos,
         vehicles: vehicleRows,
         brokers: partyRows.filter((p) => p.ledgerGroup === "OWNER_BROKER" || p.ledgerGroup === "RELATIVE"),
@@ -143,11 +169,14 @@ export default async function BrokerRegisterPage({
     createdBy: (s.createdById && userById.get(s.createdById)) || "",
   }));
   // owner-balance filter runs on the LIVE position computed above
-  const data = searchParams.vstatus
+  const filtered = searchParams.vstatus
     ? allRows.filter((r) =>
         searchParams.vstatus === "paid" ? r.vBalance <= 0.009 : r.vBalance > 0.009
       )
     : allRows;
+  const total = dbPaged ? totalCount : filtered.length;
+  // dbPaged → rows are already the page slice; otherwise slice the filtered set
+  const data = dbPaged ? filtered : filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const filters: FilterDef[] = [
     { type: "text", key: "q", label: "Slip No..." },
@@ -215,6 +244,13 @@ export default async function BrokerRegisterPage({
       <FilterBar filters={filters} />
       {/* balance receipt / payment moved into the slip itself */}
       <BrokerRegisterTable data={data} canDelete={canDelete} />
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/broker/register"
+        searchParams={searchParams}
+      />
     </div>
   );
 }

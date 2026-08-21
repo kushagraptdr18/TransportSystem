@@ -4,19 +4,23 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, toNum } from "@/lib/utils";
 import { DocModule } from "@/components/data/doc-module";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { saveDelivery, deleteDelivery } from "./actions";
+
+const PAGE_SIZE = 100;
 
 export const dynamic = "force-dynamic";
 
 export default async function DeliveryPage({
   searchParams,
 }: {
-  searchParams: { date_from?: string; date_to?: string; party?: string; type?: string };
+  searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
   await authorize(session, "delivery", "view");
 
-  const { rows, parties, vehicles } = await withTenant(session.tenantId, async (tx) => {
+  const page = parsePage(searchParams.page);
+  const { rows, total, totals, parties, vehicles } = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.DeliveryWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
@@ -32,12 +36,36 @@ export default async function DeliveryPage({
         ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
       };
     }
-    const [rows, parties, vehicles] = await Promise.all([
-      tx.delivery.findMany({ where, orderBy: [{ delDate: "desc" }, { delNo: "desc" }] }),
-      tx.party.findMany({ where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" }, orderBy: { name: "asc" } }),
-      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
+    const [rows, total, agg, parties, vehicles] = await Promise.all([
+      tx.delivery.findMany({
+        where,
+        orderBy: [{ delDate: "desc" }, { delNo: "desc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
+      }),
+      tx.delivery.count({ where }),
+      // footer totals over the FULL filtered set — the table only gets one page
+      tx.delivery.aggregate({
+        where,
+        _sum: { freight: true, deliveryCharges: true, total: true },
+      }),
+      tx.party.findMany({
+        where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      }),
+      tx.vehicle.findMany({
+        where: { isActive: true },
+        orderBy: { number: "asc" },
+        select: { id: true, number: true },
+      }),
     ]);
-    return { rows, parties, vehicles };
+    const totals = {
+      freight: toNum(agg._sum.freight),
+      deliveryCharges: toNum(agg._sum.deliveryCharges),
+      total: toNum(agg._sum.total),
+    };
+    return { rows, total, totals, parties, vehicles };
   });
 
   const partyById = new Map(parties.map((p) => [p.id, p.name]));
@@ -47,7 +75,8 @@ export default async function DeliveryPage({
   const n = (v: unknown) => toNum(String(v));
 
   return (
-    <DocModule
+    <>
+      <DocModule
       title="Delivery (Gate Pass / Cash Memo)"
       newLabel="New Delivery"
       exportName="deliveries"
@@ -166,6 +195,17 @@ export default async function DeliveryPage({
         "aoc",
         "damrage",
       ]}
-    />
+      totals={totals}
+      />
+      <div className="px-4 pb-4">
+        <PaginationBar
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={total}
+          basePath="/delivery"
+          searchParams={searchParams}
+        />
+      </div>
+    </>
   );
 }

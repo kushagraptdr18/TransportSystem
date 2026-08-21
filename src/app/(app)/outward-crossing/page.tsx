@@ -4,19 +4,23 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, toNum } from "@/lib/utils";
 import { DocModule } from "@/components/data/doc-module";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { saveOutwardCrossing, deleteOutwardCrossing } from "./actions";
+
+const PAGE_SIZE = 100;
 
 export const dynamic = "force-dynamic";
 
 export default async function OutwardCrossingPage({
   searchParams,
 }: {
-  searchParams: { date_from?: string; date_to?: string; transporter?: string };
+  searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
   await authorize(session, "crossing", "view");
 
-  const { rows, transporters, vehicles, cities } = await withTenant(session.tenantId, async (tx) => {
+  const page = parsePage(searchParams.page);
+  const { rows, total, totalsAgg, transporters, vehicles, cities } = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.OutwardCrossingWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
@@ -29,13 +33,25 @@ export default async function OutwardCrossingPage({
         ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
       };
     }
-    const [rows, transporters, vehicles, cities] = await Promise.all([
-      tx.outwardCrossing.findMany({ where, orderBy: [{ chalanDate: "desc" }, { ocNo: "desc" }] }),
-      tx.party.findMany({ where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } }, orderBy: { name: "asc" } }),
-      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
-      tx.city.findMany({ orderBy: { name: "asc" } }),
+    const [rows, total, totalsAgg, transporters, vehicles, cities] = await Promise.all([
+      tx.outwardCrossing.findMany({
+        where,
+        orderBy: [{ chalanDate: "desc" }, { ocNo: "desc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
+      }),
+      tx.outwardCrossing.count({ where }),
+      // register-wide money totals over the FULL filtered set — the table
+      // only receives one page of rows, so it cannot compute these itself
+      tx.outwardCrossing.aggregate({
+        where,
+        _sum: { totFreight: true, crossingFreight: true, grandTotal: true },
+      }),
+      tx.party.findMany({ where: { isActive: true, ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" }, select: { id: true, number: true } }),
+      tx.city.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
     ]);
-    return { rows, transporters, vehicles, cities };
+    return { rows, total, totalsAgg, transporters, vehicles, cities };
   });
 
   const partyById = new Map(transporters.map((p) => [p.id, p.name]));
@@ -44,6 +60,7 @@ export default async function OutwardCrossingPage({
   const n = (v: unknown) => toNum(String(v));
 
   return (
+    <>
     <DocModule
       title="Outward Crossing"
       exportName="outward-crossings"
@@ -144,6 +161,21 @@ export default async function OutwardCrossingPage({
       ]}
       defaults={{ ocNo: "", chalanDate: formatDate(new Date()), lrType: "TO_PAY" }}
       numericFields={["totalQty", "totalWt", "totFreight", "crossingFreight"]}
+      totals={{
+        totFreight: n(totalsAgg._sum.totFreight),
+        crossingFreight: n(totalsAgg._sum.crossingFreight),
+        grandTotal: n(totalsAgg._sum.grandTotal),
+      }}
     />
+    <div className="px-4 pb-4">
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/outward-crossing"
+        searchParams={searchParams}
+      />
+    </div>
+    </>
   );
 }

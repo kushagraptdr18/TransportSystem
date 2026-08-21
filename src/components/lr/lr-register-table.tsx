@@ -69,12 +69,22 @@ function sum(rows: LrRegisterRow[], key: keyof LrRegisterRow): number {
   return rows.reduce((s, r) => s + Number(r[key] ?? 0), 0);
 }
 
+export interface LrRegisterTotals {
+  count: number;
+  actualWt: number;
+  chargeWt: number;
+  freight: number;
+}
+
 export function LrRegisterTable({
   rows,
   canDelete,
+  totals,
 }: {
   rows: LrRegisterRow[];
   canDelete: boolean;
+  /** register-wide totals over the FULL filtered set (rows may be one page) */
+  totals?: LrRegisterTotals;
 }) {
   const router = useRouter();
   const { toast } = useToast();
@@ -286,10 +296,16 @@ export function LrRegisterTable({
   };
 
   const summary = [
-    { label: "Total LR", value: rows.length },
-    { label: "Total Actual Weight", value: `${sum(rows, "actualWt").toFixed(3)} MT` },
-    { label: "Total Charge Weight", value: `${sum(rows, "chargeWt").toFixed(3)} MT` },
-    { label: "Total Freight", value: formatMoney(sum(rows, "freight")) },
+    { label: "Total LR", value: totals?.count ?? rows.length },
+    {
+      label: "Total Actual Weight",
+      value: `${(totals?.actualWt ?? sum(rows, "actualWt")).toFixed(3)} MT`,
+    },
+    {
+      label: "Total Charge Weight",
+      value: `${(totals?.chargeWt ?? sum(rows, "chargeWt")).toFixed(3)} MT`,
+    },
+    { label: "Total Freight", value: formatMoney(totals?.freight ?? sum(rows, "freight")) },
   ];
 
   return (

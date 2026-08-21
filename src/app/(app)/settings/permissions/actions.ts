@@ -1,10 +1,11 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { Role } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
+import { permsTag } from "@/lib/cached-auth";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { EDITABLE_ROLES, MODULES } from "@/lib/permissions";
@@ -104,6 +105,7 @@ export async function saveRolePermissions(input: unknown): Promise<ActionResult>
       });
     });
     revalidatePath("/settings/permissions");
+    revalidateTag(permsTag(session.tenantId));
     return { ok: true, id: data.role };
   } catch (e) {
     return actionError(e);
@@ -132,6 +134,7 @@ export async function resetRolePermissions(role: Role): Promise<ActionResult> {
       });
     });
     revalidatePath("/settings/permissions");
+    revalidateTag(permsTag(session.tenantId));
     return { ok: true, id: role };
   } catch (e) {
     return actionError(e);

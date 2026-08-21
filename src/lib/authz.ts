@@ -1,5 +1,5 @@
 import { Session } from "./session";
-import { withTenant } from "./db";
+import { getPermissionRow } from "./cached-auth";
 import { ROLE_DEFAULTS, type Action } from "./permissions";
 
 export type { Action };
@@ -21,18 +21,9 @@ export async function authorize(
 ): Promise<void> {
   if (session.role === "OWNER") return;
 
-  const { override, roleRow } = await withTenant(session.tenantId, async (tx) => ({
-    override: await tx.userPermission.findUnique({
-      where: { userId_module: { userId: session.userId, module } },
-    }),
-    roleRow: await tx.rolePermission.findUnique({
-      where: {
-        tenantId_role_module: { tenantId: session.tenantId, role: session.role, module },
-      },
-    }),
-  }));
-
-  const row = override ?? roleRow;
+  // cached (5 min TTL + tag revalidated by the permission screens) — this
+  // used to be its own DB transaction on every authorized page view
+  const row = await getPermissionRow(session.tenantId, session.userId, session.role, module);
   let allowed: boolean;
   if (row) {
     const map: Record<Action, boolean> = {

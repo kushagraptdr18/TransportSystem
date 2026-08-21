@@ -4,10 +4,13 @@ import { withTenant } from "@/lib/db";
 import { getVehicleOptions } from "@/lib/lookups";
 import { toNum } from "@/lib/utils";
 import { FilterBar } from "@/components/data/filter-bar";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { PodRegisterTable, type PodRegisterRow } from "@/components/pod/pod-register-table";
-import type { PodSourceType } from "@prisma/client";
+import type { Prisma, PodSourceType } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
+
+const PAGE_SIZE = 100;
 
 const SOURCE_TYPES = [
   "BOOKING",
@@ -32,44 +35,54 @@ export default async function PodRegisterPage({
     ? (searchParams.sourceType as PodSourceType)
     : undefined;
   const vehicleId = searchParams.vehicle;
+  const page = parsePage(searchParams.page);
 
-  const [pods, vehicleOptions] = await Promise.all([
+  const [{ pods, total }, vehicleOptions] = await Promise.all([
     withTenant(session.tenantId, async (tx) => {
-      const rows = await tx.pod.findMany({
-        // date filter beats FY (FY continuity): dates set → any year's PODs
-        where: {
-          firmId: session.firmId,
-          ...(dateFrom || dateTo
-            ? { docDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
-            : { fyId: session.fyId }),
-          // Pending  = the LR's chalan is still awaiting balance payment
-          // Completed = POD done AND the chalan's balance payment is finalized
-          ...(status === "PENDING"
+      // date filter beats FY (FY continuity): dates set → any year's PODs
+      const where: Prisma.PodWhereInput = {
+        firmId: session.firmId,
+        ...(dateFrom || dateTo
+          ? { docDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
+          : { fyId: session.fyId }),
+        // Pending  = the LR's chalan is still awaiting balance payment
+        // Completed = POD done AND the chalan's balance payment is finalized
+        ...(status === "PENDING"
+          ? {
+              lr: {
+                chalanLrs: {
+                  some: { chalan: { deletedAt: null, paymentStatus: { not: "PAID" } } },
+                },
+              },
+            }
+          : status === "COMPLETED"
             ? {
+                status: "COMPLETED",
                 lr: {
-                  chalanLrs: {
-                    some: { chalan: { deletedAt: null, paymentStatus: { not: "PAID" } } },
-                  },
+                  chalanLrs: { some: { chalan: { deletedAt: null, paymentStatus: "PAID" } } },
                 },
               }
-            : status === "COMPLETED"
-              ? {
-                  status: "COMPLETED",
-                  lr: {
-                    chalanLrs: { some: { chalan: { deletedAt: null, paymentStatus: "PAID" } } },
-                  },
-                }
-              : {}),
-          ...(sourceType ? { sourceType } : {}),
-          ...(vehicleId ? { vehicleId } : {}),
-        },
-        include: { lr: { include: { chalanLrs: { include: { chalan: true } } } } },
-        orderBy: { docDate: "desc" },
-      });
+            : {}),
+        ...(sourceType ? { sourceType } : {}),
+        ...(vehicleId ? { vehicleId } : {}),
+      };
+      const [rows, total] = await Promise.all([
+        tx.pod.findMany({
+          where,
+          include: { lr: { include: { chalanLrs: { include: { chalan: true } } } } },
+          orderBy: { docDate: "desc" },
+          take: PAGE_SIZE,
+          skip: (page - 1) * PAGE_SIZE,
+        }),
+        tx.pod.count({ where }),
+      ]);
       const vehicleIds = Array.from(new Set(rows.map((r) => r.vehicleId).filter(Boolean))) as string[];
-      const vehicles = await tx.vehicle.findMany({ where: { id: { in: vehicleIds } } });
+      const vehicles = await tx.vehicle.findMany({
+        where: { id: { in: vehicleIds } },
+        select: { id: true, number: true },
+      });
       const vmap = new Map(vehicles.map((v) => [v.id, v.number]));
-      return rows.map(
+      const mapped = rows.map(
         (p): PodRegisterRow => ({
           id: p.id,
           docNo: p.docNo,
@@ -92,6 +105,7 @@ export default async function PodRegisterPage({
           remarks: p.remarks ?? "",
         })
       );
+      return { pods: mapped, total };
     }),
     getVehicleOptions(),
   ]);
@@ -126,6 +140,13 @@ export default async function PodRegisterPage({
         ]}
       />
       <PodRegisterTable rows={pods} canDelete={session.role === "ADMIN" || session.role === "OWNER"} />
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/pod/register"
+        searchParams={searchParams}
+      />
     </div>
   );
 }

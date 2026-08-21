@@ -7,6 +7,7 @@ import { toNum } from "@/lib/utils";
 import { invoiceSettlement } from "@/lib/settlement";
 import { Button } from "@/components/ui/button";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import {
   BillingRegisterTable,
   type BillingRegisterRow,
@@ -16,12 +17,16 @@ export const dynamic = "force-dynamic";
 
 const KINDS: InvoiceKind[] = ["PART_TRUCK", "FULL_TRUCK", "MANUAL", "GST"];
 
+const PAGE_SIZE = 100;
+
 interface SearchParams {
+  [key: string]: string | undefined;
   date_from?: string;
   date_to?: string;
   kind?: string;
   party?: string;
   q?: string;
+  page?: string;
 }
 
 export default async function BillingRegisterPage({
@@ -32,7 +37,8 @@ export default async function BillingRegisterPage({
   const session = requireSession();
   await authorize(session, "billing", "view");
 
-  const { rows, parties, settle } = await withTenant(session.tenantId, async (tx) => {
+  const page = parsePage(searchParams.page);
+  const { rows, total, parties, settle } = await withTenant(session.tenantId, async (tx) => {
     // date filter beats FY (FY continuity): dates set → any year's bills
     const where: Prisma.InvoiceWhereInput = {
       firmId: session.firmId,
@@ -51,15 +57,19 @@ export default async function BillingRegisterPage({
     if (searchParams.party) where.partyId = searchParams.party;
     if (searchParams.q) where.invoiceNo = { contains: searchParams.q, mode: "insensitive" };
 
-    const [invoices, partyRows] = await Promise.all([
+    const [invoices, total, partyRows] = await Promise.all([
       tx.invoice.findMany({
         where,
         include: { _count: { select: { lrs: true } } },
         orderBy: [{ invoiceDate: "desc" }, { invoiceNo: "desc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
       }),
+      tx.invoice.count({ where }),
       tx.party.findMany({
         where: { isActive: true, ledgerGroup: "CONSIGNEE_CONSIGNOR" },
         orderBy: { name: "asc" },
+        select: { id: true, name: true },
       }),
     ]);
     // live settled position — the stored `balance` column is frozen at
@@ -70,7 +80,7 @@ export default async function BillingRegisterPage({
       fyId: session.fyId,
       invoices,
     });
-    return { rows: invoices, parties: partyRows, settle };
+    return { rows: invoices, total, parties: partyRows, settle };
   });
 
   const partyById = new Map(parties.map((p) => [p.id, p.name]));
@@ -134,6 +144,13 @@ export default async function BillingRegisterPage({
       </div>
       <FilterBar filters={filters} />
       <BillingRegisterTable data={data} canDelete={canDelete} />
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/billing/register"
+        searchParams={searchParams}
+      />
     </div>
   );
 }
