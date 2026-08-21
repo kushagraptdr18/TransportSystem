@@ -13,13 +13,19 @@ export async function selectFirm(formData: FormData) {
   if (!firmId || !fyId) redirect("/select-firm");
 
   const data = await withTenant(session.tenantId, async (tx) => {
-    const firm = await tx.firm.findFirst({
-      where: { id: firmId, tenantId: session.tenantId, isActive: true },
-    });
+    // independent checks — one round-trip instead of three sequential ones
+    const [firm, assignments, directFy] = await Promise.all([
+      tx.firm.findFirst({
+        where: { id: firmId, tenantId: session.tenantId, isActive: true },
+      }),
+      tx.userFirm.findMany({ where: { userId: session.userId } }),
+      fyId !== "__next__"
+        ? tx.financialYear.findFirst({ where: { id: fyId, firmId, isActive: true } })
+        : Promise.resolve(null),
+    ]);
     if (!firm) return null;
 
     // if user has explicit firm assignments, enforce them
-    const assignments = await tx.userFirm.findMany({ where: { userId: session.userId } });
     if (assignments.length > 0 && !assignments.some((a) => a.firmId === firmId)) return null;
 
     // FY continuity: picking the (not yet created) NEXT financial year simply
@@ -48,11 +54,8 @@ export async function selectFirm(formData: FormData) {
       return { firm, fy };
     }
 
-    const fy = await tx.financialYear.findFirst({
-      where: { id: fyId, firmId, isActive: true },
-    });
-    if (!fy) return null;
-    return { firm, fy };
+    if (!directFy) return null;
+    return { firm, fy: directFy };
   });
 
   if (!data) redirect("/select-firm");
