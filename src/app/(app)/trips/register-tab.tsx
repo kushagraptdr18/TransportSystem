@@ -33,10 +33,13 @@ export async function TripRegisterTab({
         select: { tripId: true },
       });
       const openTripIds = openSettlements.map((s) => s.tripId).filter((x): x is string => !!x);
+      // date filter beats FY: dates set → that period from any year
       const where: Prisma.TripWhereInput = {
         firmId: session.firmId,
         deletedAt: null,
-        OR: [{ fyId: session.fyId }, { id: { in: openTripIds } }],
+        ...(searchParams.date_from || searchParams.date_to
+          ? {}
+          : { OR: [{ fyId: session.fyId }, { id: { in: openTripIds } }] }),
       };
       if (searchParams.q) where.tripNo = { contains: searchParams.q, mode: "insensitive" };
       if (searchParams.vehicle) where.vehicleId = searchParams.vehicle;

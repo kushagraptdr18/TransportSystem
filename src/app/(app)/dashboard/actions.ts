@@ -34,7 +34,9 @@ export async function getFinanceCards(input: {
   try {
     const gte = new Date(`${input.from}T00:00:00`);
     const lt = new Date(new Date(`${input.to}T00:00:00`).getTime() + 24 * 3600 * 1000);
-    const scope = { firmId: session.firmId, fyId: session.fyId };
+    // date-scoped, not FY-scoped: an old-year date range must pull that
+    // year's figures (FY continuity — the date filter is the boss here)
+    const scope = { firmId: session.firmId };
 
     const data = await withTenant(session.tenantId, async (tx) => {
       const heads = await tx.accountHead.findMany({ select: { id: true, name: true, kind: true } });

@@ -343,9 +343,10 @@ export async function processStaffSalary(
       const staffParty = await tx.party.findFirst({ where: { id: d.partyId } });
       if (!staffParty) return { ok: false as const, error: "Staff member not found" };
       const existing = await tx.staffSalary.findFirst({
+        // month embeds the year (yyyy-mm), so firm-wide is precise — and an
+        // old-FY month's salary stays editable without switching FY
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           partyId: d.partyId,
           month: d.month,
           deletedAt: null,
@@ -382,11 +383,12 @@ export async function processStaffSalary(
       // state could recover one employee's advance inside another's salary
       if (d.advanceId && d.advanceRecovery > 0) {
         const adv = await tx.staffAdvance.findFirst({
+          // no FY filter: last year's open advance recovers from this year's
+          // salary (FY continuity) — id + party + firm keep it precise
           where: {
             id: d.advanceId,
             partyId: d.partyId,
             firmId: session.firmId,
-            fyId: session.fyId,
             deletedAt: null,
           },
         });
@@ -412,11 +414,12 @@ export async function processStaffSalary(
       }
       if (d.loanId && d.loanRecovery > 0) {
         const loan = await tx.staffLoan.findFirst({
+          // no FY filter: an old-year loan keeps recovering from new-year
+          // salaries (FY continuity)
           where: {
             id: d.loanId,
             partyId: d.partyId,
             firmId: session.firmId,
-            fyId: session.fyId,
             deletedAt: null,
           },
         });
@@ -497,7 +500,6 @@ export async function processStaffSalary(
         const deleted = await tx.staffSalary.findFirst({
           where: {
             firmId: session.firmId,
-            fyId: session.fyId,
             partyId: d.partyId,
             month: d.month,
             deletedAt: { not: null },
@@ -576,9 +578,9 @@ export async function payStaffSalary(input: {
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.staffSalary.findFirstOrThrow({
-        // firm+FY scoped like the settlement guard below — an id from another
-        // firm must never get ledger legs posted under this session's scope
-        where: { id: input.salaryId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        // firm-scoped (no FY): an old-year due salary is payable from the new
+        // year; the exact id keeps it precise
+        where: { id: input.salaryId, firmId: session.firmId, deletedAt: null },
       });
       // already settled by a payment voucher => paying here would pay twice
       const settledHere = await settledByRef(tx, {
@@ -726,7 +728,7 @@ export async function deleteStaffAdvance(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const adv = await tx.staffAdvance.findFirst({
-        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id, firmId: session.firmId, deletedAt: null },
       });
       if (!adv) return { ok: false as const, error: "Advance not found" };
       const adjusted = await advanceAdjustedTotal(tx, id);
@@ -767,7 +769,7 @@ export async function deleteStaffLoan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const loan = await tx.staffLoan.findFirst({
-        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id, firmId: session.firmId, deletedAt: null },
       });
       if (!loan) return { ok: false as const, error: "Loan not found" };
       const recovered = await loanRecoveredTotal(tx, id);
@@ -798,7 +800,7 @@ export async function deleteStaffSalary(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const s = await tx.staffSalary.findFirst({
-        where: { id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id, firmId: session.firmId, deletedAt: null },
       });
       if (!s) return { ok: false as const, error: "Salary not found" };
       const settled = await settledByRef(tx, {

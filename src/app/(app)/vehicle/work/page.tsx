@@ -12,7 +12,9 @@ export default async function VehicleWorkPage() {
   const { rows, vehicles } = await withTenant(session.tenantId, async (tx) => {
     const [works, vehicles] = await Promise.all([
       tx.vehicleWork.findMany({
-        where: { firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        // FY continuity: work carries across years — old open/recent work
+        // stays visible without switching FY
+        where: { firmId: session.firmId, deletedAt: null },
         orderBy: [{ workDate: "desc" }, { createdAt: "desc" }],
       }),
       tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),

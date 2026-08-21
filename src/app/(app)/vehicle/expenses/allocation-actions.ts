@@ -222,9 +222,10 @@ export async function getUnallocatedPurchases(): Promise<UnallocatedPurchase[]> 
   const session = requireSession();
   return withTenant(session.tenantId, async (tx) => {
     const vouchers = await tx.vehicleExpenseVoucher.findMany({
+      // FY continuity: an old-year bill with anything unallocated stays
+      // offered until every rupee lands on a vehicle
       where: {
         firmId: session.firmId,
-        fyId: session.fyId,
         deletedAt: null,
         txnType: "EXPENSE",
       },

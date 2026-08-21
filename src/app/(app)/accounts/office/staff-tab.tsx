@@ -12,7 +12,9 @@ export async function StaffPayrollTab() {
 
   const { staff, profiles, advances, loans, salaries, banks, salSettled, advSettled } =
     await withTenant(session.tenantId, async (tx) => {
-      const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null };
+      // FY continuity: staff hisab is lifetime — open advances/loans and
+      // salary dues from earlier years stay visible until squared off
+      const scope = { firmId: session.firmId, deletedAt: null };
       const [staff, profiles, advances, loans, salaries, banks] = await Promise.all([
         tx.party.findMany({ where: { ledgerGroup: "STAFF" }, orderBy: { name: "asc" } }),
         tx.staffProfile.findMany(),

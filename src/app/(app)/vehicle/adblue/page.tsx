@@ -25,12 +25,17 @@ export default async function AdbluePage({
   const { txns, allTxns, vehicles, banks, suppliers, settled } = await withTenant(
     session.tenantId,
     async (tx) => {
-    const base: Prisma.AdblueTxnWhereInput = {
+    // stock is a LIFETIME figure (FY continuity): 31 March's closing IS
+    // 1 April's opening, so the position sums every year's entries
+    const lifetime: Prisma.AdblueTxnWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
     };
-    const where: Prisma.AdblueTxnWhereInput = { ...base };
+    // register list: date filter beats FY — no dates → this year's entries
+    const where: Prisma.AdblueTxnWhereInput = {
+      ...lifetime,
+      ...(searchParams.date_from || searchParams.date_to ? {} : { fyId: session.fyId }),
+    };
     if (searchParams.type === "REFILL" || searchParams.type === "ISSUE") {
       where.type = searchParams.type;
     }
@@ -43,8 +48,7 @@ export default async function AdbluePage({
     }
     const [txns, allTxns, vehicles, banks, suppliers] = await Promise.all([
       tx.adblueTxn.findMany({ where, orderBy: [{ date: "desc" }, { createdAt: "desc" }] }),
-      // overall stock position is always computed over ALL entries of the FY
-      tx.adblueTxn.groupBy({ by: ["type"], where: base, _sum: { qty: true } }),
+      tx.adblueTxn.groupBy({ by: ["type"], where: lifetime, _sum: { qty: true } }),
       tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
       tx.party.findMany({
         where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },

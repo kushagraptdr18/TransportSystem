@@ -179,9 +179,9 @@ export async function processDriverSalary(
       if (!driver?.partyId) return { ok: false as const, error: "Driver (or its ledger party) not found" };
 
       const dup = await tx.driverSalary.findFirst({
+        // month embeds the year (yyyy-mm) — firm-wide stays precise
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           driverId: d.driverId,
           month: d.month,
           deletedAt: null,

@@ -19,16 +19,23 @@ export default async function ChalanCancelAdvancesPage() {
   await authorize(session, "chalan", "view");
 
   const { advances, parties, chalans } = await withTenant(session.tenantId, async (tx) => {
-    const advances = await tx.partyAdvance.findMany({
+    // FY continuity: an unrecovered cancel-advance stays listed EVERY year
+    // until the money comes back; fully-recovered ones stay scoped to the
+    // session FY so the register does not fill with closed history
+    const all = await tx.partyAdvance.findMany({
       where: {
         firmId: session.firmId,
-        fyId: session.fyId,
         deletedAt: null,
         source: "CHALAN_CANCEL",
       },
       include: { uses: true },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
     });
+    const advances = all.filter(
+      (a) =>
+        a.fyId === session.fyId ||
+        Number(a.amount) - Number(a.consumedAmount) > 0.009
+    );
     const parties = await tx.party.findMany({
       where: { id: { in: advances.map((a) => a.partyId) } },
       select: { id: true, name: true },

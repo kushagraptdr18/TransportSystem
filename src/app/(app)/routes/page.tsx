@@ -28,7 +28,9 @@ export default async function RoutesPage() {
   await authorize(session, "reports", "view");
 
   const data = await withTenant(session.tenantId, async (tx) => {
-    const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null as null };
+    // route activity continues across FYs — a lane's history does not reset
+    // on 1 April (FY continuity)
+    const scope = { firmId: session.firmId, deletedAt: null as null };
     const [lrs, slips, chalans, cities, parties, vehicles] = await Promise.all([
       tx.lr.findMany({
         where: { ...scope, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } },

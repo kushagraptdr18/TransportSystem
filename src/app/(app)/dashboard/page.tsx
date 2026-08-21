@@ -42,9 +42,10 @@ export default async function DashboardPage() {
     laneAlive, laneCooling, laneSleeping,
   } = await withTenant(session.tenantId, async (tx) => {
       const lrs = await tx.lr.findMany({
+        // expiry-date driven, not FY-scoped: a 30/31 March e-way must still
+        // alert in April (FY continuity)
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           deletedAt: null,
           ewayBillNo: { not: null },
           ewayExpiry: { not: null },
@@ -87,7 +88,8 @@ export default async function DashboardPage() {
 
       // EMI due: active EMI loans; due/overdue = next scheduled date has arrived
       const loans = await tx.loan.findMany({
-        where: { firmId: session.firmId, fyId: session.fyId, deletedAt: null, status: "ACTIVE", emiApplicable: true },
+        // loans are lifetime — an old-year loan's EMI stays due (FY continuity)
+        where: { firmId: session.firmId, deletedAt: null, status: "ACTIVE", emiApplicable: true },
         include: { emis: { where: { deletedAt: null }, select: { principal: true } } },
       });
       const { nextDueDate } = await import("@/lib/loan");
@@ -104,16 +106,17 @@ export default async function DashboardPage() {
       // sleeping > 20 days, cooling 8-20)
       const [lrRoutes, slipRoutes] = await Promise.all([
         tx.lr.findMany({
+          // route heartbeat continues across FYs — a lane's history does not
+          // reset on 1 April
           where: {
             firmId: session.firmId,
-            fyId: session.fyId,
             deletedAt: null,
             lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
           },
           select: { sourceCityId: true, destCityId: true, lrDate: true },
         }),
         tx.brokerSlip.findMany({
-          where: { firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+          where: { firmId: session.firmId, deletedAt: null },
           select: { loadStationId: true, destCityId: true, slipDate: true },
         }),
       ]);

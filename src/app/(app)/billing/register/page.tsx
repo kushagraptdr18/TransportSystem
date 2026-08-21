@@ -33,9 +33,10 @@ export default async function BillingRegisterPage({
   await authorize(session, "billing", "view");
 
   const { rows, parties, settle } = await withTenant(session.tenantId, async (tx) => {
+    // date filter beats FY (FY continuity): dates set → any year's bills
     const where: Prisma.InvoiceWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
+      ...(searchParams.date_from || searchParams.date_to ? {} : { fyId: session.fyId }),
       deletedAt: null,
     };
     if (searchParams.date_from || searchParams.date_to) {

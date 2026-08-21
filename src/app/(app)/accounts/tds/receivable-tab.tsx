@@ -38,7 +38,12 @@ export async function TdsReceivableTab({
       : undefined;
 
   const { rows, parties } = await withTenant(session.tenantId, async (tx) => {
-    const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null };
+    // date filter beats FY (FY continuity)
+    const scope = {
+      firmId: session.firmId,
+      ...(dateWhere ? {} : { fyId: session.fyId }),
+      deletedAt: null,
+    };
     const [recVouchers, slips, parties] = await Promise.all([
       // RECEIPT vouchers only — payments must never appear in TDS Receivable
       tx.voucher.findMany({
@@ -66,10 +71,9 @@ export async function TdsReceivableTab({
       ? await tx.ledgerEntry.findMany({
           where: {
             firmId: session.firmId,
-            fyId: session.fyId,
+            ...(dateWhere ? { date: dateWhere } : { fyId: session.fyId }),
             refType: "VOUCHER",
             accountHeadId: { in: tdsHeads.map((h) => h.id) },
-            ...(dateWhere ? { date: dateWhere } : {}),
           },
         })
       : [];

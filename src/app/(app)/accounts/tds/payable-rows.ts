@@ -57,7 +57,13 @@ export async function buildTdsPayableRows(
   parties: { id: string; name: string; pan: string | null }[];
   sectionCodes: string[];
 }> {
-  const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null };
+  // date filter beats FY (FY continuity): an old-year date range pulls that
+  // year's TDS rows without switching FY
+  const scope = {
+    firmId: session.firmId,
+    ...(dateWhere ? {} : { fyId: session.fyId }),
+    deletedAt: null,
+  };
   // TDS applies only to hired vehicles. A company-owned vehicle is our own
   // asset — there is no payee to deduct from, so it never belongs here.
   // RELATIVE vehicles stay IN deliberately, even though the payables register
@@ -146,10 +152,9 @@ export async function buildTdsPayableRows(
     ? await tx.ledgerEntry.findMany({
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
+          ...(dateWhere ? { date: dateWhere } : { fyId: session.fyId }),
           refType: "VOUCHER",
           accountHeadId: { in: tdsHeads.map((h) => h.id) },
-          ...(dateWhere ? { date: dateWhere } : {}),
         },
       })
     : [];

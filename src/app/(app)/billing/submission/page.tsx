@@ -25,9 +25,9 @@ export default async function BillSubmissionPage({
         orderBy: { name: "asc" },
       }),
       tx.invoiceSubmission.findMany({
+        // date filter beats FY (FY continuity)
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           ...(date_from || date_to
             ? {
                 submissionDate: {
@@ -35,7 +35,7 @@ export default async function BillSubmissionPage({
                   ...(date_to ? { lte: new Date(date_to + "T23:59:59") } : {}),
                 },
               }
-            : {}),
+            : { fyId: session.fyId }),
           ...(party ? { partyId: party } : {}),
           ...(q ? { submissionNo: { contains: q, mode: "insensitive" } } : {}),
           ...(received === "received"

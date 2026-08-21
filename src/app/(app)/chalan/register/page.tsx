@@ -37,9 +37,10 @@ export default async function ChalanRegisterPage({
       .map((v) => v.id);
 
     const chalans = await tx.chalan.findMany({
+      // date filter beats FY (FY continuity): dates set → any year's chalans
       where: {
         firmId: session.firmId,
-        fyId: session.fyId,
+        ...(date_from || date_to ? {} : { fyId: session.fyId }),
         deletedAt: null,
         cancelledAt: view === "CANCELLED" ? { not: null } : null,
         ...(date_from || date_to

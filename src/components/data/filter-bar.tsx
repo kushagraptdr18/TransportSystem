@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MiniCalendar } from "@/components/data/mini-calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
@@ -96,11 +97,47 @@ function DateRangeFilter({
   const [open, setOpen] = React.useState(false);
   const [fromText, setFromText] = React.useState("");
   const [toText, setToText] = React.useState("");
+  // calendar picks land here: first click = From, second = To (typed dates
+  // and focusing a field retarget it)
+  const [pickTarget, setPickTarget] = React.useState<"from" | "to">("from");
+  const [month, setMonth] = React.useState<Date>(() => {
+    const d = fromIso(from) ?? new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
 
   React.useEffect(() => {
     setFromText(from ? formatDate(fromIso(from)) : "");
     setToText(to ? formatDate(fromIso(to)) : "");
   }, [from, to]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const d = fromIso(from) ?? new Date();
+    setMonth(new Date(d.getFullYear(), d.getMonth(), 1));
+    setPickTarget(from && !to ? "to" : "from");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const pickedFrom = parseDdMmYyyy(fromText);
+  const pickedTo = parseDdMmYyyy(toText);
+
+  const handlePick = (d: Date) => {
+    if (pickTarget === "from") {
+      setFromText(formatDate(d));
+      // a To before the new From makes no sense — restart the range
+      if (pickedTo && d > pickedTo) setToText("");
+      setPickTarget("to");
+    } else {
+      if (pickedFrom && d < pickedFrom) {
+        // picked backwards: treat it as a fresh From
+        setFromText(formatDate(d));
+        setToText("");
+      } else {
+        setToText(formatDate(d));
+        setPickTarget("from");
+      }
+    }
+  };
 
   const label =
     from || to
@@ -119,7 +156,7 @@ function DateRangeFilter({
           <ChevronsUpDown className="ml-2 h-3.5 w-3.5 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 space-y-3" align="start">
+      <PopoverContent className="w-80 space-y-3" align="start">
         <div className="flex flex-wrap gap-1.5">
           {PRESETS.map((p) => (
             <Button
@@ -143,8 +180,9 @@ function DateRangeFilter({
             <Input
               value={fromText}
               onChange={(e) => setFromText(e.target.value)}
+              onFocus={() => setPickTarget("from")}
               placeholder="dd/mm/yyyy"
-              className="h-8"
+              className={cn("h-8", pickTarget === "from" && "ring-1 ring-primary")}
             />
           </div>
           <div className="space-y-1">
@@ -152,11 +190,21 @@ function DateRangeFilter({
             <Input
               value={toText}
               onChange={(e) => setToText(e.target.value)}
+              onFocus={() => setPickTarget("to")}
               placeholder="dd/mm/yyyy"
-              className="h-8"
+              className={cn("h-8", pickTarget === "to" && "ring-1 ring-primary")}
             />
           </div>
         </div>
+        {/* calendar (Option B): click a date for From, then one for To —
+            typing above still works exactly as before */}
+        <MiniCalendar
+          month={month}
+          onMonthChange={setMonth}
+          from={pickedFrom}
+          to={pickedTo}
+          onPick={handlePick}
+        />
         <div className="flex flex-wrap justify-end gap-2">
           <Button
             variant="ghost"

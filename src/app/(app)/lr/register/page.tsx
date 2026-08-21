@@ -23,9 +23,11 @@ export default async function LrRegisterPage({
   await authorize(session, "lr", "view");
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
 
+  // date filter beats FY (FY continuity): no dates → this year's register;
+  // dates set → that period from ANY year, no FY switch needed
   const where: Prisma.LrWhereInput = {
     firmId: session.firmId,
-    fyId: session.fyId,
+    ...(searchParams.date_from || searchParams.date_to ? {} : { fyId: session.fyId }),
     deletedAt: null,
   };
   if (searchParams.q) {

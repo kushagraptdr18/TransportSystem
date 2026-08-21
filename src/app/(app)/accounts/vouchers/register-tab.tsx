@@ -36,9 +36,14 @@ export async function VoucherRegisterTab({
   ]);
 
   const type = searchParams.type as VoucherType | undefined;
+  // date filter beats FY (FY continuity): dates set → any year's vouchers.
+  // A ?q= deep-link (Ledger/Ref search) also spans years — the target voucher
+  // may live in an earlier FY.
   const where: Prisma.VoucherWhereInput = {
     firmId: session.firmId,
-    fyId: session.fyId,
+    ...(searchParams.date_from || searchParams.date_to || searchParams.q
+      ? {}
+      : { fyId: session.fyId }),
     deletedAt: null,
     ...(type && ["RECEIPT", "PAYMENT", "CONTRA", "JOURNAL"].includes(type) ? { type } : {}),
     // ?q= deep-links from the Ledger Summary land on the exact voucher

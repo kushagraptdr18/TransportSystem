@@ -33,9 +33,10 @@ export default async function BrokerRegisterPage({
   const { rows, vPos, vehicles, brokers, cityById, partyById, vehicleById, userById } = await withTenant(
     session.tenantId,
     async (tx) => {
+      // date filter beats FY (FY continuity): dates set → any year's slips
       const where: Record<string, unknown> = {
         firmId: session.firmId,
-        fyId: session.fyId,
+        ...(searchParams.date_from || searchParams.date_to ? {} : { fyId: session.fyId }),
         deletedAt: null,
       };
       if (searchParams.date_from || searchParams.date_to) {

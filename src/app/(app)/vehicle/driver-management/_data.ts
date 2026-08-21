@@ -40,9 +40,9 @@ export async function loadSalaryTab(filters: DriverFilters) {
   const { salaries, shortages, drivers, banks } = await withTenant(
     session.tenantId,
     async (tx) => {
+      // FY continuity: driver hisab is lifetime — old-year dues stay visible
       const where: Prisma.DriverSalaryWhereInput = {
         firmId: session.firmId,
-        fyId: session.fyId,
         deletedAt: null,
       };
       if (filters.driver) where.driverId = filters.driver;
@@ -138,9 +138,9 @@ export async function loadSettlementTab(filters: DriverFilters) {
   const { settlements, drivers, vehicles, banks, voucherPaid } = await withTenant(
     session.tenantId,
     async (tx) => {
+      // FY continuity: settlements carry until squared off
       const where: Prisma.DriverSettlementWhereInput = {
         firmId: session.firmId,
-        fyId: session.fyId,
         deletedAt: null,
       };
       if (filters.driver) where.driverId = filters.driver;

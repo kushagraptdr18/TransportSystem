@@ -36,12 +36,12 @@ export default async function PodRegisterPage({
   const [pods, vehicleOptions] = await Promise.all([
     withTenant(session.tenantId, async (tx) => {
       const rows = await tx.pod.findMany({
+        // date filter beats FY (FY continuity): dates set → any year's PODs
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           ...(dateFrom || dateTo
             ? { docDate: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
-            : {}),
+            : { fyId: session.fyId }),
           // Pending  = the LR's chalan is still awaiting balance payment
           // Completed = POD done AND the chalan's balance payment is finalized
           ...(status === "PENDING"
