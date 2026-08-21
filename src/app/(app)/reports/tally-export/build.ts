@@ -215,9 +215,12 @@ export async function buildChalanDocs(
       ? { ...(r.dateFrom ? { gte: r.dateFrom } : {}), ...(r.dateTo ? { lte: r.dateTo } : {}) }
       : null;
   const chalans = await tx.chalan.findMany({
+    // date filter beats FY (FY continuity): a period matches ANY activity —
+    // an old-year chalan whose balance was paid in this period must export
+    // its settlement vouchers here, not vanish behind the year boundary
     where: {
       firmId: session.firmId,
-      fyId: session.fyId,
+      ...(range ? {} : { fyId: session.fyId }),
       deletedAt: null,
       cancelledAt: null,
       isFinal: true,
@@ -401,9 +404,10 @@ export async function buildBillingDocs(
 ): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
   const ctx = await loadCtx(tx, session);
   const invoices = await tx.invoice.findMany({
+    // date filter beats FY (FY continuity)
     where: {
       firmId: session.firmId,
-      fyId: session.fyId,
+      ...(r.dateFrom || r.dateTo ? {} : { fyId: session.fyId }),
       deletedAt: null,
       kind: { not: "GST" }, // unregistered firm — GST-kind bills out of scope
       ...(r.dateFrom || r.dateTo
@@ -468,9 +472,10 @@ export async function buildVoucherDocs(
 ): Promise<{ docs: ExportDoc[]; masters: TallyLedgerMaster[] }> {
   const ctx = await loadCtx(tx, session);
   const vouchers = await tx.voucher.findMany({
+    // date filter beats FY (FY continuity)
     where: {
       firmId: session.firmId,
-      fyId: session.fyId,
+      ...(r.dateFrom || r.dateTo ? {} : { fyId: session.fyId }),
       deletedAt: null,
       type: { in: ["RECEIPT", "PAYMENT"] },
       ...(r.dateFrom || r.dateTo
@@ -617,9 +622,11 @@ export async function buildSlipDocs(
       ? { ...(r.dateFrom ? { gte: r.dateFrom } : {}), ...(r.dateTo ? { lte: r.dateTo } : {}) }
       : null;
   const slips = await tx.brokerSlip.findMany({
+    // date filter beats FY (FY continuity): an old-year slip settled in this
+    // period must export its settlement entries here
     where: {
       firmId: session.firmId,
-      fyId: session.fyId,
+      ...(range ? {} : { fyId: session.fyId }),
       deletedAt: null,
       ...(range
         ? { OR: [{ slipDate: range }, { pPaymentDate: range }, { vPaymentDate: range }] }
@@ -911,7 +918,8 @@ export async function buildExpenseDocs(
   const vouchers = await tx.vehicleExpenseVoucher.findMany({
     where: {
       firmId: session.firmId,
-      fyId: session.fyId,
+      // date filter beats FY (FY continuity)
+      ...(r.dateFrom || r.dateTo ? {} : { fyId: session.fyId }),
       deletedAt: null,
       ...(r.dateFrom || r.dateTo
         ? {
@@ -1025,7 +1033,8 @@ export async function buildOfficeDocs(
   const txns = await tx.officeTransaction.findMany({
     where: {
       firmId: session.firmId,
-      fyId: session.fyId,
+      // date filter beats FY (FY continuity)
+      ...(r.dateFrom || r.dateTo ? {} : { fyId: session.fyId }),
       deletedAt: null,
       ...(r.dateFrom || r.dateTo
         ? {
