@@ -2,7 +2,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { COMMON_HEADS } from "@/lib/account-heads";
-import { BrowserClient, type MonthChip } from "./browser-client";
+import { BrowserClient, type FyChips, type MonthChip } from "./browser-client";
 import type { BrowseSrc } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -37,12 +37,17 @@ export default async function ReportsBrowserPage({
   await authorize(session, "reports", "view");
   const src = (searchParams.src && searchParams.src in TITLES ? searchParams.src : "LR") as BrowseSrc;
 
-  const { months, partyOptions, vehicleOptions, headOptions, partyLabel } = await withTenant(
+  const { fyChips, partyOptions, vehicleOptions, headOptions, partyLabel } = await withTenant(
     session.tenantId,
     async (tx) => {
-      const fy = await tx.financialYear.findFirst({ where: { id: session.fyId } });
-      const months: MonthChip[] = [{ value: "ALL", label: "ALL" }];
-      if (fy) {
+      // FY continuity: month chips for EVERY financial year of the firm — an
+      // in-report FY dropdown swaps the chip row, no session-FY switch needed
+      const fys = await tx.financialYear.findMany({
+        where: { firmId: session.firmId },
+        orderBy: { startDate: "desc" },
+      });
+      const fyChips: FyChips[] = fys.map((fy) => {
+        const months: MonthChip[] = [{ value: "ALL", label: "ALL" }];
         const d = new Date(fy.startDate);
         d.setDate(1);
         const end = new Date(fy.endDate);
@@ -51,7 +56,8 @@ export default async function ReportsBrowserPage({
           months.push({ value, label: `${MONTH_NAMES[d.getMonth()]} ${String(d.getFullYear()).slice(2)}` });
           d.setMonth(d.getMonth() + 1);
         }
-      }
+        return { fyId: fy.id, label: fy.label, months };
+      });
 
       // which pickers the source needs
       let partyOptions: { value: string; label: string }[] = [];
@@ -89,7 +95,7 @@ export default async function ReportsBrowserPage({
         if (src === "BILLING" || src === "OUT_RECV") partyLabel = "Bill party...";
         if (src === "POD") partyOptions = [];
       }
-      return { months, partyOptions, vehicleOptions, headOptions, partyLabel };
+      return { fyChips, partyOptions, vehicleOptions, headOptions, partyLabel };
     }
   );
 
@@ -98,7 +104,8 @@ export default async function ReportsBrowserPage({
       key={src}
       src={src}
       title={TITLES[src]}
-      months={months}
+      fyChips={fyChips}
+      defaultFy={session.fyId}
       partyOptions={partyOptions}
       partyLabel={partyLabel}
       vehicleOptions={vehicleOptions}

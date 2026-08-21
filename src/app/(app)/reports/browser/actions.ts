@@ -48,6 +48,8 @@ export interface BrowseInput {
   cursor?: number;
   /** running balance carried across pages (books / ledger) */
   runningStart?: number | null;
+  /** browse another financial year without switching the session FY */
+  fyId?: string | null;
 }
 
 export interface BrowseRow {
@@ -113,7 +115,18 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
   const q = input.q?.trim() || null;
 
   return withTenant(session.tenantId, async (tx): Promise<BrowseResult> => {
-    const scope = { firmId: session.firmId, fyId: session.fyId };
+    // FY continuity: the browser can read ANY of the firm's financial years —
+    // the in-report FY dropdown sends the chosen fyId (validated here);
+    // default stays the session FY
+    const chosenFy =
+      input.fyId && input.fyId !== session.fyId
+        ? await tx.financialYear.findFirst({
+            where: { id: input.fyId, firmId: session.firmId },
+            select: { id: true },
+          })
+        : null;
+    const fyId = chosenFy?.id ?? session.fyId;
+    const scope = { firmId: session.firmId, fyId };
 
     // ---------------------------------------------------------------- LR
     if (input.src === "LR") {
@@ -799,6 +812,38 @@ export async function fetchBrowse(input: BrowseInput): Promise<BrowseResult> {
           running = input.runningStart;
         } else {
           running = opening;
+          // FY continuity: earlier years' net folds into the opening of the
+          // BROWSED year (single-account books and the party ledger only —
+          // the partyId scope is a plain string exactly in those cases)
+          const partyScope = (entryWhere as { partyId?: unknown }).partyId;
+          if (typeof partyScope === "string") {
+            const fyRow = await tx.financialYear.findUnique({
+              where: { id: fyId },
+              select: { startDate: true },
+            });
+            const priorFyIds = fyRow
+              ? (
+                  await tx.financialYear.findMany({
+                    where: { firmId: session.firmId, startDate: { lt: fyRow.startDate } },
+                    select: { id: true },
+                  })
+                ).map((f) => f.id)
+              : [];
+            if (priorFyIds.length) {
+              const priorWhere = {
+                firmId: session.firmId,
+                fyId: { in: priorFyIds },
+                partyId: partyScope,
+              };
+              const [dPrior, cPrior] = await Promise.all([
+                tx.ledgerEntry.aggregate({ where: { ...priorWhere, side: "DEBIT" }, _sum: { amount: true } }),
+                tx.ledgerEntry.aggregate({ where: { ...priorWhere, side: "CREDIT" }, _sum: { amount: true } }),
+              ]);
+              running = round2(
+                running + toNum(dPrior._sum.amount ?? 0) - toNum(cPrior._sum.amount ?? 0)
+              );
+            }
+          }
           if (range) {
             const beforeWhere = { ...entryWhere, date: { lt: range.gte } };
             const [dBefore, cBefore] = await Promise.all([

@@ -20,10 +20,18 @@ export interface MonthChip {
   label: string; // "ALL" | "APR 26"
 }
 
+/** One financial year's chip row for the in-report FY dropdown. */
+export interface FyChips {
+  fyId: string;
+  label: string; // "2027-2028"
+  months: MonthChip[];
+}
+
 export function BrowserClient({
   src,
   title,
-  months,
+  fyChips,
+  defaultFy,
   partyOptions,
   partyLabel,
   vehicleOptions,
@@ -33,7 +41,8 @@ export function BrowserClient({
 }: {
   src: BrowseSrc;
   title: string;
-  months: MonthChip[];
+  fyChips: FyChips[];
+  defaultFy: string;
   partyOptions: MasterOption[];
   partyLabel: string;
   vehicleOptions: MasterOption[];
@@ -44,6 +53,12 @@ export function BrowserClient({
   /** LR: show the OBD No filter */
   hasObd?: boolean;
 }) {
+  // FY continuity: browse any year from right here — the dropdown swaps the
+  // month-chip row and every fetch carries the chosen fyId
+  const [fyId, setFyId] = React.useState<string>(
+    fyChips.some((f) => f.fyId === defaultFy) ? defaultFy : fyChips[0]?.fyId ?? ""
+  );
+  const months = fyChips.find((f) => f.fyId === fyId)?.months ?? [{ value: "ALL", label: "ALL" }];
   const [month, setMonth] = React.useState<string>("ALL");
   const [q, setQ] = React.useState("");
   const [partyId, setPartyId] = React.useState<string | null>(null);
@@ -84,6 +99,7 @@ export function BrowserClient({
           obd: obd || null,
           cursor,
           runningStart,
+          fyId,
         });
         if (token !== requestToken.current) return;
         setColumns(res.columns);
@@ -97,7 +113,7 @@ export function BrowserClient({
         if (token === requestToken.current) setLoading(false);
       }
     },
-    [src, month, q, partyId, vehicleId, head, obd, requireParty]
+    [src, month, q, partyId, vehicleId, head, obd, requireParty, fyId]
   );
 
   // reload from the top whenever a filter changes (debounced for typing)
@@ -135,8 +151,25 @@ export function BrowserClient({
         </span>
       </div>
 
-      {/* month chips */}
-      <div className="flex flex-wrap gap-1">
+      {/* FY dropdown + month chips: pick any year, chips follow */}
+      <div className="flex flex-wrap items-center gap-1">
+        {fyChips.length > 1 && (
+          <select
+            aria-label="Financial year"
+            className="mr-1 h-7 rounded-md border border-input bg-background px-1.5 text-xs font-medium"
+            value={fyId}
+            onChange={(e) => {
+              setFyId(e.target.value);
+              setMonth("ALL");
+            }}
+          >
+            {fyChips.map((f) => (
+              <option key={f.fyId} value={f.fyId}>
+                FY {f.label}
+              </option>
+            ))}
+          </select>
+        )}
         {months.map((m) => (
           <Button
             key={m.value}

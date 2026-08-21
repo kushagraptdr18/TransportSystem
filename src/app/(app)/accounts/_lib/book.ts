@@ -175,9 +175,13 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     // a cross-ledger reference search spans every FY — the lifecycle of one
     // document must never be cut at the year boundary
     const crossFyRef = !!refQuery && !params.headId && !params.partyId && !params.groups;
+    // date filter beats FY: an explicit range lists entries from EVERY year
+    // it covers (1/4/26–31/5/27 shows both years continuously); without dates
+    // the book stays scoped to the session FY + carried opening
+    const dateDriven = !!(params.dateFrom || params.dateTo);
     const where: Prisma.LedgerEntryWhereInput = {
       firmId: session.firmId,
-      ...(crossFyRef ? {} : { fyId: session.fyId }),
+      ...(crossFyRef || dateDriven ? {} : { fyId: session.fyId }),
       ...(ledgerScope
         ? { ...ledgerScope, ...refNoWhere }
         : params.refNo
@@ -408,7 +412,9 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       // computed live, so a late entry posted in an old FY corrects every
       // later year's opening automatically. Account HEADS deliberately do
       // not carry (income/expense start each year at zero, like Tally).
-      if (trackRunning && priorFyIds.length) {
+      // Skipped under a date filter: the date-driven listing below already
+      // spans every year, and the pre-range fold covers what came before.
+      if (trackRunning && priorFyIds.length && !dateDriven) {
         const carried = await tx.ledgerEntry.groupBy({
           by: ["side"],
           where: {
@@ -424,13 +430,13 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         }
       }
     }
-    // entries before the date filter belong in the opening balance
+    // entries before the date filter belong in the opening balance — across
+    // EVERY year, matching the date-driven listing (no FY wall)
     if (trackRunning && params.dateFrom) {
       const prior = await tx.ledgerEntry.groupBy({
         by: ["side"],
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           ...(params.headId ? { accountHeadId: params.headId } : { partyId: params.partyId }),
           date: { lt: new Date(params.dateFrom + "T00:00:00") },
         },
