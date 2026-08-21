@@ -57,6 +57,14 @@ export interface LrDetailRow {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const GRID_LIMIT = 500;
 
+/** Pending-work views span every FY; the rest stay scoped to the session FY. */
+const CROSS_FY_VIEWS: ReadonlySet<LrView> = new Set([
+  "NO_CHALAN",
+  "PENDING",
+  "RECEIVED_UNBILLED",
+  "UNBILLED",
+] as LrView[]);
+
 type Sets = { pod: Set<string>; chalan: Set<string>; billed: Set<string> };
 
 const inView = (view: LrView, id: string, s: Sets): boolean => {
@@ -78,7 +86,9 @@ const inView = (view: LrView, id: string, s: Sets): boolean => {
   }
 };
 
-async function loadSets(tx: Tx, scope: { firmId: string; fyId: string }): Promise<Sets> {
+// firm-wide, never FY-scoped: a POD/chalan/bill made THIS year for an old
+// LR must still mark that LR as done (FY continuity)
+async function loadSets(tx: Tx, scope: { firmId: string }): Promise<Sets> {
   const [pods, chalanLrs, invoiceLrs] = await Promise.all([
     tx.pod.findMany({ where: { ...scope, lrId: { not: null } }, select: { lrId: true } }),
     tx.chalanLr.findMany({
@@ -103,14 +113,24 @@ export async function getLrSummary(): Promise<
 > {
   const session = requireSession();
   try {
-    const scope = { firmId: session.firmId, fyId: session.fyId };
+    const firmScope = { firmId: session.firmId };
     const cards = await withTenant(session.tenantId, async (tx) => {
-      const [lrs, sets] = await Promise.all([
+      // FY continuity: "is saal" cards (Total / Received / Billed) count the
+      // session FY's LRs; PENDING cards (chalan-pending, POD-pending,
+      // received-but-unbilled) count EVERY year's LRs — pending work never
+      // disappears at the year change, it stays counted until done
+      const lrWhere = {
+        ...firmScope,
+        deletedAt: null,
+        lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] as ("CANCELLED" | "PAPER_CHANGE")[] },
+      };
+      const [lrsFy, lrsAll, sets] = await Promise.all([
         tx.lr.findMany({
-          where: { ...scope, deletedAt: null, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } },
+          where: { ...lrWhere, fyId: session.fyId },
           select: { id: true, freight: true },
         }),
-        loadSets(tx, scope),
+        tx.lr.findMany({ where: lrWhere, select: { id: true, freight: true } }),
+        loadSets(tx, firmScope),
       ]);
       // card order fixed by the dashboard spec; UNBILLED has no card any more
       // (its detail view still answers if opened directly)
@@ -123,9 +143,10 @@ export async function getLrSummary(): Promise<
         "RECEIVED_UNBILLED",
       ];
       return views.map((view) => {
+        const pool = CROSS_FY_VIEWS.has(view) ? lrsAll : lrsFy;
         let count = 0;
         let amount = 0;
-        for (const l of lrs) {
+        for (const l of pool) {
           if (!inView(view, l.id, sets)) continue;
           count++;
           amount += toNum(String(l.freight));
@@ -160,7 +181,11 @@ export async function getLrDetail(input: {
   const { view, filters: f } = input;
   if (!LR_VIEW_META[view]) return { ok: false, error: "Unknown view" };
   try {
-    const scope = { firmId: session.firmId, fyId: session.fyId };
+    // same rule as the cards: pending views span every FY, the rest stay
+    // scoped to the session FY
+    const scope = CROSS_FY_VIEWS.has(view)
+      ? { firmId: session.firmId }
+      : { firmId: session.firmId, fyId: session.fyId };
     const dateWhere =
       f.from && DATE_RE.test(f.from) && f.to && DATE_RE.test(f.to)
         ? {
@@ -171,7 +196,7 @@ export async function getLrDetail(input: {
           }
         : {};
     return await withTenant(session.tenantId, async (tx) => {
-      const sets = await loadSets(tx, scope);
+      const sets = await loadSets(tx, { firmId: session.firmId });
       // totals of the VIEW (before user filters) for the header
       const allOfView = await tx.lr.findMany({
         where: { ...scope, deletedAt: null, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } },

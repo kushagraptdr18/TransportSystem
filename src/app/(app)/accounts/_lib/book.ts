@@ -442,6 +442,39 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       }
     }
 
+    const fmtBal = (v: number) =>
+      `${Math.abs(Math.round(v * 100) / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${v >= 0 ? "Dr" : "Cr"}`;
+    // FY continuity, made visible: the selected ledger opens with an explicit
+    // "Opening Balance b/f" row — master opening + every earlier year's net
+    // (+ pre-date entries under a date filter) — so the carried balance shows
+    // even before the new year has a single entry of its own
+    const openingRow: ReportRow | null =
+      trackRunning && (params.partyId || params.dateFrom)
+        ? {
+            date: (params.dateFrom
+              ? new Date(params.dateFrom + "T00:00:00")
+              : currentFy?.startDate ?? new Date()
+            ).toISOString(),
+            party:
+              (params.partyId &&
+                parties.find((p) => p.id === params.partyId)?.name) ||
+              (params.headId && headNameById.get(params.headId)) ||
+              "",
+            account: "",
+            refType: "OPENING",
+            refNo: "",
+            link: "",
+            voucherNo: "",
+            payment: "",
+            vehicle: "",
+            narration: "Opening balance b/f (earlier years + opening entry)",
+            adjustments: "",
+            debit: null,
+            credit: null,
+            balance: fmtBal(running),
+          }
+        : null;
+
     const rows: ReportRow[] = entries.map((e) => {
       const amt = toNum(String(e.amount));
       const debit = e.side === "DEBIT" ? amt : 0;
@@ -549,9 +582,11 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         credit: null,
         balance: "",
       }));
-    const mergedRows = adjRows.length
+    const bodyRows = adjRows.length
       ? [...rows, ...adjRows].sort((a, b) => String(a.date).localeCompare(String(b.date)))
       : rows;
+    // the opening row stays pinned first, whatever the dates say
+    const mergedRows = openingRow ? [openingRow, ...bodyRows] : bodyRows;
 
     // a row settling several documents carries them comma-joined — the
     // dropdown offers each individual reference, exact-match ready
