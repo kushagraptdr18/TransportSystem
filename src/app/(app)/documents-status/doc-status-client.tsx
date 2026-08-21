@@ -115,7 +115,10 @@ export function DocStatusClient({
   };
 
   const list = rows.filter((r) => {
-    if (statusFilter !== "ALL" && r.status !== statusFilter) return false;
+    // EXPIRED is computed from the expiry date, not a stored status
+    if (statusFilter === "EXPIRED") {
+      if (!r.expiredNow) return false;
+    } else if (statusFilter !== "ALL" && r.status !== statusFilter) return false;
     if (vehicleFilter && r.vehicleId !== vehicleFilter) return false;
     if (docTypeFilter && r.docTypeId !== docTypeFilter) return false;
     if (q) {
@@ -131,6 +134,7 @@ export function DocStatusClient({
   });
 
   const counts = {
+    EXPIRED: rows.filter((r) => r.expiredNow).length,
     PENDING: rows.filter((r) => r.status === "PENDING").length,
     PROCESSING: rows.filter((r) => r.status === "PROCESSING").length,
     PROBLEM: rows.filter((r) => r.status === "PROBLEM").length,
@@ -247,15 +251,21 @@ export function DocStatusClient({
 
       {/* status chips + filters */}
       <div className="flex flex-wrap items-center gap-2">
-        {(["ALL", "PENDING", "PROCESSING", "PROBLEM", "DONE"] as const).map((s) => (
+        {(["ALL", "EXPIRED", "PENDING", "PROCESSING", "PROBLEM", "DONE"] as const).map((s) => (
           <Button
             key={s}
             size="sm"
-            variant={statusFilter === s ? "default" : "outline"}
-            className="h-8"
+            variant={
+              statusFilter === s ? (s === "EXPIRED" ? "destructive" : "default") : "outline"
+            }
+            className={`h-8 ${s === "EXPIRED" && statusFilter !== s ? "border-destructive/50 text-destructive hover:text-destructive" : ""}`}
             onClick={() => setStatusFilter(s)}
           >
-            {s === "ALL" ? `All (${rows.length})` : `${STATUSES.find((x) => x.value === s)?.label} (${counts[s]})`}
+            {s === "ALL"
+              ? `All (${rows.length})`
+              : s === "EXPIRED"
+                ? `Expired (${counts.EXPIRED})`
+                : `${STATUSES.find((x) => x.value === s)?.label} (${counts[s]})`}
           </Button>
         ))}
         <div className="w-44">
@@ -331,7 +341,14 @@ export function DocStatusClient({
                     {r.expiryDate || "—"}
                   </td>
                   <td className="px-2 py-1.5">
-                    <StatusBadge status={r.status} remarks={r.remarks} />
+                    {r.expiredNow ? (
+                      // expiry has passed — nothing matters more than this
+                      <Badge variant="destructive" title={`Status: ${r.status}`}>
+                        Expired
+                      </Badge>
+                    ) : (
+                      <StatusBadge status={r.status} remarks={r.remarks} />
+                    )}
                   </td>
                   <td className="max-w-[220px] truncate px-2 py-1.5 text-xs text-muted-foreground" title={r.remarks}>
                     {r.remarks || ""}

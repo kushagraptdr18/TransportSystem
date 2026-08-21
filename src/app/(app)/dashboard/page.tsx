@@ -38,7 +38,7 @@ export default async function DashboardPage() {
   const window = [-2, -1, 0, 1, 2].map((off) => new Date(base + off * dayMs).toISOString().slice(0, 10));
 
   const {
-    expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, emiActive, emiDue,
+    expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, docExpired, emiActive, emiDue,
     laneAlive, laneCooling, laneSleeping,
   } = await withTenant(session.tenantId, async (tx) => {
       const lrs = await tx.lr.findMany({
@@ -74,6 +74,7 @@ export default async function DashboardPage() {
       const now = new Date();
       const typeCounts = new Map<string, number>();
       let docProblem = 0;
+      let docExpired = 0;
       for (const d of docs) {
         if (!d.docType.showReminder || !d.expiryDate) continue;
         const windowEnd = new Date(now);
@@ -81,6 +82,8 @@ export default async function DashboardPage() {
         if (d.expiryDate > windowEnd) continue;
         typeCounts.set(d.docType.name, (typeCounts.get(d.docType.name) ?? 0) + 1);
         if (d.status === "PROBLEM") docProblem++;
+        // expiry already passed — the loudest state of all
+        if (d.expiryDate < now) docExpired++;
       }
       const docTypeCounts = Array.from(typeCounts.entries())
         .map(([name, count]) => ({ name, count }))
@@ -141,7 +144,7 @@ export default async function DashboardPage() {
       }
 
       return {
-        expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, emiActive, emiDue,
+        expiredCount, todayCount, upcomingCount, docTypeCounts, docProblem, docExpired, emiActive, emiDue,
         laneAlive, laneCooling, laneSleeping,
       };
     });
@@ -296,6 +299,11 @@ export default async function DashboardPage() {
                         {t.name} ({t.count})
                       </span>
                     ))
+                  )}
+                  {docExpired > 0 && (
+                    <span className="rounded bg-red-500/15 px-2 py-0.5 font-semibold text-red-600">
+                      EXPIRED: {docExpired}
+                    </span>
                   )}
                   {docProblem > 0 && (
                     <span className="rounded bg-red-500/10 px-2 py-0.5 text-red-600">
