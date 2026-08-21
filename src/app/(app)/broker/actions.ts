@@ -294,7 +294,7 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
       let savedId: string;
       if (data.id) {
         const before = await tx.brokerSlip.findFirst({
-          where: { id: data.id, firmId: session.firmId, fyId: session.fyId },
+          where: { id: data.id, firmId: session.firmId },
         });
         if (!before) throw new Error("Broker slip not found");
         if (before.deletedAt) throw new Error("Broker slip has been deleted");
@@ -625,7 +625,7 @@ export async function deleteBrokerSlip(
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.brokerSlip.findFirst({
-        where: { id, firmId: session.firmId, fyId: session.fyId },
+        where: { id, firmId: session.firmId },
       });
       if (!before) throw new Error("Broker slip not found");
       // a slip settled through a Payment Voucher must NEVER be deleted: the

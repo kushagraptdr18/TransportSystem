@@ -26,10 +26,17 @@ export async function TripRegisterTab({
   const { trips, vehicles, drivers, cities, settlements, docTotals } = await withTenant(
     session.tenantId,
     async (tx) => {
+      // FY-scoped list, but an UNSETTLED trip from an earlier year stays
+      // visible until its hishab closes (FY continuity for pending work)
+      const openSettlements = await tx.driverSettlement.findMany({
+        where: { firmId: session.firmId, deletedAt: null, status: "PENDING", tripId: { not: null } },
+        select: { tripId: true },
+      });
+      const openTripIds = openSettlements.map((s) => s.tripId).filter((x): x is string => !!x);
       const where: Prisma.TripWhereInput = {
         firmId: session.firmId,
-        fyId: session.fyId,
         deletedAt: null,
+        OR: [{ fyId: session.fyId }, { id: { in: openTripIds } }],
       };
       if (searchParams.q) where.tripNo = { contains: searchParams.q, mode: "insensitive" };
       if (searchParams.vehicle) where.vehicleId = searchParams.vehicle;

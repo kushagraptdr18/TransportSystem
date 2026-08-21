@@ -38,10 +38,11 @@ export default async function ChalanPage({
       const accountHeads = await tx.accountHead.findMany({ orderBy: { name: "asc" } });
       const record = searchParams.id
         ? await tx.chalan.findFirst({
+            // no FY filter: an old-year chalan opened from Outstanding or a
+            // reference search must load for balance payment in the new year
             where: {
               id: searchParams.id,
               firmId: session.firmId,
-              fyId: session.fyId,
               deletedAt: null,
             },
             include: {

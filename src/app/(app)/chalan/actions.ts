@@ -73,8 +73,9 @@ export async function getPendingLrsForVehicle(
   const lrs = await withTenant(session.tenantId, (tx) =>
     tx.lr.findMany({
       where: {
+        // FY continuity: a March LR with no chalan yet must still be offered
+        // in April — pending work carries until it is done, whatever the year
         firmId: session.firmId,
-        fyId: session.fyId,
         vehicleId,
         status: "PENDING",
         lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
@@ -196,9 +197,9 @@ async function recomputeAndStore(
   // firm/FY — a stale, deleted or foreign id must fail loudly, not load
   const lrs = await tx.lr.findMany({
     where: {
+      // no FY filter: an LR carried from an earlier year may join this chalan
       id: { in: data.lrIds },
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
     },
     include: { items: true },
@@ -314,7 +315,7 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
     return await withTenant(session.tenantId, async (tx) => {
       const existing = data.id
         ? await tx.chalan.findFirst({
-            where: { id: data.id, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+            where: { id: data.id, firmId: session.firmId, deletedAt: null },
             include: {
               advances: true,
               lrs: { include: { lr: { include: { invoiceLrs: true, pods: true } } } },
@@ -331,8 +332,9 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
       // duplicate chalan numbers are not allowed within a firm + financial year
       const clash = await tx.chalan.findFirst({
         where: {
+          // chalan numbers CONTINUE across financial years, so uniqueness is
+          // firm-wide — last year's 498 blocks a new 498 this year
           firmId: session.firmId,
-          fyId: session.fyId,
           chalanNo: data.chalanNo,
           deletedAt: null,
           ...(data.id ? { id: { not: data.id } } : {}),
@@ -347,7 +349,6 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
       const deletedHolder = await tx.chalan.findFirst({
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           chalanNo: data.chalanNo,
           deletedAt: { not: null },
           ...(data.id ? { id: { not: data.id } } : {}),
@@ -599,7 +600,7 @@ export async function saveChalanAdvances(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id: chalanId, firmId: session.firmId, deletedAt: null },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
       if (chalan.cancelledAt) {
@@ -777,7 +778,7 @@ export async function finalizeChalan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id: chalanId, firmId: session.firmId, deletedAt: null },
         include: { lrs: true },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
@@ -815,7 +816,7 @@ export async function deleteChalan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id: chalanId, firmId: session.firmId, deletedAt: null },
         include: { lrs: { include: { lr: { include: { invoiceLrs: true } } } } },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
@@ -936,7 +937,7 @@ export async function cancelChalan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id: chalanId, firmId: session.firmId, deletedAt: null },
         include: { lrs: { include: { lr: { include: { invoiceLrs: true } } } }, advances: true },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
@@ -1077,7 +1078,7 @@ export async function restoreChalan(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id: chalanId, firmId: session.firmId, deletedAt: null },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found" };
       if (!chalan.cancelledAt) return { ok: false as const, error: "Chalan is not cancelled" };
@@ -1218,7 +1219,7 @@ export async function saveBalancePayment(
   try {
     return await withTenant(session.tenantId, async (tx) => {
       const chalan = await tx.chalan.findFirst({
-        where: { id: data.chalanId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+        where: { id: data.chalanId, firmId: session.firmId, deletedAt: null },
       });
       if (!chalan) return { ok: false as const, error: "Chalan not found." };
       if (chalan.cancelledAt) {

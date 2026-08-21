@@ -2,6 +2,37 @@ import { Tx } from "./db";
 import { DocNumberType } from "@prisma/client";
 
 /**
+ * FY continuity: these document numbers CONTINUE across financial years
+ * (…498, 499 | new FY | 500, 501…) instead of restarting at 1. Their sequence
+ * row is keyed to the firm's FIRST financial year, so every later year reads
+ * and bumps the same counter. LR / bill / POD / trip numbers stay per-FY.
+ */
+const FY_CONTINUOUS: ReadonlySet<DocNumberType> = new Set([
+  "CHALAN",
+  "BROKER_SLIP",
+  "VOUCHER_RECEIPT",
+  "VOUCHER_PAYMENT",
+  "VOUCHER_CONTRA",
+  "VOUCHER_JOURNAL",
+] as DocNumberType[]);
+
+/** The fyId whose sequence row carries this docType's counter. */
+async function sequenceFyId(
+  tx: Tx,
+  firmId: string,
+  fyId: string,
+  docType: DocNumberType
+): Promise<string> {
+  if (!FY_CONTINUOUS.has(docType)) return fyId;
+  const first = await tx.financialYear.findFirst({
+    where: { firmId },
+    orderBy: { startDate: "asc" },
+    select: { id: true },
+  });
+  return first?.id ?? fyId;
+}
+
+/**
  * Next document number for a firm+FY+docType. Transactional: call inside the
  * same transaction that inserts the document. Numbers are seeded by the first
  * manual entry, auto-increment after, and stay editable (uniqueness enforced
@@ -11,15 +42,16 @@ export async function nextDocNumber(
   tx: Tx,
   args: { tenantId: string; firmId: string; fyId: string; docType: DocNumberType }
 ): Promise<string> {
+  const fyId = await sequenceFyId(tx, args.firmId, args.fyId, args.docType);
   const seq = await tx.documentSequence.upsert({
     where: {
       firmId_fyId_docType: {
         firmId: args.firmId,
-        fyId: args.fyId,
+        fyId,
         docType: args.docType,
       },
     },
-    create: { ...args, next: 2 },
+    create: { ...args, fyId, next: 2 },
     update: { next: { increment: 1 } },
   });
   // when created, current number = 1 (next stored as 2); when updated, the
@@ -41,18 +73,19 @@ export async function syncSequenceTo(
 ): Promise<void> {
   const n = parseInt(args.savedNumber.replace(/\D/g, ""), 10);
   if (isNaN(n)) return;
+  const fyId = await sequenceFyId(tx, args.firmId, args.fyId, args.docType);
   await tx.documentSequence.upsert({
     where: {
       firmId_fyId_docType: {
         firmId: args.firmId,
-        fyId: args.fyId,
+        fyId,
         docType: args.docType,
       },
     },
     create: {
       tenantId: args.tenantId,
       firmId: args.firmId,
-      fyId: args.fyId,
+      fyId,
       docType: args.docType,
       next: n + 1,
     },
@@ -61,7 +94,7 @@ export async function syncSequenceTo(
   await tx.documentSequence.updateMany({
     where: {
       firmId: args.firmId,
-      fyId: args.fyId,
+      fyId,
       docType: args.docType,
       next: { lte: n },
     },
@@ -103,14 +136,18 @@ export async function nextLrNumber(
   return String(max + 1);
 }
 
-/** Max numeric chalan number in this firm+FY plus one (sequential, like LRs). */
+/**
+ * Max numeric chalan number in this FIRM plus one. Chalan numbers continue
+ * across financial years (FY continuity) — the new year picks up where the
+ * old one stopped instead of restarting at 1.
+ */
 export async function nextChalanNumber(
   tx: Tx,
-  args: { firmId: string; fyId: string }
+  args: { firmId: string; fyId?: string }
 ): Promise<string> {
   const rows = await tx.$queryRaw<{ max: bigint | null }[]>`
     SELECT MAX(NULLIF(regexp_replace("chalanNo", '\\D', '', 'g'), '')::bigint) AS max
-    FROM "Chalan" WHERE "firmId" = ${args.firmId} AND "fyId" = ${args.fyId}`;
+    FROM "Chalan" WHERE "firmId" = ${args.firmId}`;
   const max = rows[0]?.max ? Number(rows[0].max) : 0;
   return String(max + 1);
 }
@@ -120,11 +157,12 @@ export async function peekDocNumber(
   tx: Tx,
   args: { firmId: string; fyId: string; docType: DocNumberType }
 ): Promise<string | null> {
+  const fyId = await sequenceFyId(tx, args.firmId, args.fyId, args.docType);
   const seq = await tx.documentSequence.findUnique({
     where: {
       firmId_fyId_docType: {
         firmId: args.firmId,
-        fyId: args.fyId,
+        fyId,
         docType: args.docType,
       },
     },

@@ -356,10 +356,10 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
             refIds,
             data.id
           );
-          // gross document value per ref, per module — every lookup is scoped
-          // to THIS firm/FY and live rows only, so a stale, deleted or foreign
-          // document id can never be settled from here
-          const docScope = { id: { in: refIds }, firmId: session.firmId, fyId: session.fyId, deletedAt: null };
+          // gross document value per ref, per module — scoped to THIS firm and
+          // live rows only (no FY filter: a carried document from an earlier
+          // year is settleable here; the exact ids keep the lookup precise)
+          const docScope = { id: { in: refIds }, firmId: session.firmId, deletedAt: null };
           const gross = new Map<string, number>();
           if (refType === "BILLING" || refType === "GST_BILLING") {
             const invs = await tx.invoice.findMany({ where: docScope });
@@ -503,10 +503,10 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         // scoped to the session's firm/FY: reversing and re-posting under the
         // wrong scope would silently migrate accounting across firms/years
         const before = await tx.voucher.findFirst({
-          where: { id: data.id, firmId: session.firmId, fyId: session.fyId },
+          where: { id: data.id, firmId: session.firmId },
           include: { allocations: true },
         });
-        if (!before) throw new Error("Voucher not found in this firm/financial year");
+        if (!before) throw new Error("Voucher not found in this firm");
         if (before.deletedAt) throw new Error("Voucher has been deleted");
         prevRowShortage = round2(
           before.allocations.reduce((s, a) => s + Number(a.deduction), 0)
@@ -1104,7 +1104,7 @@ export interface AllocationCandidate {
  */
 async function allocatedByRef(
   tx: Tx,
-  scope: { firmId: string; fyId: string },
+  scope: { firmId: string; fyId?: string },
   refType: ModuleLink,
   refIds: string[],
   excludeVoucherId?: string | null
@@ -1115,12 +1115,11 @@ async function allocatedByRef(
     where: {
       refType,
       refId: { in: refIds },
-      // same firm + FY scope as settledByRef/payableSettlement, so this guard
-      // and the registers can never disagree about what is already settled
+      // firm-wide like settledByRef/payableSettlement (FY continuity): a
+      // document settled last year must never look open this year
       voucher: {
         deletedAt: null,
         firmId: scope.firmId,
-        fyId: scope.fyId,
         ...(excludeVoucherId ? { id: { not: excludeVoucherId } } : {}),
       },
     },
@@ -1182,7 +1181,9 @@ export async function getAllocationCandidates(input: {
       : [input.moduleLink];
 
   return withTenant(session.tenantId, async (tx) => {
-    const scope = { firmId: session.firmId, fyId: session.fyId, deletedAt: null as null };
+    // FY continuity: outstanding documents from EVERY year are offered — an
+    // unpaid bill from last March must be settleable by this April's voucher
+    const scope = { firmId: session.firmId, deletedAt: null as null };
     const out: AllocationCandidate[] = [];
     for (const moduleLink of links) {
 
@@ -1609,10 +1610,9 @@ export async function getOpenCancelAdvances(partyId: string): Promise<OpenCancel
   return withTenant(session.tenantId, async (tx) => {
     const advances = await tx.partyAdvance.findMany({
       where: {
+        // FY continuity: an unrecovered cancel-advance from last year stays
+        // recoverable this year (the save path is firm-scoped to match)
         firmId: session.firmId,
-        // the save path only accepts this FY's advances — listing other years
-        // would offer rows that can never be saved
-        fyId: session.fyId,
         partyId,
         deletedAt: null,
         source: "CHALAN_CANCEL",

@@ -175,20 +175,20 @@ export async function VehiclePnlTab({
   } = data;
 
   // ---- carve the selected period out of the lifetime data ----
+  // FY continuity: this report is the vehicle's WHOLE story (shuru se aaj
+  // tak) — no FY wall. The date filter alone narrows it to a saal/period.
   const inPeriod = (d: Date) => (!dateFrom || d >= dateFrom) && (!dateTo || d <= dateTo);
   const trips = allTrips.filter(
     (t) =>
-      t.fyId === session.fyId &&
       inPeriod(t.tripDate) &&
       (!searchParams.vehicle || t.vehicleId === searchParams.vehicle) &&
       (!searchParams.driver || t.driverId === searchParams.driver)
   );
   // the ALLOCATION date decides the period, not the purchase date: a chain
   // bought on the 1st and fitted on the 8th is the 8th's cost
-  const expItems = allExpItems.filter(
-    (it) => it.voucher.fyId === session.fyId && inPeriod(it.allocDate)
-  );
-  const salaries = allSalaries.filter((s) => s.fyId === session.fyId);
+  const expItems = allExpItems.filter((it) => inPeriod(it.allocDate));
+  // salaries are month-windowed against the period filter further down
+  const salaries = allSalaries;
   const loanEmis = allLoanEmis.filter((e) => inPeriod(e.payDate));
 
   const cityName = new Map(cities.map((c) => [c.id, c.name]));

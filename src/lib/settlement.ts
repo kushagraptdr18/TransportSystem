@@ -77,13 +77,17 @@ export async function refPositions(
   tx: Tx,
   opts: {
     firmId: string;
-    fyId: string;
+    /** ignored — settlements count across ALL financial years (see note below) */
+    fyId?: string;
     refType: ModuleLink;
     docs: { id: string; original: number; ownSettled?: number }[];
     excludeVoucherId?: string | null;
   }
 ): Promise<Map<string, RefPosition>> {
   const ids = opts.docs.map((d) => d.id);
+  // FY continuity: a document pending from last year can be settled by this
+  // year's voucher — its settled amount is the sum over ALL years, else the
+  // old allocation vanishes at year change and the document pays out twice
   const allocations = ids.length
     ? await tx.voucherAllocation.findMany({
         where: {
@@ -92,7 +96,6 @@ export async function refPositions(
           voucher: {
             deletedAt: null,
             firmId: opts.firmId,
-            fyId: opts.fyId,
             ...(opts.excludeVoucherId ? { id: { not: opts.excludeVoucherId } } : {}),
           },
         },
@@ -146,14 +149,15 @@ export async function refPositions(
  * Approved deductions (TDS / deduction) settle a document just like money
  * moved — an adjusted amount must never remain outstanding.
  *
- * Pass `fyId: null` to sum allocations across ALL financial years. Needed when
- * the pending documents themselves carry no FY filter (driver +/- settlement
- * rows): scoping the allocations to the session FY while the rows span years
- * made a row settled last year look unpaid this year — and payable twice.
+ * FY continuity: allocations are ALWAYS summed across all financial years —
+ * refIds are exact, so this is precise, and an FY filter here only ever
+ * produced the stale bug where a row settled last year looked unpaid this
+ * year and became payable twice. The fyId option remains for callers but is
+ * intentionally ignored.
  */
 export async function settledByRef(
   tx: Tx,
-  opts: { firmId: string; fyId: string | null; refTypes: ModuleLink[]; refIds?: string[] }
+  opts: { firmId: string; fyId?: string | null; refTypes: ModuleLink[]; refIds?: string[] }
 ): Promise<Map<string, number>> {
   const allocations = await tx.voucherAllocation.findMany({
     where: {
@@ -162,7 +166,6 @@ export async function settledByRef(
       voucher: {
         deletedAt: null,
         firmId: opts.firmId,
-        ...(opts.fyId ? { fyId: opts.fyId } : {}),
       },
     },
     select: {
@@ -225,7 +228,8 @@ export async function payableSettlement(
   tx: Tx,
   opts: {
     firmId: string;
-    fyId: string;
+    /** ignored — settlements count across ALL financial years (FY continuity) */
+    fyId?: string;
     refType: ModuleLink;
     docs: PayableDoc[];
     excludeVoucherId?: string | null;
@@ -240,7 +244,6 @@ export async function payableSettlement(
           voucher: {
             deletedAt: null,
             firmId: opts.firmId,
-            fyId: opts.fyId,
             ...(opts.excludeVoucherId ? { id: { not: opts.excludeVoucherId } } : {}),
           },
         },
@@ -316,13 +319,14 @@ export function settlementStatus(total: number, outstanding: number): Settlement
  */
 export async function invoiceSettlement(
   tx: Tx,
-  opts: { firmId: string; fyId: string; invoices: { id: string; netTotal: unknown; advance: unknown }[] }
+  opts: { firmId: string; fyId?: string; invoices: { id: string; netTotal: unknown; advance: unknown }[] }
 ): Promise<Map<string, { net: number; received: number; outstanding: number; status: SettlementStatus }>> {
   const ids = opts.invoices.map((i) => i.id);
   const settled = ids.length
     ? await settledByRef(tx, {
         firmId: opts.firmId,
-        fyId: opts.fyId,
+        // all years: a bill from last FY settled this year must read PAID
+        fyId: null,
         refTypes: BILL_REF_TYPES,
         refIds: ids,
       })

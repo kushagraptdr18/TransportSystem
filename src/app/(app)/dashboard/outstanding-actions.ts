@@ -54,7 +54,7 @@ type RawDoc = {
   outstanding: number;
 };
 
-async function collect(tx: Tx, scope: { firmId: string; fyId: string }, side: OutSide): Promise<RawDoc[]> {
+async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promise<RawDoc[]> {
   const out: RawDoc[] = [];
   if (side === "RECV") {
     const [invoices, slips, advances, settlements, drivers] = await Promise.all([
@@ -402,7 +402,9 @@ export async function getOutstandingAgeing(input: {
 }): Promise<{ ok: true; data: OutstandingData } | { ok: false; error: string }> {
   const session = requireSession();
   try {
-    const scope = { firmId: session.firmId, fyId: session.fyId };
+    // FY continuity: outstanding never expires with the year — every unpaid
+    // document of the firm counts, whichever FY it was made in
+    const scope = { firmId: session.firmId };
     const data = await withTenant(session.tenantId, async (tx) => {
       const [docs, parties] = await Promise.all([
         collect(tx, scope, input.side),

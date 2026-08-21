@@ -133,6 +133,22 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       : null;
     const partyIds = params.partyId ? [params.partyId] : parties.map((p) => p.id);
 
+    // FY continuity: earlier years feed this year's opening balance, and a
+    // cross-ledger reference search must show a document's WHOLE lifecycle
+    // (last year's bill + this year's receipt together)
+    const currentFy = await tx.financialYear.findUnique({
+      where: { id: session.fyId },
+      select: { startDate: true },
+    });
+    const priorFyIds = currentFy
+      ? (
+          await tx.financialYear.findMany({
+            where: { firmId: session.firmId, startDate: { lt: currentFy.startDate } },
+            select: { id: true },
+          })
+        ).map((f) => f.id)
+      : [];
+
     // With a ledger selected, EVERY filter (reference included) applies inside
     // that ledger only. A reference search with no ledger selected keeps its
     // cross-ledger meaning: the complete lifecycle of one document.
@@ -156,9 +172,12 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         .split(",")
         .map((t) => t.trim().toLowerCase())
         .includes(refQuery);
+    // a cross-ledger reference search spans every FY — the lifecycle of one
+    // document must never be cut at the year boundary
+    const crossFyRef = !!refQuery && !params.headId && !params.partyId && !params.groups;
     const where: Prisma.LedgerEntryWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
+      ...(crossFyRef ? {} : { fyId: session.fyId }),
       ...(ledgerScope
         ? { ...ledgerScope, ...refNoWhere }
         : params.refNo
@@ -215,8 +234,9 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     const siblings = entries.length
       ? await tx.ledgerEntry.findMany({
           where: {
+            // firm-wide (no FY filter): the other legs of a posting may sit in
+            // another year on a cross-FY reference search
             firmId: session.firmId,
-            fyId: session.fyId,
             OR: Array.from(refIdsByType.entries()).map(([refType, ids]) => ({
               refType,
               refId: { in: Array.from(new Set(ids)) },
@@ -338,24 +358,27 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         ? await tx.partyAdvanceUse.findMany({
             where: {
               advance: {
+                // FY continuity: an advance given last year can settle this
+                // year's documents, so the advance itself is not FY-filtered —
+                // the USE date decides which book the row appears in
                 firmId: session.firmId,
-                // FY-scoped like the ledger entries around these rows —
-                // another year's adjustments never merge into this book
-                fyId: session.fyId,
                 deletedAt: null,
                 ...(params.partyId ? { partyId: params.partyId } : {}),
               },
               ...(params.refNo
                 ? { refNo: { contains: params.refNo.trim(), mode: "insensitive" } }
                 : {}),
-              ...(params.dateFrom || params.dateTo
-                ? {
-                    date: {
-                      ...(params.dateFrom ? { gte: new Date(params.dateFrom + "T00:00:00") } : {}),
-                      ...(params.dateTo ? { lte: new Date(params.dateTo + "T23:59:59") } : {}),
-                    },
-                  }
-                : {}),
+              date: {
+                // default window = the current FY, matching the entries around
+                // these rows; an explicit date filter or a cross-FY reference
+                // search widens it
+                ...(params.dateFrom
+                  ? { gte: new Date(params.dateFrom + "T00:00:00") }
+                  : crossFyRef || !currentFy
+                    ? {}
+                    : { gte: currentFy.startDate }),
+                ...(params.dateTo ? { lte: new Date(params.dateTo + "T23:59:59") } : {}),
+              },
             },
             include: { advance: true },
             orderBy: { date: "asc" },
@@ -380,6 +403,25 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       if (p) {
         const opening = toNum(String(p.openingBalance));
         running = p.openingSide === "DEBIT" ? opening : -opening;
+      }
+      // FY continuity: earlier years' net folds into this year's opening —
+      // computed live, so a late entry posted in an old FY corrects every
+      // later year's opening automatically. Account HEADS deliberately do
+      // not carry (income/expense start each year at zero, like Tally).
+      if (trackRunning && priorFyIds.length) {
+        const carried = await tx.ledgerEntry.groupBy({
+          by: ["side"],
+          where: {
+            firmId: session.firmId,
+            fyId: { in: priorFyIds },
+            partyId: params.partyId,
+          },
+          _sum: { amount: true },
+        });
+        for (const c of carried) {
+          const sum = toNum(String(c._sum.amount ?? 0));
+          running += c.side === "DEBIT" ? sum : -sum;
+        }
       }
     }
     // entries before the date filter belong in the opening balance

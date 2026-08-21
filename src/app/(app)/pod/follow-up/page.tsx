@@ -58,8 +58,8 @@ export default async function PodFollowUpPage({
 
     const lrs = await tx.lr.findMany({
       where: {
+        // FY continuity: an old-year LR still missing its POD stays chased here
         firmId: session.firmId,
-        fyId: session.fyId,
         deletedAt: null,
         lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
         lrDate: { lte: cutoff },

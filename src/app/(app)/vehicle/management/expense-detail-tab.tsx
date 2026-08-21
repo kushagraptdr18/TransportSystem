@@ -44,10 +44,11 @@ export async function VehicleExpenseDetailTab({
               }
             : {}),
           // EXPENSE and INCOME vouchers both — income (scrap sale, kiraya)
-          // shows as its own section and nets off the vehicle's cost
+          // shows as its own section and nets off the vehicle's cost.
+          // FY continuity: shuru-se view like the Vehicle P&L — the date
+          // filter alone narrows the period, no FY wall.
           voucher: {
             firmId: session.firmId,
-            fyId: session.fyId,
             deletedAt: null,
           },
         },

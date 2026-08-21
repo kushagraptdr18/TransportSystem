@@ -119,6 +119,33 @@ export default async function SelectFirmPage() {
                           </button>
                         </form>
                       ))}
+                      {/* FY continuity: the NEXT year is always offered — picking
+                          it creates the year and steps in, no setup screen */}
+                      {(() => {
+                        const latest = firm.financialYears[0];
+                        const y = latest.startDate.getFullYear() + 1;
+                        return (
+                          <form action={selectFirm}>
+                            <input type="hidden" name="firmId" value={firm.id} />
+                            <input type="hidden" name="fyId" value="__next__" />
+                            <button
+                              type="submit"
+                              className="group flex w-full items-center gap-3 rounded-xl border border-dashed bg-card px-4 py-3 text-left transition-colors hover:border-primary hover:bg-primary/5"
+                            >
+                              <CalendarRange className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary" />
+                              <span className="flex-1">
+                                <span className="block text-sm font-semibold text-muted-foreground group-hover:text-foreground">
+                                  FY {y}-{y + 1}
+                                </span>
+                                <span className="block text-xs text-muted-foreground">
+                                  naya saal — select karte hi ban jayega
+                                </span>
+                              </span>
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+                            </button>
+                          </form>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>

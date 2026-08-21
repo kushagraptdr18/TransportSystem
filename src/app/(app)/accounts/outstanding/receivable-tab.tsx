@@ -44,7 +44,6 @@ export async function OutstandingReceivableTab({
   const { rows, parties } = await withTenant(session.tenantId, async (tx) => {
     const invoiceWhere: Prisma.InvoiceWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
     };
     if (searchParams.party) invoiceWhere.partyId = searchParams.party;
@@ -52,7 +51,6 @@ export async function OutstandingReceivableTab({
 
     const slipWhere: Prisma.BrokerSlipWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
       partyId: searchParams.party ? searchParams.party : { not: null },
     };
@@ -60,7 +58,6 @@ export async function OutstandingReceivableTab({
 
     const officeWhere: Prisma.OfficeTransactionWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
       txnType: "INCOME",
       // only income booked on credit is receivable — one with a payment mode

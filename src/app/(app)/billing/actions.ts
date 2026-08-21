@@ -169,8 +169,9 @@ async function decorateLrs(
 
 function pendingWhere(session: { firmId: string; fyId: string }, kind: InvoiceKind, partyId: string) {
   return {
+    // FY continuity: an unbilled LR from an earlier year stays offered until
+    // it lands on a bill — pending work is never cut off by the year change
     firmId: session.firmId,
-    fyId: session.fyId,
     deletedAt: null,
     lrType:
       kind === "PART_TRUCK"
@@ -207,7 +208,7 @@ export async function getBillingLrsByIds(ids: string[]): Promise<BillingPendingL
   if (ids.length === 0) return [];
   return withTenant(session.tenantId, async (tx) => {
     const lrs = await tx.lr.findMany({
-      where: { id: { in: ids }, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+      where: { id: { in: ids }, firmId: session.firmId, deletedAt: null },
       include: { items: true },
       orderBy: { lrDate: "asc" },
     });
@@ -233,10 +234,16 @@ export async function resolveBulkLrs(
     const added: BillingPendingLr[] = [];
     const errors: BulkLrError[] = [];
     for (const lrNo of numbers) {
-      const lr = await tx.lr.findFirst({
-        where: { firmId: session.firmId, fyId: session.fyId, lrNo, deletedAt: null },
+      // LR numbers restart each FY, so one number may exist in several years —
+      // prefer the copy that is still unbilled, newest first
+      const candidates = await tx.lr.findMany({
+        where: { firmId: session.firmId, lrNo, deletedAt: null },
         include: { items: true, invoiceLrs: true },
+        orderBy: { lrDate: "desc" },
       });
+      const lr =
+        candidates.find((c) => c.invoiceLrs.length === 0 && c.status !== "BILLED") ??
+        candidates[0];
       if (!lr) {
         errors.push({ lrNo, reason: `LR ${lrNo} not found.` });
         continue;
@@ -603,7 +610,8 @@ export async function saveInvoice(
       // validate LRs & duplicate billing (hard block)
       const lrs = data.lrIds.length
         ? await tx.lr.findMany({
-            where: { id: { in: data.lrIds }, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+            // no FY filter: carried LRs from an earlier year may land on this bill
+            where: { id: { in: data.lrIds }, firmId: session.firmId, deletedAt: null },
             include: { items: true, invoiceLrs: true },
           })
         : [];

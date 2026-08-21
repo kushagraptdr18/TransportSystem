@@ -64,7 +64,6 @@ export async function OutstandingPayableTab({
 
     const chalanWhere: Prisma.ChalanWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
       // cancelled chalans owe nothing
       cancelledAt: null,
@@ -75,7 +74,6 @@ export async function OutstandingPayableTab({
 
     const slipWhere: Prisma.BrokerSlipWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
       ownerId: searchParams.party ? searchParams.party : { not: null },
       ...brokerVehicleOnly,
@@ -84,7 +82,6 @@ export async function OutstandingPayableTab({
 
     const salaryWhere: Prisma.StaffSalaryWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
     };
     if (searchParams.party) salaryWhere.partyId = searchParams.party;
@@ -102,14 +99,12 @@ export async function OutstandingPayableTab({
     // so a party filter simply excludes them
     const hireWhere: Prisma.HireSlipWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
     };
     if (dateWhere) hireWhere.slipDate = dateWhere;
 
     const officeWhere: Prisma.OfficeTransactionWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
       txnType: "EXPENSE",
       // only entries left on credit are payable — one with a payment mode was
@@ -123,7 +118,6 @@ export async function OutstandingPayableTab({
     // while it is on credit
     const vehicleWhere: Prisma.VehicleExpenseVoucherWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
       txnType: "EXPENSE",
       paymentMode: null,
@@ -135,7 +129,6 @@ export async function OutstandingPayableTab({
     // nothing yet and never appears here
     const adblueWhere: Prisma.AdblueTxnWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
       type: "REFILL",
       billNo: { not: null },

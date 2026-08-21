@@ -65,8 +65,8 @@ export async function getPendingBalanceChalans(): Promise<PodChalanOption[]> {
   return withTenant(session.tenantId, async (tx) => {
     const chalans = await tx.chalan.findMany({
       where: {
+        // FY continuity: last year's chalans still awaiting PODs stay listed
         firmId: session.firmId,
-        fyId: session.fyId,
         deletedAt: null,
         isFinal: true,
         paymentStatus: "PENDING",
@@ -109,7 +109,6 @@ export async function getChalanPodLrs(chalanId: string): Promise<PodPendingLr[]>
     tx.lr.findMany({
       where: {
         firmId: session.firmId,
-        fyId: session.fyId,
         deletedAt: null,
         lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
         pods: { none: {} },
@@ -130,7 +129,6 @@ export async function getVehiclePendingPodLrs(vehicleId: string): Promise<PodPen
     tx.lr.findMany({
       where: {
         firmId: session.firmId,
-        fyId: session.fyId,
         vehicleId,
         deletedAt: null,
         lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
@@ -186,17 +184,19 @@ export async function findLrForPod(
 ): Promise<{ ok: true; lr: PodPendingLr } | { ok: false; error: string; alreadyPoded?: boolean }> {
   const session = requireSession();
   await authorize(session, "pod", "view");
-  const lr = await withTenant(session.tenantId, (tx) =>
-    tx.lr.findFirst({
+  // LR numbers restart each FY — prefer the copy still awaiting its POD
+  const lr = await withTenant(session.tenantId, async (tx) => {
+    const candidates = await tx.lr.findMany({
       where: {
         firmId: session.firmId,
-        fyId: session.fyId,
         lrNo: lrNo.trim(),
         deletedAt: null,
       },
       include: { items: true, pods: true },
-    })
-  );
+      orderBy: { lrDate: "desc" },
+    });
+    return candidates.find((c) => c.pods.length === 0) ?? candidates[0] ?? null;
+  });
   if (!lr) return { ok: false, error: `LR ${lrNo} not found.` };
   if (lr.lrType === "CANCELLED") return { ok: false, error: `LR ${lrNo} is cancelled.` };
   if (lr.lrType === "PAPER_CHANGE") {
@@ -279,7 +279,7 @@ export async function savePodBatch(
       for (let i = 0; i < data.lines.length; i++) {
         const line = data.lines[i];
         const lr = await tx.lr.findFirst({
-          where: { id: line.lrId, firmId: session.firmId, fyId: session.fyId, deletedAt: null },
+          where: { id: line.lrId, firmId: session.firmId, deletedAt: null },
           include: { items: true, pods: true },
         });
         if (!lr) throw new PodBatchError("LR not found.");

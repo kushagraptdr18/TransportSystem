@@ -41,7 +41,7 @@ export async function consumeAdvances(
   opts: {
     tenantId: string;
     firmId: string;
-    /** advances never cross a financial year without an explicit carry-forward */
+    /** ignored — FY continuity: an open advance carries into later years */
     fyId?: string;
     partyId: string;
     amount: number;
@@ -56,7 +56,6 @@ export async function consumeAdvances(
   const advances = await tx.partyAdvance.findMany({
     where: {
       firmId: opts.firmId,
-      ...(opts.fyId ? { fyId: opts.fyId } : {}),
       partyId: opts.partyId,
       kind: opts.kind ?? "RECEIVED",
       deletedAt: null,
@@ -111,7 +110,7 @@ export async function listOpenAdvances(
   tx: Tx,
   opts: {
     firmId: string;
-    /** advances never cross a financial year without an explicit carry-forward */
+    /** ignored — FY continuity: an open advance carries into later years */
     fyId?: string;
     partyId: string;
     kinds?: string[];
@@ -124,7 +123,6 @@ export async function listOpenAdvances(
   const advances = await tx.partyAdvance.findMany({
     where: {
       firmId: opts.firmId,
-      ...(opts.fyId ? { fyId: opts.fyId } : {}),
       partyId: opts.partyId,
       deletedAt: null,
       ...(opts.kinds ? { kind: { in: opts.kinds } } : {}),
@@ -173,7 +171,7 @@ export async function applyManualAdvanceUses(
   opts: {
     tenantId: string;
     firmId: string;
-    /** advances never cross a financial year without an explicit carry-forward */
+    /** ignored — FY continuity: an open advance carries into later years */
     fyId?: string;
     partyId: string;
     refType: string;
@@ -200,12 +198,11 @@ export async function applyManualAdvanceUses(
       where: {
         id: advanceId,
         firmId: opts.firmId,
-        ...(opts.fyId ? { fyId: opts.fyId } : {}),
         partyId: opts.partyId,
         deletedAt: null,
       },
     });
-    if (!adv) throw new Error("Advance voucher not found for this party in this financial year");
+    if (!adv) throw new Error("Advance voucher not found for this party");
     if (opts.kinds && !opts.kinds.includes(adv.kind)) {
       throw new Error(
         `Voucher ${adv.voucherNo ?? advanceId} is an advance ${adv.kind.toLowerCase()} and cannot be adjusted here`
@@ -246,10 +243,12 @@ export async function partyAdvanceBalance(
   firmId: string,
   partyId: string,
   kind: "RECEIVED" | "PAID" = "RECEIVED",
-  fyId?: string
+  /** ignored — FY continuity: an open advance carries into later years */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _fyId?: string
 ): Promise<number> {
   const advances = await tx.partyAdvance.findMany({
-    where: { firmId, partyId, kind, deletedAt: null, ...(fyId ? { fyId } : {}) },
+    where: { firmId, partyId, kind, deletedAt: null },
     select: { amount: true, consumedAmount: true },
   });
   return round2(

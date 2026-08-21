@@ -488,9 +488,9 @@ export async function deleteTrip(id: string): Promise<{ ok: true } | { ok: false
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.trip.findFirst({
-        where: { id, firmId: session.firmId, fyId: session.fyId },
+        where: { id, firmId: session.firmId },
       });
-      if (!before) throw new Error("Trip not found in this firm/financial year");
+      if (!before) throw new Error("Trip not found in this firm");
       await tx.trip.update({ where: { id }, data: { deletedAt: new Date() } });
       // release consumed driver advances; drop the pending settlement row
       await tx.driverAdvance.updateMany({
@@ -539,9 +539,10 @@ export async function findTripSources(vehicleId: string, dateIso: string): Promi
   return withTenant(session.tenantId, async (tx) => {
     const [lrs, slips, cities, parties] = await Promise.all([
       tx.lr.findMany({
+        // date-scoped, not FY-scoped: a trip range crossing 31 March must
+        // fetch documents from both years (the trip owns its dates)
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           vehicleId,
           lrDate: range,
           deletedAt: null,
@@ -552,7 +553,6 @@ export async function findTripSources(vehicleId: string, dateIso: string): Promi
       tx.brokerSlip.findMany({
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           vehicleId,
           slipDate: range,
           deletedAt: null,
@@ -662,9 +662,10 @@ export async function getPendingTripDocs(input: {
 
     const [chalans, slips, cities, parties] = await Promise.all([
       tx.chalan.findMany({
+        // date-scoped, not FY-scoped: a trip range crossing 31 March must
+        // fetch documents from both years
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           vehicleId: input.vehicleId,
           chalanDate: range,
           deletedAt: null,
@@ -674,7 +675,6 @@ export async function getPendingTripDocs(input: {
       tx.brokerSlip.findMany({
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           vehicleId: input.vehicleId,
           slipDate: range,
           deletedAt: null,
