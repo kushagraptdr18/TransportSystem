@@ -4,19 +4,23 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
 import { PartiesClient } from "@/components/masters/parties-client";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
+
+const PAGE_SIZE = 100;
 
 export const dynamic = "force-dynamic";
 
 export default async function PartiesPage({
   searchParams,
 }: {
-  searchParams: { q?: string; group?: string; status?: string };
+  searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
   await authorize(session, "masters", "view");
   const q = searchParams.q?.trim();
+  const page = parsePage(searchParams.page);
 
-  const { rows, states, cities } = await withTenant(session.tenantId, async (tx) => {
+  const { rows, total, states, cities } = await withTenant(session.tenantId, async (tx) => {
     // Bank & Cash accounts belong to the Bank/Cash Heads master, not the party ledger
     const where: Prisma.PartyWhereInput = { ledgerGroup: { notIn: ["BANK", "CASH", "CARD"] } };
     if (q) {
@@ -34,16 +38,23 @@ export default async function PartiesPage({
       where.ledgerGroup = searchParams.group as LedgerGroup;
     if (searchParams.status === "active") where.isActive = true;
     if (searchParams.status === "inactive") where.isActive = false;
-    const [rows, states, cities] = await Promise.all([
-      tx.party.findMany({ where, orderBy: { name: "asc" } }),
-      tx.state.findMany({ orderBy: { name: "asc" } }),
-      tx.city.findMany({ orderBy: { name: "asc" } }),
+    const [rows, total, states, cities] = await Promise.all([
+      tx.party.findMany({
+        where,
+        orderBy: [{ name: "asc" }, { id: "asc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
+      }),
+      tx.party.count({ where }),
+      tx.state.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, gstCode: true } }),
+      tx.city.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
     ]);
-    return { rows, states, cities };
+    return { rows, total, states, cities };
   });
 
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
   return (
+    <>
     <PartiesClient
       rows={rows.map((r) => ({
         id: r.id,
@@ -75,5 +86,15 @@ export default async function PartiesPage({
       cityOptions={cities.map((c) => ({ value: c.id, label: c.name }))}
       canDelete={canDelete}
     />
+    <div className="px-4 pb-4">
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/masters/parties"
+        searchParams={searchParams}
+      />
+    </div>
+    </>
   );
 }

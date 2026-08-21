@@ -55,6 +55,7 @@ export function DocModule({
   remove,
   canDelete,
   numericFields,
+  totals,
 }: {
   title: string;
   newLabel?: string;
@@ -69,6 +70,11 @@ export function DocModule({
   canDelete: boolean;
   /** form fields coerced to numbers before save */
   numericFields?: string[];
+  /**
+   * Footer totals by column key over the FULL filtered set (rows may be one
+   * page of a paginated register). Falls back to summing the visible rows.
+   */
+  totals?: Record<string, number>;
 }) {
   const columnDefs = React.useMemo<ColumnDef<DocRow, unknown>[]>(
     () =>
@@ -80,7 +86,9 @@ export function DocModule({
           numeric: c.kind === "money",
           total:
             c.kind === "money" && c.total !== false
-              ? (all: DocRow[]) => formatMoney(all.reduce((s, r) => s + toNum(r[c.key]), 0))
+              ? totals && c.key in totals
+                ? formatMoney(totals[c.key])
+                : (all: DocRow[]) => formatMoney(all.reduce((s, r) => s + toNum(r[c.key]), 0))
               : undefined,
         } satisfies DataTableColumnMeta<DocRow>,
         cell: ({ row }) => {
@@ -91,7 +99,7 @@ export function DocModule({
           return String(v);
         },
       })),
-    [columns]
+    [columns, totals]
   );
 
   const exportColumns = React.useMemo<ExportColumn<DocRow>[]>(

@@ -1,12 +1,17 @@
 import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { getPartyOptions, getVehicleOptions } from "@/lib/lookups";
+import { toNum } from "@/lib/utils";
 import { FilterBar } from "@/components/data/filter-bar";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import {
   VoucherRegisterTable,
   RegisterRow,
+  type VoucherRegisterTotals,
 } from "@/components/accounts/voucher-register-table";
 import { VoucherType, ModuleLink, Prisma } from "@prisma/client";
+
+const PAGE_SIZE = 100;
 
 const MODULE_LINKS = [
   "BILLING",
@@ -65,13 +70,31 @@ export async function VoucherRegisterTab({
       : {}),
   };
 
-  const rows: RegisterRow[] = await withTenant(session.tenantId, async (tx) => {
-    const [vouchers, parties] = await Promise.all([
-      tx.voucher.findMany({ where, orderBy: [{ voucherDate: "asc" }, { voucherNo: "asc" }] }),
+  const page = parsePage(searchParams.page);
+  const { rows, total, totals } = await withTenant(session.tenantId, async (tx) => {
+    const [vouchers, total, agg, parties] = await Promise.all([
+      tx.voucher.findMany({
+        where,
+        orderBy: [{ voucherDate: "asc" }, { voucherNo: "asc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
+      }),
+      tx.voucher.count({ where }),
+      // footer totals over the FULL filtered set — the table only gets one page
+      tx.voucher.aggregate({
+        where,
+        _sum: { amount: true, tdsAmt: true, deduction: true, netAmount: true },
+      }),
       tx.party.findMany({ select: { id: true, name: true } }),
     ]);
     const partyName = new Map(parties.map((p) => [p.id, p.name]));
-    return vouchers.map((v) => ({
+    const totals: VoucherRegisterTotals = {
+      amount: toNum(agg._sum.amount),
+      tdsAmt: toNum(agg._sum.tdsAmt),
+      deduction: toNum(agg._sum.deduction),
+      netAmount: toNum(agg._sum.netAmount),
+    };
+    const rows: RegisterRow[] = vouchers.map((v) => ({
       id: v.id,
       voucherNo: v.voucherNo,
       voucherDate: v.voucherDate.toISOString(),
@@ -85,6 +108,7 @@ export async function VoucherRegisterTab({
       deduction: Number(v.deduction),
       netAmount: Number(v.netAmount),
     }));
+    return { rows, total, totals };
   });
 
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
@@ -116,7 +140,14 @@ export async function VoucherRegisterTab({
           { type: "combobox", key: "vehicle", label: "Vehicle", options: vehicleOptions },
         ]}
       />
-      <VoucherRegisterTable rows={rows} canDelete={canDelete} />
+      <VoucherRegisterTable rows={rows} canDelete={canDelete} totals={totals} />
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/accounts/vouchers"
+        searchParams={searchParams}
+      />
     </div>
   );
 }

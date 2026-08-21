@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
@@ -23,14 +24,24 @@ const COOLING_DAYS = 20;
 const MIN_TRIPS = 3;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-export default async function RoutesPage() {
-  const session = requireSession();
-  await authorize(session, "reports", "view");
+/**
+ * The heartbeat scans every LR/slip/chalan ever entered — heavy, but the
+ * answer ("which lanes are going cold") only moves at day granularity, so a
+ * short cache makes repeat visits free without meaningfully staling the data.
+ */
+function getRouteRows(tenantId: string, firmId: string): Promise<RouteRow[]> {
+  return unstable_cache(
+    () => computeRouteRows(tenantId, firmId),
+    ["route-heartbeat", tenantId, firmId],
+    { revalidate: 300 }
+  )();
+}
 
-  const data = await withTenant(session.tenantId, async (tx) => {
+async function computeRouteRows(tenantId: string, firmId: string): Promise<RouteRow[]> {
+  const data = await withTenant(tenantId, async (tx) => {
     // route activity continues across FYs — a lane's history does not reset
     // on 1 April (FY continuity)
-    const scope = { firmId: session.firmId, deletedAt: null as null };
+    const scope = { firmId, deletedAt: null as null };
     const [lrs, slips, chalans, cities, parties, vehicles] = await Promise.all([
       tx.lr.findMany({
         where: { ...scope, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } },
@@ -240,6 +251,12 @@ export default async function RoutesPage() {
     });
 
   rows.sort((a, b) => b.daysSince - a.daysSince);
+  return rows;
+}
 
+export default async function RoutesPage() {
+  const session = requireSession();
+  await authorize(session, "reports", "view");
+  const rows = await getRouteRows(session.tenantId, session.firmId);
   return <RoutesClient rows={rows} />;
 }

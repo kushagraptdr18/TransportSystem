@@ -4,19 +4,23 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate } from "@/lib/utils";
 import { DocModule } from "@/components/data/doc-module";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { saveArrival, deleteArrival } from "./actions";
+
+const PAGE_SIZE = 100;
 
 export const dynamic = "force-dynamic";
 
 export default async function ArrivalPage({
   searchParams,
 }: {
-  searchParams: { date_from?: string; date_to?: string };
+  searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
   await authorize(session, "loading", "view");
 
-  const rows = await withTenant(session.tenantId, (tx) => {
+  const page = parsePage(searchParams.page);
+  const { rows, total } = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.ArrivalWhereInput = { firmId: session.firmId, fyId: session.fyId };
     if (searchParams.date_from || searchParams.date_to) {
       where.unloadDate = {
@@ -24,11 +28,21 @@ export default async function ArrivalPage({
         ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
       };
     }
-    return tx.arrival.findMany({ where, orderBy: [{ unloadDate: "desc" }] });
+    const [rows, total] = await Promise.all([
+      tx.arrival.findMany({
+        where,
+        orderBy: [{ unloadDate: "desc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
+      }),
+      tx.arrival.count({ where }),
+    ]);
+    return { rows, total };
   });
 
   return (
-    <DocModule
+    <>
+      <DocModule
       title="Unloading / Arrival"
       newLabel="New Arrival"
       exportName="arrivals"
@@ -59,6 +73,16 @@ export default async function ArrivalPage({
         { name: "manifestNo", label: "Manifest No", type: "text" },
       ]}
       defaults={{ arrivalNo: "", unloadDate: formatDate(new Date()) }}
-    />
+      />
+      <div className="px-4 pb-4">
+        <PaginationBar
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={total}
+          basePath="/arrival"
+          searchParams={searchParams}
+        />
+      </div>
+    </>
   );
 }

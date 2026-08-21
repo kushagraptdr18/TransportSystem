@@ -5,9 +5,9 @@ services:
     # free tier spins down after 15 min idle → 30-60s cold start on the next
     # visit; move to "starter" the moment real users depend on this
     plan: free
-    # MUST match the Neon project's region — the app runs many queries per
-    # page, so cross-region round-trips multiply into seconds of latency.
-    # singapore is the closest Render region to Neon ap-southeast-1
+    # MUST match the database's region — the app runs many queries per page,
+    # so cross-region round-trips multiply into seconds of latency. Create the
+    # Supabase project in ap-southeast-1 (Singapore) to sit next to this.
     region: singapore
     # build regenerates the Prisma client; start applies migrations (works even
     # if the dashboard overrides this command with a plain npm build)
@@ -17,10 +17,14 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20.12.2
+      # Supabase (Singapore project): see .env.example for the exact string
+      # shapes — DATABASE_URL is the "Transaction" pooler (port 6543, with
+      # ?pgbouncer=true), DIRECT_DATABASE_URL the direct 5432 connection that
+      # prisma migrate needs
       - key: DATABASE_URL
-        sync: false # paste your Neon pooled connection string in the dashboard
+        sync: false # paste the Supabase pooled (6543) connection string in the dashboard
       - key: DIRECT_DATABASE_URL
-        sync: false # paste your Neon direct (non-pooled) connection string
+        sync: false # paste the Supabase direct (5432) connection string
       - key: AUTH_SECRET
         generateValue: true
       - key: UPLOAD_DIR

@@ -35,19 +35,35 @@ const TYPE_VARIANT: Record<string, "default" | "destructive" | "secondary" | "ou
   JOURNAL: "outline",
 };
 
-function money(key: keyof RegisterRow & string): DataTableColumnMeta<RegisterRow> {
-  return {
-    numeric: true,
-    total: (rows: RegisterRow[]) =>
-      formatMoney(rows.reduce((s, r) => s + (Number(r[key]) || 0), 0)),
-  };
+export interface VoucherRegisterTotals {
+  amount: number;
+  tdsAmt: number;
+  deduction: number;
+  netAmount: number;
 }
 
-export function VoucherRegisterTable({ rows, canDelete }: { rows: RegisterRow[]; canDelete: boolean }) {
+export function VoucherRegisterTable({
+  rows,
+  canDelete,
+  totals,
+}: {
+  rows: RegisterRow[];
+  canDelete: boolean;
+  /** register-wide totals over the FULL filtered set (rows may be one page) */
+  totals?: VoucherRegisterTotals;
+}) {
   const router = useRouter();
   const { toast } = useToast();
 
   const columns = React.useMemo<ColumnDef<RegisterRow, unknown>[]>(() => {
+    // footer totals: prefer the server-computed full-set figure; fall back to
+    // summing the visible rows when the prop is absent
+    const money = (key: keyof VoucherRegisterTotals): DataTableColumnMeta<RegisterRow> => ({
+      numeric: true,
+      total: totals
+        ? formatMoney(totals[key])
+        : (rs: RegisterRow[]) => formatMoney(rs.reduce((s, r) => s + (Number(r[key]) || 0), 0)),
+    });
     const cols: ColumnDef<RegisterRow, unknown>[] = [
       { accessorKey: "voucherNo", header: "Voucher No" },
       {
@@ -125,7 +141,7 @@ export function VoucherRegisterTable({ rows, canDelete }: { rows: RegisterRow[];
       });
     }
     return cols;
-  }, [canDelete, router, toast]);
+  }, [canDelete, router, toast, totals]);
 
   const exportColumns: ExportColumn<RegisterRow>[] = [
     { header: "Voucher No", key: "voucherNo" },

@@ -4,29 +4,41 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { toNum } from "@/lib/utils";
 import { RatesClient } from "@/components/masters/rates-client";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
+
+const PAGE_SIZE = 100;
 
 export const dynamic = "force-dynamic";
 
 export default async function RatesPage({
   searchParams,
 }: {
-  searchParams: { party?: string; source?: string; dest?: string };
+  searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
   await authorize(session, "masters", "view");
 
-  const { rows, parties, products, cities } = await withTenant(session.tenantId, async (tx) => {
+  const page = parsePage(searchParams.page);
+  const { rows, total, parties, products, cities } = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.RateMasterWhereInput = {};
     if (searchParams.party) where.partyId = searchParams.party;
     if (searchParams.source) where.sourceCityId = searchParams.source;
     if (searchParams.dest) where.destCityId = searchParams.dest;
-    const [rows, parties, products, cities] = await Promise.all([
-      tx.rateMaster.findMany({ where }),
-      tx.party.findMany({ where: { isActive: true }, orderBy: { name: "asc" } }),
-      tx.product.findMany({ orderBy: { name: "asc" } }),
-      tx.city.findMany({ orderBy: { name: "asc" } }),
+    const [rows, total, parties, products, cities] = await Promise.all([
+      // RateMaster has no party relation, so the DB cannot sort by party
+      // name; group deterministically by party instead so pages are stable
+      tx.rateMaster.findMany({
+        where,
+        orderBy: [{ partyId: "asc" }, { sourceCityId: "asc" }, { destCityId: "asc" }, { id: "asc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
+      }),
+      tx.rateMaster.count({ where }),
+      tx.party.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+      tx.product.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
+      tx.city.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
     ]);
-    return { rows, parties, products, cities };
+    return { rows, total, parties, products, cities };
   });
 
   const partyById = new Map(parties.map((p) => [p.id, p.name]));
@@ -36,6 +48,7 @@ export default async function RatesPage({
   const canDelete = session.role === "ADMIN" || session.role === "OWNER";
   const n = (v: unknown) => toNum(String(v));
   return (
+    <>
     <RatesClient
       rows={rows
         .map((r) => ({
@@ -70,5 +83,15 @@ export default async function RatesPage({
       cityOptions={cities.map((c) => ({ value: c.id, label: c.name }))}
       canDelete={canDelete}
     />
+    <div className="px-4 pb-4">
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/masters/rates"
+        searchParams={searchParams}
+      />
+    </div>
+    </>
   );
 }

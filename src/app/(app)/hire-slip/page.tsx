@@ -4,19 +4,23 @@ import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { formatDate, toNum } from "@/lib/utils";
 import { DocModule } from "@/components/data/doc-module";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { saveHireSlip, deleteHireSlip } from "./actions";
+
+const PAGE_SIZE = 100;
 
 export const dynamic = "force-dynamic";
 
 export default async function HireSlipPage({
   searchParams,
 }: {
-  searchParams: { date_from?: string; date_to?: string; vehicle?: string };
+  searchParams: Record<string, string | undefined>;
 }) {
   const session = requireSession();
   await authorize(session, "hireslip", "view");
 
-  const { rows, vehicles, cities } = await withTenant(session.tenantId, async (tx) => {
+  const page = parsePage(searchParams.page);
+  const { rows, total, totals, vehicles, cities } = await withTenant(session.tenantId, async (tx) => {
     const where: Prisma.HireSlipWhereInput = {
       firmId: session.firmId,
       fyId: session.fyId,
@@ -29,12 +33,33 @@ export default async function HireSlipPage({
         ...(searchParams.date_to ? { lte: new Date(searchParams.date_to + "T23:59:59") } : {}),
       };
     }
-    const [rows, vehicles, cities] = await Promise.all([
-      tx.hireSlip.findMany({ where, orderBy: [{ slipDate: "desc" }, { slipNo: "desc" }] }),
-      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
-      tx.city.findMany({ orderBy: { name: "asc" } }),
+    const [rows, total, agg, vehicles, cities] = await Promise.all([
+      tx.hireSlip.findMany({
+        where,
+        orderBy: [{ slipDate: "desc" }, { slipNo: "desc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
+      }),
+      tx.hireSlip.count({ where }),
+      // footer totals over the FULL filtered set — the table only gets one page
+      tx.hireSlip.aggregate({
+        where,
+        _sum: { lorryHire: true, totalHire: true, advance: true, balance: true },
+      }),
+      tx.vehicle.findMany({
+        where: { isActive: true },
+        orderBy: { number: "asc" },
+        select: { id: true, number: true },
+      }),
+      tx.city.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
     ]);
-    return { rows, vehicles, cities };
+    const totals = {
+      lorryHire: toNum(agg._sum.lorryHire),
+      totalHire: toNum(agg._sum.totalHire),
+      advance: toNum(agg._sum.advance),
+      balance: toNum(agg._sum.balance),
+    };
+    return { rows, total, totals, vehicles, cities };
   });
 
   const vehicleById = new Map(vehicles.map((v) => [v.id, v.number]));
@@ -43,8 +68,9 @@ export default async function HireSlipPage({
   const n = (v: unknown) => toNum(String(v));
 
   return (
-    <DocModule
-      title="Hire Slip"
+    <>
+      <DocModule
+        title="Hire Slip"
       exportName="hire-slips"
       canDelete={session.role === "ADMIN" || session.role === "OWNER"}
       save={saveHireSlip}
@@ -160,6 +186,17 @@ export default async function HireSlipPage({
         "lessSc",
         "advance",
       ]}
-    />
+      totals={totals}
+      />
+      <div className="px-4 pb-4">
+        <PaginationBar
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={total}
+          basePath="/hire-slip"
+          searchParams={searchParams}
+        />
+      </div>
+    </>
   );
 }
