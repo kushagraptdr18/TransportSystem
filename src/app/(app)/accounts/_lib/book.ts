@@ -89,9 +89,9 @@ export async function ledgerBookRows(params: BookParams): Promise<{
       // No of some other party must never appear in the dropdowns
       tx.ledgerEntry.groupBy({
         by: ["refType"],
+        // firm-wide: a ref type used only in an earlier year stays offered
         where: {
           firmId: session.firmId,
-          fyId: session.fyId,
           ...(params.headId
             ? { accountHeadId: params.headId }
             : params.partyId
@@ -107,9 +107,11 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         : null;
     // no take-limit: a distinct list of one ledger's reference numbers is
     // small, and a silent cap hid valid references beyond the first 1000
+    // firm-wide (no FY): the dropdown must offer old-year references too,
+    // since a reference search spans every year
     const refNoRows = ledgerOnly
       ? await tx.ledgerEntry.findMany({
-          where: { firmId: session.firmId, fyId: session.fyId, ...ledgerOnly },
+          where: { firmId: session.firmId, ...ledgerOnly },
           select: { refNo: true },
           distinct: ["refNo"],
           orderBy: { refNo: "asc" },
@@ -172,9 +174,10 @@ export async function ledgerBookRows(params: BookParams): Promise<{
         .split(",")
         .map((t) => t.trim().toLowerCase())
         .includes(refQuery);
-    // a cross-ledger reference search spans every FY — the lifecycle of one
-    // document must never be cut at the year boundary
-    const crossFyRef = !!refQuery && !params.headId && !params.partyId && !params.groups;
+    // ANY reference search spans every FY — inside a selected ledger or
+    // across all of them, the lifecycle of one document must never be cut at
+    // the year boundary (last year's bill + this year's receipt together)
+    const crossFyRef = !!refQuery;
     // date filter beats FY: an explicit range lists entries from EVERY year
     // it covers (1/4/26–31/5/27 shows both years continuously); without dates
     // the book stays scoped to the session FY + carried opening
