@@ -336,6 +336,8 @@ export function FilterBar({ filters, className }: FilterBarProps) {
         if (v === null || v === "") params.delete(k);
         else params.set(k, v);
       }
+      // any filter change invalidates the current page number
+      params.delete("page");
       router.replace(`${pathname}?${params.toString()}`, { scroll: false });
     },
     [router, pathname, searchParams]

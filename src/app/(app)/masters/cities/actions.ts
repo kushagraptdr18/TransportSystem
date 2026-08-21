@@ -1,10 +1,11 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/session";
 import { runImport, type ImportSummary } from "@/lib/import-core";
 import { authorize } from "@/lib/authz";
+import { lookupTag } from "@/lib/cached-lookups";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { actionError, optStr, zodError, type ActionResult } from "../_lib/util";
@@ -44,6 +45,7 @@ export async function saveCity(input: unknown): Promise<ActionResult> {
       return row.id;
     });
     revalidatePath("/masters/cities");
+    revalidateTag(lookupTag.cities(session.tenantId));
     return { ok: true, id };
   } catch (e) {
     return actionError(e);
@@ -60,6 +62,7 @@ export async function deleteCity(id: string): Promise<ActionResult> {
       await audit(tx, session, { entity: "City", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/masters/cities");
+    revalidateTag(lookupTag.cities(session.tenantId));
     return { ok: true, id };
   } catch (e) {
     return actionError(e);
@@ -71,7 +74,7 @@ export async function importCities(formData: FormData): Promise<ImportSummary> {
   const session = requireSession();
   await authorize(session, "masters", "create");
   const file = formData.get("file");
-  return withTenant(session.tenantId, async (tx) =>
+  const summary = await withTenant(session.tenantId, async (tx) =>
     runImport(file instanceof File ? file : null, ["CITY", "STATE"], async (rec) => {
       const name = rec["CITY"].toUpperCase();
       if (!name) throw new Error("City name is required");
@@ -91,4 +94,6 @@ export async function importCities(formData: FormData): Promise<ImportSummary> {
       return "created";
     })
   );
+  revalidateTag(lookupTag.cities(session.tenantId));
+  return summary;
 }

@@ -1,11 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { Role } from "@prisma/client";
 import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
+import { userActiveTag, permsTag } from "@/lib/cached-auth";
 import { withTenant } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { actionError, zodError, type ActionResult } from "../../masters/_lib/util";
@@ -96,6 +97,9 @@ export async function saveUser(input: unknown): Promise<ActionResult> {
       return row.id;
     });
     revalidatePath("/settings/users");
+    // drop the cached isActive/permission checks so the change bites immediately
+    revalidateTag(userActiveTag(id));
+    revalidateTag(permsTag(session.tenantId));
     return { ok: true, id };
   } catch (e) {
     return actionError(e);
@@ -136,6 +140,9 @@ export async function deleteUser(id: string): Promise<ActionResult> {
       });
     });
     revalidatePath("/settings/users");
+    // drop the cached isActive/permission checks so the change bites immediately
+    revalidateTag(userActiveTag(id));
+    revalidateTag(permsTag(session.tenantId));
     return { ok: true, id };
   } catch (e) {
     return actionError(e);

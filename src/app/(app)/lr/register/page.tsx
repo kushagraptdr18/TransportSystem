@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { withTenant } from "@/lib/db";
 import { formatDate, toNum } from "@/lib/utils";
 import { FilterBar, type FilterDef } from "@/components/data/filter-bar";
+import { PaginationBar, parsePage } from "@/components/data/pagination-bar";
 import { LrRegisterTable, type LrRegisterRow } from "@/components/lr/lr-register-table";
+
+const PAGE_SIZE = 100;
 
 export const dynamic = "force-dynamic";
 
@@ -67,20 +70,32 @@ export default async function LrRegisterPage({
     where.status = searchParams.status as (typeof LR_STATUSES)[number];
   }
 
-  const { lrs, cities, parties, vehicles } = await withTenant(session.tenantId, async (tx) => {
-    const [lrs, cities, parties, vehicles, partyMap] = await Promise.all([
+  const page = parsePage(searchParams.page);
+  const { lrs, total, totals, cities, parties, vehicles } = await withTenant(session.tenantId, async (tx) => {
+    const [lrs, total, freightAgg, wtAgg, cities, parties, vehicles, partyMap] = await Promise.all([
       tx.lr.findMany({
         where,
         include: { items: true },
         orderBy: [{ lrDate: "desc" }, { lrNo: "desc" }],
+        take: PAGE_SIZE,
+        skip: (page - 1) * PAGE_SIZE,
       }),
-      tx.city.findMany({ orderBy: { name: "asc" } }),
+      tx.lr.count({ where }),
+      // register-wide totals over the full filtered set — the table only
+      // receives one page of rows, so it cannot compute these itself
+      tx.lr.aggregate({ where, _sum: { freight: true } }),
+      tx.lrItem.aggregate({
+        where: { lr: where },
+        _sum: { actualWt: true, chargeWt: true },
+      }),
+      tx.city.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
       tx.party.findMany({
         where: { ledgerGroup: "CONSIGNEE_CONSIGNOR" },
         orderBy: { name: "asc" },
+        select: { id: true, name: true },
       }),
-      tx.vehicle.findMany({ orderBy: { number: "asc" } }),
-      tx.party.findMany(),
+      tx.vehicle.findMany({ orderBy: { number: "asc" }, select: { id: true, number: true } }),
+      tx.party.findMany({ select: { id: true, name: true } }),
     ]);
     const cityById = new Map(cities.map((c) => [c.id, c.name]));
     const partyById = new Map(partyMap.map((p) => [p.id, p.name]));
@@ -111,7 +126,13 @@ export default async function LrRegisterPage({
       status: lr.status,
       isDummy: lr.isDummy,
     }));
-    return { lrs: rows, cities, parties, vehicles };
+    const totals = {
+      count: total,
+      freight: toNum(freightAgg._sum.freight),
+      actualWt: toNum(wtAgg._sum.actualWt),
+      chargeWt: toNum(wtAgg._sum.chargeWt),
+    };
+    return { lrs: rows, total, totals, cities, parties, vehicles };
   });
 
   const cityOptions = cities.map((c) => ({ value: c.id, label: c.name }));
@@ -156,7 +177,14 @@ export default async function LrRegisterPage({
         </Button>
       </div>
       <FilterBar filters={filters} />
-      <LrRegisterTable rows={lrs} canDelete={canDelete} />
+      <LrRegisterTable rows={lrs} canDelete={canDelete} totals={totals} />
+      <PaginationBar
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        basePath="/lr/register"
+        searchParams={searchParams}
+      />
     </div>
   );
 }
