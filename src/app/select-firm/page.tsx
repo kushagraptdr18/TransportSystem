@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { Building2, CalendarRange, ChevronRight, LogOut, MapPin, Truck } from "lucide-react";
+import { Building2, LogOut, MapPin, Truck } from "lucide-react";
 import { withTenant } from "@/lib/db";
 import { getSession } from "@/lib/session";
 import { formatDate } from "@/lib/utils";
@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { selectFirm } from "./actions";
+import { FyButton } from "./fy-button";
 
 export const dynamic = "force-dynamic";
 
@@ -104,19 +105,10 @@ export default async function SelectFirmPage() {
                         <form key={fy.id} action={selectFirm}>
                           <input type="hidden" name="firmId" value={firm.id} />
                           <input type="hidden" name="fyId" value={fy.id} />
-                          <button
-                            type="submit"
-                            className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left transition-colors hover:border-primary hover:bg-primary/5"
-                          >
-                            <CalendarRange className="h-4 w-4 shrink-0 text-primary" />
-                            <span className="flex-1">
-                              <span className="block text-sm font-semibold">FY {fy.label}</span>
-                              <span className="block text-xs text-muted-foreground">
-                                {formatDate(fy.startDate)} — {formatDate(fy.endDate)}
-                              </span>
-                            </span>
-                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-                          </button>
+                          <FyButton
+                            label={`FY ${fy.label}`}
+                            sub={`${formatDate(fy.startDate)} — ${formatDate(fy.endDate)}`}
+                          />
                         </form>
                       ))}
                       {/* FY continuity: the NEXT year is always offered — picking
@@ -128,21 +120,11 @@ export default async function SelectFirmPage() {
                           <form action={selectFirm}>
                             <input type="hidden" name="firmId" value={firm.id} />
                             <input type="hidden" name="fyId" value="__next__" />
-                            <button
-                              type="submit"
-                              className="group flex w-full items-center gap-3 rounded-xl border border-dashed bg-card px-4 py-3 text-left transition-colors hover:border-primary hover:bg-primary/5"
-                            >
-                              <CalendarRange className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary" />
-                              <span className="flex-1">
-                                <span className="block text-sm font-semibold text-muted-foreground group-hover:text-foreground">
-                                  FY {y}-{y + 1}
-                                </span>
-                                <span className="block text-xs text-muted-foreground">
-                                  naya saal — select karte hi ban jayega
-                                </span>
-                              </span>
-                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-                            </button>
+                            <FyButton
+                              label={`FY ${y}-${y + 1}`}
+                              sub="naya saal — select karte hi ban jayega"
+                              dashed
+                            />
                           </form>
                         );
                       })()}
