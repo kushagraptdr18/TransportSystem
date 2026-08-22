@@ -124,12 +124,18 @@ export async function getLrSummary(): Promise<
         deletedAt: null,
         lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] as ("CANCELLED" | "PAPER_CHANGE")[] },
       };
+      // pending pools span earlier years but never LATER ones — a next-FY LR
+      // must not appear in this year's summary (no forward leak)
+      const fy = await tx.financialYear.findUnique({ where: { id: session.fyId } });
       const [lrsFy, lrsAll, sets] = await Promise.all([
         tx.lr.findMany({
           where: { ...lrWhere, fyId: session.fyId },
           select: { id: true, freight: true },
         }),
-        tx.lr.findMany({ where: lrWhere, select: { id: true, freight: true } }),
+        tx.lr.findMany({
+          where: { ...lrWhere, ...(fy ? { lrDate: { lte: fy.endDate } } : {}) },
+          select: { id: true, freight: true },
+        }),
         loadSets(tx, firmScope),
       ]);
       // card order fixed by the dashboard spec; UNBILLED has no card any more
@@ -197,9 +203,14 @@ export async function getLrDetail(input: {
         : {};
     return await withTenant(session.tenantId, async (tx) => {
       const sets = await loadSets(tx, { firmId: session.firmId });
+      // no forward leak on cross-FY pending views: bound to this FY's end
+      const fy = CROSS_FY_VIEWS.has(view)
+        ? await tx.financialYear.findUnique({ where: { id: session.fyId } })
+        : null;
+      const fyBound = fy ? { lrDate: { lte: fy.endDate } } : {};
       // totals of the VIEW (before user filters) for the header
       const allOfView = await tx.lr.findMany({
-        where: { ...scope, deletedAt: null, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } },
+        where: { ...scope, ...fyBound, deletedAt: null, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } },
         select: { id: true, freight: true },
       });
       let totalCount = 0;
@@ -213,6 +224,7 @@ export async function getLrDetail(input: {
       const lrs = await tx.lr.findMany({
         where: {
           ...scope,
+          ...(Object.keys(dateWhere).length ? {} : fyBound),
           deletedAt: null,
           lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
           ...dateWhere,

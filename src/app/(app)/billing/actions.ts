@@ -5,6 +5,7 @@ import { requireSession, type Session } from "@/lib/session";
 import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
+import { assertDateInFy } from "@/lib/fy-guard";
 import { computeInvoice, parseBulkLrNumbers } from "@/lib/calc/invoice";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { consumeAdvances, partyAdvanceBalance, restoreAdvanceUses } from "@/lib/party-advance";
@@ -760,6 +761,9 @@ export async function saveInvoice(
         0
       );
 
+      // wrong-FY guard: a FRESH bill's date must belong to the session FY
+      // (an edit keeps its original year, so its date stays with that year)
+      if (!before) await assertDateInFy(tx, session, new Date(data.invoiceDate), "bill entry");
       const invoiceData = {
         tenantId: session.tenantId,
         firmId: session.firmId,

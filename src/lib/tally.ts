@@ -31,6 +31,9 @@ export interface TallyVoucher {
   date: string;
   /** supplier invoice no (Purchase "Reg No") — omitted otherwise */
   reference?: string;
+  /** Tally VOUCHERNUMBER — the source document's own number (chalan no,
+      invoice no, voucher no), so Tally doesn't assign a manual number */
+  voucherNo?: string;
   narration: string;
   lines: TallyLine[];
 }
@@ -76,6 +79,7 @@ function voucherXml(v: TallyVoucher): string {
     `<TALLYMESSAGE xmlns:UDF="TallyUDF"><VOUCHER VCHTYPE="${v.type}" ACTION="Create">` +
     `<DATE>${v.date}</DATE><EFFECTIVEDATE>${v.date}</EFFECTIVEDATE>` +
     `<VOUCHERTYPENAME>${v.type}</VOUCHERTYPENAME>` +
+    (v.voucherNo ? `<VOUCHERNUMBER>${esc(v.voucherNo)}</VOUCHERNUMBER>` : "") +
     (v.reference ? `<REFERENCE>${esc(v.reference)}</REFERENCE>` : "") +
     `<NARRATION>${esc(v.narration)}</NARRATION><ISINVOICE>No</ISINVOICE>` +
     `${lines}</VOUCHER></TALLYMESSAGE>`

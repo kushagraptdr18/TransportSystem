@@ -42,19 +42,27 @@ export async function OutstandingReceivableTab({
       : undefined;
 
   const { rows, parties } = await withTenant(session.tenantId, async (tx) => {
+    // no forward leak: documents dated in a LATER FY never appear while
+    // standing in an earlier one — bound to this FY's end unless the user's
+    // own date filter already set an upper edge
+    const sessionFy = await tx.financialYear.findUnique({ where: { id: session.fyId } });
+    const effDate = {
+      ...(dateWhere ?? {}),
+      ...(dateWhere?.lte || !sessionFy ? {} : { lte: sessionFy.endDate }),
+    };
     const invoiceWhere: Prisma.InvoiceWhereInput = {
       firmId: session.firmId,
       deletedAt: null,
     };
     if (searchParams.party) invoiceWhere.partyId = searchParams.party;
-    if (dateWhere) invoiceWhere.invoiceDate = dateWhere;
+    invoiceWhere.invoiceDate = effDate;
 
     const slipWhere: Prisma.BrokerSlipWhereInput = {
       firmId: session.firmId,
       deletedAt: null,
       partyId: searchParams.party ? searchParams.party : { not: null },
     };
-    if (dateWhere) slipWhere.slipDate = dateWhere;
+    slipWhere.slipDate = effDate;
 
     const officeWhere: Prisma.OfficeTransactionWhereInput = {
       firmId: session.firmId,
@@ -65,7 +73,7 @@ export async function OutstandingReceivableTab({
       paymentMode: null,
       partyId: searchParams.party ? searchParams.party : { not: null },
     };
-    if (dateWhere) officeWhere.date = dateWhere;
+    officeWhere.date = effDate;
 
     const [invoices, slips, office, parties, settled] = await Promise.all([
       source && source !== "INVOICE"

@@ -399,17 +399,28 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
 
 export async function getOutstandingAgeing(input: {
   side: OutSide;
-}): Promise<{ ok: true; data: OutstandingData } | { ok: false; error: string }> {
+  /** view another FY's position — docs dated up to that year's end */
+  fyId?: string | null;
+}): Promise<{ ok: true; data: OutstandingData; fys: { id: string; label: string }[] } | { ok: false; error: string }> {
   const session = requireSession();
   try {
-    // FY continuity: outstanding never expires with the year — every unpaid
-    // document of the firm counts, whichever FY it was made in
+    // FY continuity, both directions: outstanding never expires with the year
+    // (old unpaid documents keep counting), but a document also never leaks
+    // BACKWARDS — a bill dated in a later FY must not appear while viewing an
+    // earlier year. Docs are bounded to the viewed FY's end date.
     const scope = { firmId: session.firmId };
     const data = await withTenant(session.tenantId, async (tx) => {
-      const [docs, parties] = await Promise.all([
+      const fys = await tx.financialYear.findMany({
+        where: { firmId: session.firmId },
+        orderBy: { startDate: "desc" },
+        select: { id: true, label: true, endDate: true },
+      });
+      const viewFy = fys.find((f) => f.id === (input.fyId || session.fyId)) ?? fys[0];
+      const [collected, parties] = await Promise.all([
         collect(tx, scope, input.side),
         tx.party.findMany({ select: { id: true, name: true, mobile: true } }),
       ]);
+      const docs = viewFy ? collected.filter((d) => d.date <= viewFy.endDate) : collected;
       const partyById = new Map(parties.map((p) => [p.id, p]));
       const now = Date.now();
 
@@ -469,9 +480,10 @@ export async function getOutstandingAgeing(input: {
         total: round2(rows.reduce((s, r) => s + r.total, 0)),
         parties: rows.length,
       };
-      return { rows, totals };
+      return { rows, totals, fys: fys.map((f) => ({ id: f.id, label: f.label })) };
     });
-    return { ok: true, data };
+    const { fys, ...rest } = data;
+    return { ok: true, data: rest, fys };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : "Failed to load outstanding" };
   }

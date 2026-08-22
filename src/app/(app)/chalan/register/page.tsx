@@ -65,9 +65,12 @@ export default async function ChalanRegisterPage({
           : {}),
         ...(q ? { chalanNo: { contains: q, mode: "insensitive" } } : {}),
         ...(broker ? { brokerId: broker } : {}),
-        // a picked vehicle must still belong to the active tab's universe
-        vehicleId:
-          vehicle && vehicleIdFilter.includes(vehicle) ? vehicle : { in: vehicleIdFilter },
+        // a picked vehicle filters HARD: inside the tab's universe it narrows
+        // to that vehicle, outside it the list goes empty — never silently
+        // ignored (that read as "vehicle filter not working")
+        vehicleId: vehicle
+          ? { in: vehicleIdFilter.includes(vehicle) ? [vehicle] : [] }
+          : { in: vehicleIdFilter },
         ...(status === "final" ? { isFinal: true } : status === "draft" ? { isFinal: false } : {}),
         // the payment filter is applied after settlement is computed, since a
         // voucher can settle a chalan whose stored status still says PENDING
@@ -94,7 +97,10 @@ export default async function ChalanRegisterPage({
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     });
-    const vehicles = allVehicles.filter((v) => v.isActive);
+    // dropdown offers ONLY this tab's universe (market tab: broker vehicles;
+    // own/relative tab: own + relative) — offering the rest made the filter
+    // look broken when an out-of-tab vehicle was picked
+    const vehicles = allVehicles.filter((v) => v.isActive && allowed.includes(v.ownershipType));
 
     // Bill status must reflect receipts entered after the bill was raised, so
     // it is derived from live voucher allocations, never from Invoice.balance

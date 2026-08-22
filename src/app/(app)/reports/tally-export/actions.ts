@@ -64,7 +64,11 @@ export async function runTallyExport(
       const out: (typeof wanted)[number]["vouchers"] = [];
       let skipped = 0;
       for (const d of wanted) {
-        for (const v of d.vouchers) {
+        for (const raw of d.vouchers) {
+          // Tally's VOUCHERNUMBER carries the SOURCE document's own number
+          // (chalan no / invoice no / voucher no) so Tally never assigns a
+          // manual number of its own
+          const v = { ...raw, voucherNo: raw.voucherNo ?? d.refNo };
           const hash = voucherHash(v);
           const prev = registry.get(v.key);
           if (!data.includeExported && prev === hash) {

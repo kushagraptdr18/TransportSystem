@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
+import { assertDateInFy } from "@/lib/fy-guard";
 import { postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
 import { toNum } from "@/lib/utils";
@@ -186,6 +187,8 @@ export async function saveVehicleExpenseTxn(
         return { ok: false as const, error: "One or more vehicles were not found." };
       }
 
+      // wrong-FY guard: the bill's own date must belong to the session FY
+      await assertDateInFy(tx, session, new Date(`${d.date}T00:00:00`), "vehicle expense entry");
       const values = {
         date: new Date(`${d.date}T00:00:00`),
         txnType: d.txnType,

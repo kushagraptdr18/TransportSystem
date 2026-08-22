@@ -64,22 +64,35 @@ export default async function VehicleOperationalPnlPage({
       : undefined;
 
   const data = await withTenant(session.tenantId, async (tx) => {
-    const scope = { firmId: session.firmId, fyId: session.fyId };
+    // Period rule (FY continuity): everything is DATE-scoped. No explicit
+    // range → the session FY's own dates. Income is attributed to the LR's
+    // date — an old-year LR chalan/billed in the new year still lands in the
+    // OLD year's P&L, never the new one's.
+    const sessionFy = await tx.financialYear.findUniqueOrThrow({ where: { id: session.fyId } });
+    const period = dateWhere ?? { gte: sessionFy.startDate, lte: sessionFy.endDate };
+    const monthPeriod =
+      monthWhere ?? {
+        gte: sessionFy.startDate.toISOString().slice(0, 7),
+        lte: sessionFy.endDate.toISOString().slice(0, 7),
+      };
+    const scope = { firmId: session.firmId };
     const ownIds = (
       await tx.vehicle.findMany({ where: { ownershipType: "OWNER" }, select: { id: true } })
     ).map((v) => v.id);
 
-    const [chalans, slips, heads, expenseItems, salaries, advances, settlements, assignments, trips, emis] =
+    const [chalanRows, slips, heads, expenseItems, salaries, advances, settlements, assignments, trips, emis] =
       await Promise.all([
-        tx.chalan.aggregate({
+        // fetched wide, attributed by the EARLIEST linked LR's date (fallback:
+        // chalan date) and summed below — the LR decides which year earns it
+        tx.chalan.findMany({
           where: {
             ...scope,
             deletedAt: null,
             cancelledAt: null,
             vehicleId: { in: ownIds },
-            ...(dateWhere ? { chalanDate: dateWhere } : {}),
           },
-          _sum: {
+          select: {
+            chalanDate: true,
             freight: true,
             detention: true,
             odcAmt: true,
@@ -89,6 +102,7 @@ export default async function VehicleOperationalPnlPage({
             commissionAmt: true,
             mamool: true,
             courierCharge: true,
+            lrs: { select: { lr: { select: { lrDate: true } } } },
           },
         }),
         tx.brokerSlip.aggregate({
@@ -96,7 +110,7 @@ export default async function VehicleOperationalPnlPage({
             ...scope,
             deletedAt: null,
             vehicleId: { in: ownIds },
-            ...(dateWhere ? { slipDate: dateWhere } : {}),
+            slipDate: period,
           },
           _sum: {
             vFreight: true,
@@ -115,7 +129,7 @@ export default async function VehicleOperationalPnlPage({
         tx.vehicleExpenseItem.findMany({
           where: {
             vehicleId: { in: ownIds },
-            ...(dateWhere ? { allocDate: dateWhere } : {}),
+            allocDate: period,
             voucher: { ...scope, deletedAt: null, txnType: "EXPENSE" },
           },
           include: { voucher: { include: { lines: true } } },
@@ -125,14 +139,14 @@ export default async function VehicleOperationalPnlPage({
           where: {
             ...scope,
             deletedAt: null,
-            ...(monthWhere ? { month: monthWhere } : {}),
+            month: monthPeriod,
           },
         }),
         tx.driverAdvance.findMany({
           where: {
             ...scope,
             deletedAt: null,
-            ...(dateWhere ? { date: dateWhere } : {}),
+            date: period,
           },
           select: { driverId: true, vehicleId: true, date: true, amount: true },
         }),
@@ -141,7 +155,7 @@ export default async function VehicleOperationalPnlPage({
           where: {
             ...scope,
             deletedAt: null,
-            ...(dateWhere ? { date: dateWhere } : {}),
+            date: period,
           },
           select: {
             id: true,
@@ -159,7 +173,7 @@ export default async function VehicleOperationalPnlPage({
             ...scope,
             deletedAt: null,
             vehicleId: { in: ownIds },
-            ...(dateWhere ? { tripDate: dateWhere } : {}),
+            tripDate: period,
             ureaAmount: { gt: 0 },
           },
           select: { ureaAmount: true },
@@ -170,7 +184,7 @@ export default async function VehicleOperationalPnlPage({
         tx.loanEmi.findMany({
           where: {
             deletedAt: null,
-            ...(dateWhere ? { payDate: dateWhere } : {}),
+            payDate: period,
             loan: {
               firmId: session.firmId,
               deletedAt: null,
@@ -181,6 +195,38 @@ export default async function VehicleOperationalPnlPage({
           select: { total: true },
         }),
       ]);
+
+    // income attribution by LR date: the earliest linked LR decides which
+    // period (year) earns the chalan — a March LR chalaned/billed in April
+    // stays March's income
+    const inPeriod = (d: Date) =>
+      (!period.gte || d >= period.gte) && (!period.lte || d <= period.lte);
+    const chalanSum = {
+      freight: 0,
+      detention: 0,
+      odcAmt: 0,
+      fineSlip: 0,
+      otherAmt: 0,
+      ldCharge: 0,
+      commissionAmt: 0,
+      mamool: 0,
+      courierCharge: 0,
+    };
+    for (const c of chalanRows) {
+      const lrTimes = c.lrs.map((l) => l.lr.lrDate.getTime());
+      const eff = lrTimes.length ? new Date(Math.min(...lrTimes)) : c.chalanDate;
+      if (!inPeriod(eff)) continue;
+      chalanSum.freight += toNum(String(c.freight));
+      chalanSum.detention += toNum(String(c.detention));
+      chalanSum.odcAmt += toNum(String(c.odcAmt));
+      chalanSum.fineSlip += toNum(String(c.fineSlip));
+      chalanSum.otherAmt += toNum(String(c.otherAmt));
+      chalanSum.ldCharge += toNum(String(c.ldCharge));
+      chalanSum.commissionAmt += toNum(String(c.commissionAmt));
+      chalanSum.mamool += toNum(String(c.mamool));
+      chalanSum.courierCharge += toNum(String(c.courierCharge));
+    }
+    const chalans = { _sum: chalanSum };
 
     return {
       ownIds,

@@ -7,6 +7,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
+import { assertDateInFy } from "@/lib/fy-guard";
 import { toNum } from "@/lib/utils";
 import { nextLrNumber, syncSequenceTo } from "@/lib/sequences";
 import { stateCodeFromGstin } from "@/lib/calc/gst";
@@ -229,6 +230,8 @@ export async function saveLr(input: unknown): Promise<SaveLrResult> {
       data.cargoType = await deriveCargoType(tx, data.items);
       const lrData = lrRowData(data, totals, lrNo);
       const items = lrItemsData(session.tenantId, data);
+      // wrong-FY guard: an LR's own date must belong to the session FY
+      await assertDateInFy(tx, session, lrData.lrDate, "LR entry");
 
       let savedId: string;
       if (data.id) {

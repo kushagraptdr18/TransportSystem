@@ -7,7 +7,8 @@ import { requireSession } from "@/lib/session";
 import { withTenant, Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
-import { syncSequenceTo } from "@/lib/sequences";
+import { assertDateInFy } from "@/lib/fy-guard";
+import { nextDocNumber, syncSequenceTo } from "@/lib/sequences";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { computeChalan } from "@/lib/calc/chalan";
 import { toNum } from "@/lib/utils";
@@ -330,6 +331,8 @@ export async function saveChalan(input: unknown): Promise<{ ok: true; id: string
       }
 
       // duplicate chalan numbers are not allowed within a firm + financial year
+      // wrong-FY guard: a chalan's own date must belong to the session FY
+      await assertDateInFy(tx, session, new Date(data.chalanDate), "chalan entry");
       const clash = await tx.chalan.findFirst({
         where: {
           // chalan numbers CONTINUE across financial years, so uniqueness is
@@ -1317,14 +1320,65 @@ export async function saveBalancePayment(
         lines: data.advanceLines,
       });
 
+      // The money side of this settlement is a REAL Payment Voucher, so it
+      // shows in the Voucher Register and can be edited/deleted from there
+      // like any other payment. The chalan keeps only the advance adjustment
+      // and the status stamps; the paid/shortage/round-off figures live on
+      // the voucher's allocation (payableSettlement counts them from there —
+      // storing them on the chalan too would double the settlement).
+      let voucherId: string | null = null;
+      if (paidAmount > 0.009 || data.shortage > 0.009 || Math.abs(data.roundOff) > 0.009) {
+        const voucherNo = await nextDocNumber(tx, {
+          tenantId: session.tenantId,
+          firmId: session.firmId,
+          fyId: session.fyId,
+          docType: "VOUCHER_PAYMENT",
+        });
+        const entryType =
+          data.paymentMode === "CASH" ? "CASH" : data.paymentMode === "CARD" ? "CARD" : "BANK";
+        const voucher = await tx.voucher.create({
+          data: {
+            tenantId: session.tenantId,
+            firmId: session.firmId,
+            fyId: session.fyId,
+            createdById: session.userId,
+            voucherNo,
+            voucherDate: paymentDate,
+            type: "PAYMENT",
+            entryType,
+            moduleLink: "FREIGHT_CHALLAN",
+            partyId: chalan.brokerId,
+            bankPartyId: data.paymentHeadId || null,
+            amount: paidAmount,
+            deduction: data.shortage,
+            remarks: `Balance payment — chalan ${chalan.chalanNo}${data.remarks ? " — " + data.remarks : ""}`,
+            allocations: {
+              create: [
+                {
+                  tenantId: session.tenantId,
+                  refType: "FREIGHT_CHALLAN",
+                  refId: chalan.id,
+                  refNo: chalan.chalanNo,
+                  billAmt: toNum(chalan.balance),
+                  amount: paidAmount,
+                  deduction: data.shortage,
+                  roundOff: data.roundOff,
+                },
+              ],
+            },
+          },
+        });
+        voucherId = voucher.id;
+      }
+
       const after = await tx.chalan.update({
         where: { id: chalan.id },
         data: {
           paymentStatus: "PAID",
-          balRoundOff: data.roundOff,
-          balShortage: data.shortage,
+          balRoundOff: 0,
+          balShortage: 0,
           balAdvanceAdjusted: advTotal,
-          balPaidAmount: paidAmount,
+          balPaidAmount: 0,
           balPaymentDate: paymentDate,
           balPaymentHeadId: data.paymentHeadId || null,
           balPaymentMode: data.paymentMode,
@@ -1339,10 +1393,12 @@ export async function saveBalancePayment(
       // Shortage and round-off reduce what we hand over, so without their own
       // entries the broker would stay credited for money he never receives and
       // his ledger would never close. Each posts against a recovery head.
+      // The legs hang off the VOUCHER, so editing/deleting it from the
+      // Voucher Register reverses exactly these entries.
       const balCommon = {
         date: paymentDate,
-        refType: "CHALAN_BALANCE",
-        refId: chalan.id,
+        refType: voucherId ? "VOUCHER" : "CHALAN_BALANCE",
+        refId: voucherId ?? chalan.id,
         refNo: chalan.chalanNo,
       };
       const balEntries: Parameters<typeof postLedger>[2] = [];

@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant, type Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
+import { assertDateInFy } from "@/lib/fy-guard";
 import { postLedger, reverseLedger, type LedgerPostEntry } from "@/lib/ledger";
 import { settledByRef } from "@/lib/settlement";
 
@@ -166,6 +167,8 @@ export async function saveOfficeTransaction(
       }
 
       const date = new Date(`${d.date}T00:00:00`);
+      // wrong-FY guard: the entry's own date must belong to the session FY
+      await assertDateInFy(tx, session, date, "office entry");
       const values = {
         date,
         txnType: d.txnType,

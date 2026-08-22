@@ -7,6 +7,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
+import { assertDateInFy } from "@/lib/fy-guard";
 import { syncSequenceTo } from "@/lib/sequences";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { toNum } from "@/lib/utils";
@@ -291,6 +292,8 @@ export async function saveBrokerSlip(input: unknown): Promise<SaveBrokerSlipResu
 
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
+      // wrong-FY guard: a slip's own date must belong to the session FY
+      await assertDateInFy(tx, session, slipDate, "broker slip entry");
       let savedId: string;
       if (data.id) {
         const before = await tx.brokerSlip.findFirst({

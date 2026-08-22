@@ -338,7 +338,7 @@ export function AdblueClient({
       <DataTable columns={columns} data={rows} emptyMessage="No AdBlue entries yet." />
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>
               {form.id ? "Edit" : "New"} AdBlue {form.type === "REFILL" ? "Refill (Stock In)" : "Issue (Vehicle Consumption)"}

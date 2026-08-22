@@ -7,6 +7,7 @@ import { requireSession } from "@/lib/session";
 import { withTenant, Tx } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
+import { assertDateInFy } from "@/lib/fy-guard";
 import { syncSequenceTo } from "@/lib/sequences";
 import { postLedger, reverseLedger, LedgerPostEntry } from "@/lib/ledger";
 import { round2 } from "@/lib/calc/tds";
@@ -286,6 +287,8 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
   try {
     const id = await withTenant(session.tenantId, async (tx) => {
       const voucherDate = toDate(data.voucherDate);
+      // wrong-FY guard: a voucher's own date must belong to the session FY
+      await assertDateInFy(tx, session, voucherDate, "voucher entry");
       const base = {
         voucherNo: data.voucherNo,
         voucherDate,
@@ -1043,9 +1046,12 @@ export async function deleteVoucher(
   try {
     await withTenant(session.tenantId, async (tx) => {
       const before = await tx.voucher.findFirst({
-        where: { id, firmId: session.firmId, fyId: session.fyId },
+        // no FY filter: an old-year voucher deletes from here too (id + firm
+        // keep it precise) — its chalan sync below needs the allocations
+        where: { id, firmId: session.firmId },
+        include: { allocations: true },
       });
-      if (!before) throw new Error("Voucher not found in this firm/financial year");
+      if (!before) throw new Error("Voucher not found in this firm");
       const adv = await tx.partyAdvance.findFirst({ where: { voucherId: id, deletedAt: null } });
       if (adv && Number(adv.consumedAmount) > 0.009) {
         throw new Error(
@@ -1074,6 +1080,38 @@ export async function deleteVoucher(
       await restoreAdvanceUses(tx, "VOUCHER", id);
       await reverseLedger(tx, "VOUCHER", id);
       await releaseShortage(tx, "VOUCHER", id);
+      // a chalan whose balance THIS voucher had settled (balance payments are
+      // real vouchers now) opens again: its status returns to PENDING and the
+      // balance-payment shortage recovery is released with the money
+      for (const alloc of before.allocations.filter((a) => a.refType === "FREIGHT_CHALLAN")) {
+        await releaseShortage(tx, "CHALAN", `${alloc.refId}:BAL`);
+        const chalan = await tx.chalan.findFirst({
+          where: { id: alloc.refId, firmId: session.firmId, deletedAt: null, cancelledAt: null },
+        });
+        if (chalan && chalan.paymentStatus === "PAID") {
+          const pos = await payableSettlement(tx, {
+            firmId: session.firmId,
+            refType: "FREIGHT_CHALLAN",
+            docs: [
+              {
+                id: chalan.id,
+                balance: Number(chalan.balance),
+                ownPaid: Number(chalan.balPaidAmount),
+                ownShortage: Number(chalan.balShortage),
+                ownRoundOff: Number(chalan.balRoundOff),
+                ownAdvanceAdjusted: Number(chalan.balAdvanceAdjusted),
+              },
+            ],
+            excludeVoucherId: id,
+          });
+          if ((pos.get(chalan.id)?.outstanding ?? 0) > 0.009) {
+            await tx.chalan.update({
+              where: { id: chalan.id },
+              data: { paymentStatus: "PENDING", balPaymentDate: null },
+            });
+          }
+        }
+      }
       await audit(tx, session, { entity: "Voucher", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/accounts/vouchers");

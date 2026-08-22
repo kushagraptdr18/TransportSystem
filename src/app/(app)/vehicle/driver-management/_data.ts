@@ -222,9 +222,11 @@ export async function loadSettlementTab(filters: DriverFilters) {
 export async function loadAdvanceTab(filters: DriverFilters) {
   const session = requireSession();
   const { advances, drivers, vehicles, banks } = await withTenant(session.tenantId, async (tx) => {
+    // FY continuity: driver hisab is lifetime — the FY filter here left the
+    // "All" view empty in a fresh year (missed when salary/settlement tabs
+    // were widened). No status filter → PENDING and ADJUSTED both show.
     const where: Prisma.DriverAdvanceWhereInput = {
       firmId: session.firmId,
-      fyId: session.fyId,
       deletedAt: null,
     };
     if (filters.driver) where.driverId = filters.driver;

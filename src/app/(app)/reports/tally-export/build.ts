@@ -1146,7 +1146,11 @@ export function voucherStatuses(
 ): Map<string, VoucherStatus> {
   const out = new Map<string, VoucherStatus>();
   for (const d of docs) {
-    for (const v of d.vouchers) {
+    for (const raw of d.vouchers) {
+      // the export path injects the document number as VOUCHERNUMBER before
+      // hashing — the status must hash the SAME shape or everything already
+      // exported would read CHANGED forever
+      const v = { ...raw, voucherNo: raw.voucherNo ?? d.refNo };
       const prev = registry.get(v.key);
       out.set(v.key, prev === undefined ? "NEW" : prev === voucherHash(v) ? "EXPORTED" : "CHANGED");
     }

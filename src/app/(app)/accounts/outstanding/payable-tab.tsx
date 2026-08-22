@@ -49,6 +49,18 @@ export async function OutstandingPayableTab({
       : undefined;
 
   const { rows, parties } = await withTenant(session.tenantId, async (tx) => {
+    // no forward leak (FY continuity works one way only): old unpaid documents
+    // keep counting, but a document dated in a LATER year must not appear
+    // while standing in an earlier one — bound everything to this FY's end
+    // unless the user's own date filter already set an upper edge
+    const sessionFy = await tx.financialYear.findUnique({ where: { id: session.fyId } });
+    const effDate = {
+      ...(dateWhere ?? {}),
+      ...(dateWhere?.lte || !sessionFy ? {} : { lte: sessionFy.endDate }),
+    };
+    const effMonthLte =
+      searchParams.date_to?.slice(0, 7) ??
+      (sessionFy ? sessionFy.endDate.toISOString().slice(0, 7) : undefined);
     // freight on OWNER (company) and RELATIVE vehicles never belongs in this
     // register — those settle through their own workflows; only market/broker
     // vehicle freight is a standard payable
@@ -70,7 +82,7 @@ export async function OutstandingPayableTab({
       ...brokerVehicleOnly,
     };
     if (searchParams.party) chalanWhere.brokerId = searchParams.party;
-    if (dateWhere) chalanWhere.chalanDate = dateWhere;
+    chalanWhere.chalanDate = effDate;
 
     const slipWhere: Prisma.BrokerSlipWhereInput = {
       firmId: session.firmId,
@@ -78,7 +90,7 @@ export async function OutstandingPayableTab({
       ownerId: searchParams.party ? searchParams.party : { not: null },
       ...brokerVehicleOnly,
     };
-    if (dateWhere) slipWhere.slipDate = dateWhere;
+    slipWhere.slipDate = effDate;
 
     const salaryWhere: Prisma.StaffSalaryWhereInput = {
       firmId: session.firmId,
@@ -87,12 +99,10 @@ export async function OutstandingPayableTab({
     if (searchParams.party) salaryWhere.partyId = searchParams.party;
     // month is "YYYY-MM" — string bounds honour the register's date filter,
     // which every other source already applies
-    if (searchParams.date_from || searchParams.date_to) {
-      salaryWhere.month = {
-        ...(searchParams.date_from ? { gte: searchParams.date_from.slice(0, 7) } : {}),
-        ...(searchParams.date_to ? { lte: searchParams.date_to.slice(0, 7) } : {}),
-      };
-    }
+    salaryWhere.month = {
+      ...(searchParams.date_from ? { gte: searchParams.date_from.slice(0, 7) } : {}),
+      ...(effMonthLte ? { lte: effMonthLte } : {}),
+    };
 
     // hire slips are payable to the (text-named) vehicle owner — the dashboard
     // tile counts them, so this register must too; they carry no party link,
@@ -101,7 +111,7 @@ export async function OutstandingPayableTab({
       firmId: session.firmId,
       deletedAt: null,
     };
-    if (dateWhere) hireWhere.slipDate = dateWhere;
+    hireWhere.slipDate = effDate;
 
     const officeWhere: Prisma.OfficeTransactionWhereInput = {
       firmId: session.firmId,
@@ -112,7 +122,7 @@ export async function OutstandingPayableTab({
       paymentMode: null,
       partyId: searchParams.party ? searchParams.party : { not: null },
     };
-    if (dateWhere) officeWhere.date = dateWhere;
+    officeWhere.date = effDate;
 
     // a vehicle expense bill behaves exactly like an office bill: payable only
     // while it is on credit
@@ -123,7 +133,7 @@ export async function OutstandingPayableTab({
       paymentMode: null,
       partyId: searchParams.party ? searchParams.party : { not: null },
     };
-    if (dateWhere) vehicleWhere.date = dateWhere;
+    vehicleWhere.date = effDate;
 
     // a billed urea refill left on credit; stock still awaiting its invoice owes
     // nothing yet and never appears here
@@ -135,7 +145,7 @@ export async function OutstandingPayableTab({
       paymentMode: null,
       supplierId: searchParams.party ? searchParams.party : { not: null },
     };
-    if (dateWhere) adblueWhere.date = dateWhere;
+    adblueWhere.date = effDate;
 
     const [chalans, slips, salaries, office, vehicle, adblue, hires, parties, paidByRef] =
       await Promise.all([
