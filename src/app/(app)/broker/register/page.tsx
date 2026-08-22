@@ -46,9 +46,13 @@ export default async function BrokerRegisterPage({
     session.tenantId,
     async (tx) => {
       // date filter beats FY (FY continuity): dates set → any year's slips
+      // dates OR a slip-number search beat FY — slip numbers continue across
+      // years, so an old number stays findable from this year's register
       const where: Prisma.BrokerSlipWhereInput = {
         firmId: session.firmId,
-        ...(searchParams.date_from || searchParams.date_to ? {} : { fyId: session.fyId }),
+        ...(searchParams.date_from || searchParams.date_to || searchParams.q
+          ? {}
+          : { fyId: session.fyId }),
         deletedAt: null,
       };
       if (searchParams.date_from || searchParams.date_to) {

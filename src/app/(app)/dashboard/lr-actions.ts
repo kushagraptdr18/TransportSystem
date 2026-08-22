@@ -209,8 +209,15 @@ export async function getLrDetail(input: {
         : null;
       const fyBound = fy ? { lrDate: { lte: fy.endDate } } : {};
       // totals of the VIEW (before user filters) for the header
+      // header totals follow the SAME bound rule as the grid: a user date
+      // range beats the FY-end bound on both, so counts always agree
       const allOfView = await tx.lr.findMany({
-        where: { ...scope, ...fyBound, deletedAt: null, lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] } },
+        where: {
+          ...scope,
+          ...(Object.keys(dateWhere).length ? dateWhere : fyBound),
+          deletedAt: null,
+          lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
+        },
         select: { id: true, freight: true },
       });
       let totalCount = 0;

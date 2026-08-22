@@ -33,7 +33,7 @@ export default async function ChalanRegisterPage({
   // set is fetched and paged in memory instead of at the database
   const dbPaged = !payment;
 
-  const [rows, totalCount, brokers, vehicles, billStatusByChalan, payable] = await withTenant(
+  const [rows, totalCount, brokers, vehicles, billStatusByChalan, payable, allVehicleRows] = await withTenant(
     session.tenantId,
     async (tx) => {
     // ownership resolves to a vehicle-id list (it also covers vehicle type)
@@ -52,7 +52,9 @@ export default async function ChalanRegisterPage({
     // date filter beats FY (FY continuity): dates set → any year's chalans
     const where: Prisma.ChalanWhereInput = {
         firmId: session.firmId,
-        ...(date_from || date_to ? {} : { fyId: session.fyId }),
+        // dates OR a number search beat FY — chalan numbers continue across
+        // years, so last year's 498 must be findable from this year too
+        ...(date_from || date_to || q ? {} : { fyId: session.fyId }),
         deletedAt: null,
         cancelledAt: view === "CANCELLED" ? { not: null } : null,
         ...(date_from || date_to
@@ -92,8 +94,10 @@ export default async function ChalanRegisterPage({
       }),
       tx.chalan.count({ where }),
     ]);
+    // ALL brokers (inactive too) — a chalan on a deactivated broker must
+    // still render its name instead of a blank cell
     const brokers = await tx.party.findMany({
-      where: { ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] }, isActive: true },
+      where: { ledgerGroup: { in: ["OWNER_BROKER", "RELATIVE"] } },
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     });
@@ -153,12 +157,13 @@ export default async function ChalanRegisterPage({
         ownAdvanceAdjusted: toNum(c.balAdvanceAdjusted),
       })),
     });
-    return [chalans, totalCount, brokers, vehicles, billStatusByChalan, payable] as const;
+    return [chalans, totalCount, brokers, vehicles, billStatusByChalan, payable, allVehicles] as const;
     }
   );
 
   const brokerName = (id: string) => brokers.find((b) => b.id === id)?.name ?? "";
-  const vehicleNo = (id: string) => vehicles.find((v) => v.id === id)?.number ?? "";
+  // lookup over ALL vehicles — an inactive vehicle's chalan still shows its number
+  const vehicleNo = (id: string) => allVehicleRows.find((v) => v.id === id)?.number ?? "";
 
   const mapped: ChalanRegisterRow[] = rows.map((c) => ({
     id: c.id,
@@ -178,9 +183,10 @@ export default async function ChalanRegisterPage({
     podDone: c.lrs.filter((l) => l.lr.pods.length > 0).length,
     // shortage weight recorded on the LRs' PODs (visible before balance payment)
     shortageWt: c.lrs.flatMap((l) => l.lr.pods).reduce((s, p) => s + toNum(p.shortageWt), 0),
-    // shortage amount + round-off applied at balance payment (visible after)
-    shortage: Number(c.balShortage),
-    roundOff: Number(c.balRoundOff),
+    // shortage amount + round-off applied at balance payment (visible after) —
+    // across BOTH paths: chalan-side legacy fields AND settlement vouchers
+    shortage: Number(c.balShortage) + (payable.get(c.id)?.voucherShortage ?? 0),
+    roundOff: Number(c.balRoundOff) + (payable.get(c.id)?.voucherRoundOff ?? 0),
     // payment status and paid amount span both settlement paths
     paymentStatus: c.cancelledAt
       ? "CANCELLED"

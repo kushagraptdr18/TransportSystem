@@ -43,7 +43,7 @@ export async function getOpsMetrics(todayCal: string): Promise<OpsMetrics> {
     // everywhere — throttled: windows only move at day granularity
     await syncDocumentStatusesThrottled(tx, session.tenantId);
 
-    const [expiredCount, todayCount, upcomingCount, docTypes, loans, lrLanes, slipLanes] =
+    const [expiredCount, todayCount, upcomingCount, docTypes, loans, lrLanes, slipRows, chalanRows, brokerVehicles] =
       await Promise.all([
         // c ∈ {today−2, today−1}
         tx.lr.count({
@@ -69,7 +69,8 @@ export async function getOpsMetrics(todayCal: string): Promise<OpsMetrics> {
           select: { id: true, amount: true, emiAmount: true, emiStartDate: true, emiFrequency: true },
         }),
         // route heartbeat continues across FYs — a lane's history does not
-        // reset on 1 April
+        // reset on 1 April. Same universe as /routes: LR + slip party trips,
+        // slip vehicle side and market-chalan trips.
         tx.lr.groupBy({
           by: ["sourceCityId", "destCityId"],
           where: {
@@ -80,11 +81,21 @@ export async function getOpsMetrics(todayCal: string): Promise<OpsMetrics> {
           _count: { _all: true },
           _max: { lrDate: true },
         }),
-        tx.brokerSlip.groupBy({
-          by: ["loadStationId", "destCityId"],
+        tx.brokerSlip.findMany({
           where: { firmId: session.firmId, deletedAt: null },
-          _count: { _all: true },
-          _max: { slipDate: true },
+          select: { loadStationId: true, destCityId: true, slipDate: true, vChalanAmt: true },
+        }),
+        tx.chalan.findMany({
+          where: { firmId: session.firmId, deletedAt: null, cancelledAt: null, freight: { gt: 0 } },
+          select: {
+            chalanDate: true,
+            vehicleId: true,
+            lrs: { select: { lr: { select: { sourceCityId: true, destCityId: true } } }, take: 1 },
+          },
+        }),
+        tx.vehicle.findMany({
+          where: { ownershipType: "BROKER" },
+          select: { id: true },
         }),
       ]);
 
@@ -151,25 +162,42 @@ export async function getOpsMetrics(todayCal: string): Promise<OpsMetrics> {
       if (due && due <= now) emiDue++;
     }
 
-    // route heartbeat: same rules as the /routes page (>=3 trips counted;
-    // sleeping > 20 days, cooling 8-20)
-    const lanes = new Map<string, { count: number; last: Date }>();
-    const addLane = (a: string | null, b: string | null, count: number, last: Date | null) => {
-      if (!a || !b || !last) return;
-      const k = `${a}|${b}`;
-      const cur = lanes.get(k);
-      lanes.set(k, {
-        count: (cur?.count ?? 0) + count,
-        last: !cur || last > cur.last ? last : cur.last,
-      });
+    // route heartbeat: EXACTLY the /routes rules — party trips (LRs + slip
+    // party side) and vehicle trips (slip owner side + market chalans) count
+    // separately; a lane is OCCASIONAL (skipped) unless max(party, vehicle)
+    // >= 3; sleeping > 20 days, cooling 8-20
+    const lanes = new Map<string, { party: number; vehicle: number; last: Date }>();
+    const laneOf = (a: string | null, b: string | null) => (a && b ? `${a}|${b}` : null);
+    const bump = (
+      key: string | null,
+      side: "party" | "vehicle",
+      count: number,
+      last: Date | null
+    ) => {
+      if (!key || !last || count <= 0) return;
+      const cur = lanes.get(key) ?? { party: 0, vehicle: 0, last };
+      cur[side] += count;
+      if (last > cur.last) cur.last = last;
+      lanes.set(key, cur);
     };
-    for (const r of lrLanes) addLane(r.sourceCityId, r.destCityId, r._count._all, r._max.lrDate);
-    for (const r of slipLanes) addLane(r.loadStationId, r.destCityId, r._count._all, r._max.slipDate);
+    for (const r of lrLanes)
+      bump(laneOf(r.sourceCityId, r.destCityId), "party", r._count._all, r._max.lrDate);
+    for (const s of slipRows) {
+      const key = laneOf(s.loadStationId, s.destCityId);
+      bump(key, "party", 1, s.slipDate);
+      if (Number(s.vChalanAmt) > 0) bump(key, "vehicle", 1, s.slipDate);
+    }
+    const marketVehicle = new Set(brokerVehicles.map((v) => v.id));
+    for (const c of chalanRows) {
+      if (!marketVehicle.has(c.vehicleId)) continue;
+      const first = c.lrs[0]?.lr;
+      bump(first ? laneOf(first.sourceCityId, first.destCityId) : null, "vehicle", 1, c.chalanDate);
+    }
     let laneAlive = 0;
     let laneCooling = 0;
     let laneSleeping = 0;
     for (const v of Array.from(lanes.values())) {
-      if (v.count < 3) continue;
+      if (Math.max(v.party, v.vehicle) < 3) continue;
       const days = Math.floor((now.getTime() - v.last.getTime()) / 86400000);
       if (days <= 7) laneAlive++;
       else if (days <= 20) laneCooling++;

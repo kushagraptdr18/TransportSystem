@@ -67,7 +67,9 @@ export default async function AdbluePage({
       }),
       tx.adblueTxn.count({ where }),
       tx.adblueTxn.groupBy({ by: ["type"], where: lifetime, _sum: { qty: true } }),
-      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" }, select: { id: true, number: true } }),
+      // ALL vehicles for the name lookup — inactive ones' rows must still
+      // show a number; the entry dropdown filters to active below
+      tx.vehicle.findMany({ orderBy: { number: "asc" }, select: { id: true, number: true, isActive: true } }),
       tx.party.findMany({
         where: { isActive: true, ledgerGroup: { in: ["BANK", "CASH", "CARD"] } },
         orderBy: { name: "asc" },
@@ -156,7 +158,7 @@ export default async function AdbluePage({
           totalIssued,
           closing: Math.round((totalRefill - totalIssued) * 100) / 100,
         }}
-        vehicleOptions={vehicles.map((v) => ({ value: v.id, label: v.number }))}
+        vehicleOptions={vehicles.filter((v) => v.isActive).map((v) => ({ value: v.id, label: v.number }))}
         bankOptions={banks.map((b) => ({ value: b.id, label: b.name, meta: b.ledgerGroup }))}
         partyOptions={suppliers.map((p) => ({ value: p.id, label: p.name }))}
         canDelete={session.role === "ADMIN" || session.role === "OWNER"}

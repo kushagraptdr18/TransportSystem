@@ -140,7 +140,7 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     // (last year's bill + this year's receipt together)
     const currentFy = await tx.financialYear.findUnique({
       where: { id: session.fyId },
-      select: { startDate: true },
+      select: { startDate: true, endDate: true },
     });
     const priorFyIds = currentFy
       ? (
@@ -376,15 +376,19 @@ export async function ledgerBookRows(params: BookParams): Promise<{
                 ? { refNo: { contains: params.refNo.trim(), mode: "insensitive" } }
                 : {}),
               date: {
-                // default window = the current FY, matching the entries around
-                // these rows; an explicit date filter or a cross-FY reference
-                // search widens it
+                // default window = the current FY (BOTH edges — a later-year
+                // use must not forward-leak into this book); an explicit date
+                // filter or a cross-FY reference search widens it
                 ...(params.dateFrom
                   ? { gte: new Date(params.dateFrom + "T00:00:00") }
                   : crossFyRef || !currentFy
                     ? {}
                     : { gte: currentFy.startDate }),
-                ...(params.dateTo ? { lte: new Date(params.dateTo + "T23:59:59") } : {}),
+                ...(params.dateTo
+                  ? { lte: new Date(params.dateTo + "T23:59:59") }
+                  : crossFyRef || !currentFy
+                    ? {}
+                    : { lte: currentFy.endDate }),
               },
             },
             include: { advance: true },
@@ -457,8 +461,10 @@ export async function ledgerBookRows(params: BookParams): Promise<{
     // "Opening Balance b/f" row — master opening + every earlier year's net
     // (+ pre-date entries under a date filter) — so the carried balance shows
     // even before the new year has a single entry of its own
+    // skipped in dateTo-only mode: the listing then runs from the very
+    // beginning, so a row claiming "carried from earlier years" would lie
     const openingRow: ReportRow | null =
-      trackRunning && (params.partyId || params.dateFrom)
+      trackRunning && (params.dateFrom || (params.partyId && !dateDriven))
         ? {
             date: (params.dateFrom
               ? new Date(params.dateFrom + "T00:00:00")

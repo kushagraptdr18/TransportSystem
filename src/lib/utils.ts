@@ -16,7 +16,11 @@ export function formatDate(d: Date | string | null | undefined): string {
 export function parseDdMmYyyy(s: string): Date | null {
   const m = s.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
   if (!m) return null;
-  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  const d = new Date(Number(m[3]), month - 1, day);
+  // reject rollover: "31/02" must not silently become 3 March
+  if (d.getDate() !== day || d.getMonth() !== month - 1) return null;
   return isNaN(d.getTime()) ? null : d;
 }
 

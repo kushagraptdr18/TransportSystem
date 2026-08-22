@@ -415,7 +415,11 @@ export async function getOutstandingAgeing(input: {
         orderBy: { startDate: "desc" },
         select: { id: true, label: true, endDate: true },
       });
-      const viewFy = fys.find((f) => f.id === (input.fyId || session.fyId)) ?? fys[0];
+      // unknown fyId falls back to the SESSION year, never silently the newest
+      const viewFy =
+        fys.find((f) => f.id === (input.fyId || session.fyId)) ??
+        fys.find((f) => f.id === session.fyId) ??
+        fys[0];
       const [collected, parties] = await Promise.all([
         collect(tx, scope, input.side),
         tx.party.findMany({ select: { id: true, name: true, mobile: true } }),

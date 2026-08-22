@@ -53,12 +53,14 @@ export default async function ChalanPrintPage({
             },
           ],
         }),
-        // per-voucher detail so the settlement block can name each payment
+        // per-voucher detail so the settlement block can name each payment —
+        // ALL years, like the position itself: a later-FY voucher settling
+        // this chalan must appear or the rows total less than "Total Settled"
         tx.voucherAllocation.findMany({
           where: {
             refType: "FREIGHT_CHALLAN",
             refId: chalan.id,
-            voucher: { deletedAt: null, firmId: chalan.firmId, fyId: chalan.fyId },
+            voucher: { deletedAt: null, firmId: chalan.firmId },
           },
           include: {
             voucher: {

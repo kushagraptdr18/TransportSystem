@@ -217,9 +217,10 @@ export async function importRatesFromExcel(formData: FormData): Promise<RateImpo
       const party = partyMap.get(partyName.toUpperCase());
       const source = cityMap.get(text(row, cSource).toUpperCase());
       const dest = cityMap.get(text(row, cDest).toUpperCase());
-      // one cell may carry several products — they share one rate row
+      // one cell may carry several products — COMMA-separated only (a slash
+      // or plus can be part of a product's own name, e.g. "OIL/GREASE")
       const productNames = text(row, cProduct)
-        .split(/[,/+|]/)
+        .split(",")
         .map((s) => s.trim())
         .filter(Boolean);
       if (!party) { errors.push(`Row ${i}: party "${partyName}" not found in masters.`); continue; }

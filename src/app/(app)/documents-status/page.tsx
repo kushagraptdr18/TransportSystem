@@ -23,7 +23,9 @@ export default async function DocumentsStatusPage() {
     const [allDocs, docTypes, vehicles] = await Promise.all([
       tx.vehicleDocument.findMany({ include: { docType: true }, orderBy: { expiryDate: "asc" } }),
       tx.documentType.findMany({ orderBy: { name: "asc" } }),
-      tx.vehicle.findMany({ where: { isActive: true }, orderBy: { number: "asc" } }),
+      // ALL vehicles — an inactive vehicle's document row must still show its
+      // number (and stay searchable); pickers can filter client-side
+      tx.vehicle.findMany({ orderBy: { number: "asc" } }),
     ]);
     // Reminder rule: a document appears here only while its expiry falls
     // within its type's reminderDays window (or is already past). Renew it —

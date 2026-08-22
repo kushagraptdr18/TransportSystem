@@ -39,18 +39,26 @@ export async function selectFirm(formData: FormData) {
       if (!latest) return null;
       const y = latest.startDate.getFullYear() + 1;
       const label = `${y}-${y + 1}`;
-      const fy =
-        (await tx.financialYear.findFirst({ where: { firmId, label } })) ??
-        (await tx.financialYear.create({
-          data: {
-            tenantId: session.tenantId,
-            firmId,
-            label,
-            startDate: new Date(y, 3, 1), // 1 April
-            endDate: new Date(y + 1, 2, 31, 23, 59, 59), // 31 March
-            isActive: true,
-          },
-        }));
+      let fy = await tx.financialYear.findFirst({ where: { firmId, label } });
+      if (!fy) {
+        try {
+          fy = await tx.financialYear.create({
+            data: {
+              tenantId: session.tenantId,
+              firmId,
+              label,
+              startDate: new Date(y, 3, 1), // 1 April
+              endDate: new Date(y + 1, 2, 31, 23, 59, 59), // 31 March
+              isActive: true,
+            },
+          });
+        } catch {
+          // double-click race: the other request won the unique(firm, label)
+          // constraint — adopt its row instead of erroring out
+          fy = await tx.financialYear.findFirst({ where: { firmId, label } });
+        }
+      }
+      if (!fy) return null;
       return { firm, fy };
     }
 
