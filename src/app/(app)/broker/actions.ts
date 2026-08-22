@@ -8,7 +8,7 @@ import { withTenant } from "@/lib/db";
 import { authorize } from "@/lib/authz";
 import { audit } from "@/lib/audit";
 import { assertDateInFy } from "@/lib/fy-guard";
-import { syncSequenceTo } from "@/lib/sequences";
+import { nextDocNumber, syncSequenceTo } from "@/lib/sequences";
 import { ensureAccountHead, postLedger, reverseLedger } from "@/lib/ledger";
 import { toNum } from "@/lib/utils";
 import { round2 } from "@/lib/calc/tds";
@@ -648,6 +648,16 @@ export async function deleteBrokerSlip(
           "This broker slip has already been settled through a voucher and cannot be deleted. Delete/reverse that voucher first."
         );
       }
+      // party-side settlements are mirrored as Receipt vouchers (allocation
+      // refType OTHERS) — those must go first too, or their legs would orphan
+      const anyAlloc = await tx.voucherAllocation.findFirst({
+        where: { refId: id, voucher: { deletedAt: null, firmId: session.firmId } },
+      });
+      if (anyAlloc) {
+        throw new Error(
+          "A settlement voucher references this slip — delete that voucher from the Voucher Register first."
+        );
+      }
       await tx.brokerSlip.update({ where: { id }, data: { deletedAt: new Date() } });
       await reverseLedger(tx, "BROKER_SLIP", id);
       await reverseLedger(tx, "BROKER_SLIP_ADVANCE", id);
@@ -770,6 +780,60 @@ export async function saveBrokerBalancePayment(
       const refType = data.side === "P" ? "BROKER_SLIP_RECEIVED" : "BROKER_SLIP_PAID";
       const counterPartyId = data.side === "P" ? slip.partyId : slip.ownerId;
 
+      // The settlement is a REAL voucher (Receipt on the party side, Payment
+      // on the owner side) so it shows in the Voucher Register and can be
+      // deleted from there — deleting reopens this side of the slip.
+      // Owner side: the voucher allocation (BROKER_ENTRY) IS the settlement,
+      // so the slip's own v-money fields stay 0 (payableSettlement would
+      // double-count otherwise). Party side: the slip's p-fields remain the
+      // record; the voucher mirrors it (allocation refType OTHERS + marker,
+      // counted by no settlement query).
+      let voucherId: string | null = null;
+      if (paidAmount > 0.009 || data.shortage > 0.009 || Math.abs(data.roundOff) > 0.009) {
+        const voucherNo = await nextDocNumber(tx, {
+          tenantId: session.tenantId,
+          firmId: session.firmId,
+          fyId: session.fyId,
+          docType: data.side === "P" ? "VOUCHER_RECEIPT" : "VOUCHER_PAYMENT",
+        });
+        const entryType =
+          data.paymentMode === "CASH" ? "CASH" : data.paymentMode === "CARD" ? "CARD" : "BANK";
+        const voucher = await tx.voucher.create({
+          data: {
+            tenantId: session.tenantId,
+            firmId: session.firmId,
+            fyId: session.fyId,
+            createdById: session.userId,
+            voucherNo,
+            voucherDate: paymentDate,
+            type: data.side === "P" ? "RECEIPT" : "PAYMENT",
+            entryType,
+            moduleLink: "BROKER_ENTRY",
+            partyId: counterPartyId,
+            bankPartyId: data.paymentHeadId,
+            amount: paidAmount,
+            deduction: data.shortage,
+            remarks: `Balance ${data.side === "P" ? "received" : "paid"} — broker slip ${slip.slipNo}${data.remarks ? " — " + data.remarks : ""}`,
+            allocations: {
+              create: [
+                {
+                  tenantId: session.tenantId,
+                  refType: data.side === "P" ? "OTHERS" : "BROKER_ENTRY",
+                  refId: slip.id,
+                  refNo: slip.slipNo,
+                  billAmt: gross,
+                  amount: paidAmount,
+                  deduction: data.shortage,
+                  roundOff: data.roundOff,
+                  ...(data.side === "P" ? { remarks: "BROKER_SLIP_P_SETTLEMENT" } : {}),
+                },
+              ],
+            },
+          },
+        });
+        voucherId = voucher.id;
+      }
+
       const fields =
         data.side === "P"
           ? {
@@ -784,9 +848,9 @@ export async function saveBrokerBalancePayment(
             }
           : {
               vPaymentStatus: "PAID",
-              vRoundOff: data.roundOff,
-              vShortage: data.shortage,
-              vPaidAmount: paidAmount,
+              vRoundOff: 0,
+              vShortage: 0,
+              vPaidAmount: 0,
               vPaymentDate: paymentDate,
               vPaymentHeadId: data.paymentHeadId,
               vPaymentMode: data.paymentMode,
@@ -795,10 +859,12 @@ export async function saveBrokerBalancePayment(
       const after = await tx.brokerSlip.update({ where: { id: slip.id }, data: fields });
 
       await reverseLedger(tx, refType, slip.id);
+      // legs hang off the voucher, so deleting it from the register reverses
+      // exactly this settlement
       const common = {
         date: paymentDate,
-        refType,
-        refId: slip.id,
+        refType: voucherId ? "VOUCHER" : refType,
+        refId: voucherId ?? slip.id,
         refNo: slip.slipNo,
       };
       if (paidAmount > 0) {

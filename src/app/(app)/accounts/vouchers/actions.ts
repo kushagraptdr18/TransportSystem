@@ -1112,6 +1112,51 @@ export async function deleteVoucher(
           }
         }
       }
+      // owner side of a broker slip settled by THIS voucher opens again
+      for (const alloc of before.allocations.filter((a) => a.refType === "BROKER_ENTRY")) {
+        await releaseShortage(tx, "BROKER_SLIP", `${alloc.refId}:V`);
+        const slip = await tx.brokerSlip.findFirst({
+          where: { id: alloc.refId, firmId: session.firmId, deletedAt: null },
+        });
+        if (slip && slip.vPaymentStatus === "PAID") {
+          const pos = await payableSettlement(tx, {
+            firmId: session.firmId,
+            refType: "BROKER_ENTRY",
+            docs: [
+              {
+                id: slip.id,
+                balance: Number(slip.vBalance),
+                ownPaid: Number(slip.vPaidAmount),
+                ownShortage: Number(slip.vShortage),
+                ownRoundOff: Number(slip.vRoundOff),
+              },
+            ],
+            excludeVoucherId: id,
+          });
+          if ((pos.get(slip.id)?.outstanding ?? 0) > 0.009) {
+            await tx.brokerSlip.update({
+              where: { id: slip.id },
+              data: { vPaymentStatus: "PENDING", vPaymentDate: null },
+            });
+          }
+        }
+      }
+      // party-side mirror voucher (marker allocation): reopen that side fully
+      for (const alloc of before.allocations.filter(
+        (a) => a.remarks === "BROKER_SLIP_P_SETTLEMENT"
+      )) {
+        await releaseShortage(tx, "BROKER_SLIP", `${alloc.refId}:P`);
+        await tx.brokerSlip.updateMany({
+          where: { id: alloc.refId, firmId: session.firmId, deletedAt: null },
+          data: {
+            pPaymentStatus: "PENDING",
+            pPaidAmount: 0,
+            pShortage: 0,
+            pRoundOff: 0,
+            pPaymentDate: null,
+          },
+        });
+      }
       await audit(tx, session, { entity: "Voucher", entityId: id, action: "DELETE", before });
     });
     revalidatePath("/accounts/vouchers");
