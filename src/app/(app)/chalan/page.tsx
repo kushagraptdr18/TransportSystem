@@ -59,7 +59,7 @@ export default async function ChalanPage({
         : [];
       // a Payment Voucher can settle this chalan too — the balance section must
       // offer only what is still open across both modules
-      const voucherSettled = record
+      const balPos = record
         ? (
             await payableSettlement(tx, {
               firmId: session.firmId,
@@ -75,8 +75,9 @@ export default async function ChalanPage({
                 },
               ],
             })
-          ).get(record.id)?.voucherSettled ?? 0
-        : 0;
+          ).get(record.id)
+        : undefined;
+      const voucherSettled = balPos?.voucherSettled ?? 0;
       const cities = record ? await tx.city.findMany() : [];
       const parties = record ? await tx.party.findMany() : [];
       const cityName = (id: string) => cities.find((c) => c.id === id)?.name ?? "";
@@ -106,6 +107,12 @@ export default async function ChalanPage({
             balPaymentMode: record.balPaymentMode ?? "BANK",
             balRemarks: record.balRemarks ?? "",
             voucherSettled,
+            // combined saved settlement (chalan-side legacy + settlement
+            // voucher) — display only, never prefills the payment inputs
+            settledPaid: toNum(record.balPaidAmount) + (balPos?.voucherPaid ?? 0),
+            settledShortage: toNum(record.balShortage) + (balPos?.voucherShortage ?? 0),
+            settledRoundOff: toNum(record.balRoundOff) + (balPos?.voucherRoundOff ?? 0),
+            settledAdvanceAdj: toNum(record.balAdvanceAdjusted),
             balAdvanceLines: balAdvanceUses.map((u) => ({
               advanceId: u.advanceId,
               amount: toNum(u.amount),

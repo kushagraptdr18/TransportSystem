@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { formatDate, formatMoney, parseDdMmYyyy, toNum } from "@/lib/utils";
 import type { RateBasis } from "@/lib/calc/rate";
@@ -113,6 +113,11 @@ export interface SideSettlement {
   paymentHeadId: string | null;
   paymentMode: string;
   remarks: string;
+  /** combined SAVED figures (slip-side legacy + settlement voucher) —
+      display only; the editable inputs above stay untouched by these */
+  settledPaid?: number;
+  settledShortage?: number;
+  settledRoundOff?: number;
 }
 
 const emptySide = (): SideValues => ({
@@ -224,6 +229,9 @@ export function BrokerSlipForm({
   bankCashOptions,
 }: BrokerSlipFormProps) {
   const router = useRouter();
+  const searchParamsNav = useSearchParams();
+  // return to the register EXACTLY as the user left it (filters intact)
+  const registerReturn = `/broker/register${searchParamsNav.get("ret") ? `?${searchParamsNav.get("ret")}` : ""}`;
   const { toast } = useToast();
   const [saving, setSaving] = React.useState(false);
 
@@ -546,6 +554,23 @@ export function BrokerSlipForm({
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
+          {/* saved settlement at a glance — voucher-era figures live on the
+              settlement voucher, so the raw slip columns can read 0 */}
+          {done && (
+            <div className="rounded-md border bg-muted/40 p-2 text-xs sm:col-span-2">
+              <b>Settled:</b> {isP ? "Received" : "Paid"}{" "}
+              {formatMoney(s.settledPaid ?? s.paidAmount)}
+              {(s.settledShortage ?? s.shortage) > 0.009 && (
+                <> · Shortage {formatMoney(s.settledShortage ?? s.shortage)}</>
+              )}
+              {Math.abs(s.settledRoundOff ?? s.roundOff) > 0.009 && (
+                <> · Round off {formatMoney(s.settledRoundOff ?? s.roundOff)}</>
+              )}
+              {s.paymentDate && <> — on {formatDate(new Date(s.paymentDate))}</>}
+              {s.paymentMode && <> ({s.paymentMode})</>}
+              <span className="text-muted-foreground"> · edit/delete: Voucher Register</span>
+            </div>
+          )}
           <Num label="Balance Amount" value={settleBalance(side)} disabled />
           <Num
             label="Round Off (−)"
@@ -670,7 +695,7 @@ export function BrokerSlipForm({
       });
       if (res.ok) {
         toast({ title: `Broker slip ${form.slipNo} saved` });
-        router.push("/broker/register");
+        router.push(registerReturn);
       } else {
         toast({ variant: "destructive", title: "Save failed", description: res.error });
       }
@@ -1308,7 +1333,7 @@ export function BrokerSlipForm({
       </div>
 
       <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="outline" onClick={() => router.push("/broker/register")}>
+        <Button variant="outline" onClick={() => router.push(registerReturn)}>
           Cancel
         </Button>
         <Button onClick={handleSave} disabled={saving}>

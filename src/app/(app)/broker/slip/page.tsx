@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { authorize } from "@/lib/authz";
 import { withTenant } from "@/lib/db";
 import { peekDocNumber } from "@/lib/sequences";
+import { payableSettlement } from "@/lib/settlement";
 import { BrokerSlipForm, type BrokerSlipFormData } from "@/components/broker/slip-form";
 import type { MasterOption } from "@/components/data/master-combobox";
 import type { BrokerAdvance } from "@/components/broker/broker-calc";
@@ -102,6 +103,19 @@ export default async function BrokerSlipPage({
     meta,
   }));
 
+  // owner-side settlement voucher figures (voucher-era slip columns are 0)
+  const vPos = slip
+    ? await withTenant(session.tenantId, async (tx) =>
+        (
+          await payableSettlement(tx, {
+            firmId: session.firmId,
+            refType: "BROKER_ENTRY",
+            docs: [{ id: slip.id, balance: 0, ownPaid: 0, ownShortage: 0, ownRoundOff: 0 }],
+          })
+        ).get(slip.id)
+      )
+    : undefined;
+
   let initial: BrokerSlipFormData | null = null;
   if (slip) {
     initial = {
@@ -193,6 +207,11 @@ export default async function BrokerSlipPage({
           paymentHeadId: slip.vPaymentHeadId,
           paymentMode: slip.vPaymentMode ?? "BANK",
           remarks: slip.vPaymentRemarks ?? "",
+          // combined saved figures (slip legacy + settlement voucher) —
+          // display only, never prefill the inputs
+          settledPaid: n(slip.vPaidAmount) + (vPos?.voucherPaid ?? 0),
+          settledShortage: n(slip.vShortage) + (vPos?.voucherShortage ?? 0),
+          settledRoundOff: n(slip.vRoundOff) + (vPos?.voucherRoundOff ?? 0),
         },
       },
     };

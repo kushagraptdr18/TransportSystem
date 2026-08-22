@@ -139,6 +139,40 @@ function mergeSameLedger(list: [string, number][]): [string, number][] {
   return Array.from(out.entries());
 }
 
+/**
+ * Voucher-era settlements: the money/shortage/round-off figures live on the
+ * auto-created settlement voucher's allocation (chalan/slip own columns stay
+ * 0). This pulls them back per document so the CHALAN/SLIP modules keep
+ * exporting the split style — and buildVoucherDocs skips these vouchers, so
+ * nothing lands in Tally twice.
+ */
+async function settlementFromVouchers(
+  tx: Tx,
+  firmId: string,
+  marker: string
+): Promise<Map<string, { paid: number; shortage: number; roundOff: number; bankPartyId: string | null; date: Date | null; remarks: string | null }>> {
+  const allocs = await tx.voucherAllocation.findMany({
+    where: { remarks: marker, voucher: { deletedAt: null, firmId } },
+    include: {
+      voucher: { select: { voucherDate: true, bankPartyId: true, remarks: true } },
+    },
+  });
+  const out = new Map<string, { paid: number; shortage: number; roundOff: number; bankPartyId: string | null; date: Date | null; remarks: string | null }>();
+  for (const a of allocs) {
+    const cur = out.get(a.refId) ?? { paid: 0, shortage: 0, roundOff: 0, bankPartyId: null, date: null, remarks: null };
+    cur.paid = round2(cur.paid + toNum(a.amount));
+    cur.shortage = round2(cur.shortage + toNum(a.deduction));
+    cur.roundOff = round2(cur.roundOff + toNum(a.roundOff));
+    if (!cur.date || a.voucher.voucherDate > cur.date) {
+      cur.date = a.voucher.voucherDate;
+      cur.bankPartyId = a.voucher.bankPartyId ?? cur.bankPartyId;
+      cur.remarks = a.voucher.remarks ?? cur.remarks;
+    }
+    out.set(a.refId, cur);
+  }
+  return out;
+}
+
 /** Split settlement: bank Receipt alone, Shortage journal alone, Round-off alone. */
 function settlementVouchers(opts: {
   keyBase: string;
@@ -237,6 +271,8 @@ export async function buildChalanDocs(
     include: { advances: true },
     orderBy: [{ chalanDate: "asc" }, { chalanNo: "asc" }],
   });
+  // voucher-era balance settlements, keyed by chalan id
+  const chalanBalVouchers = await settlementFromVouchers(tx, session.firmId, "CHALAN_BAL_SETTLEMENT");
 
   const docs: ExportDoc[] = [];
   const masterIds = new Set<string>();
@@ -358,21 +394,30 @@ export async function buildChalanDocs(
     }
 
     if (c.paymentStatus === "PAID") {
+      // legacy chalan-side figures + the settlement voucher's (voucher-era
+      // columns are zero on the chalan) — one combined split export
+      const vs = chalanBalVouchers.get(c.id);
       vouchers.push(
         ...settlementVouchers({
           keyBase: `CHALAN:${c.id}`,
           counterLedger: brokerLedger,
           refNo,
-          date: c.balPaymentDate ? tallyDate(c.balPaymentDate) : chDate,
+          date: c.balPaymentDate
+            ? tallyDate(c.balPaymentDate)
+            : vs?.date
+              ? tallyDate(vs.date)
+              : chDate,
           narrationBase: `${tag}${c.balRemarks ? ` — ${c.balRemarks}` : ""}`,
           counterSide: "DR",
-          paid: toNum(c.balPaidAmount),
+          paid: round2(toNum(c.balPaidAmount) + (vs?.paid ?? 0)),
           payLedger: c.balPaymentHeadId
             ? moneyLedger(ctx, c.balPaymentHeadId, C("cash", "CASH"))
-            : C("cash", "CASH"),
-          shortage: toNum(c.balShortage),
+            : vs?.bankPartyId
+              ? moneyLedger(ctx, vs.bankPartyId, C("cash", "CASH"))
+              : C("cash", "CASH"),
+          shortage: round2(toNum(c.balShortage) + (vs?.shortage ?? 0)),
           shortageLedger: C("shortage", "SHORTAGE RECOVERY"),
-          roundOff: toNum(c.balRoundOff),
+          roundOff: round2(toNum(c.balRoundOff) + (vs?.roundOff ?? 0)),
           roundOffLedger: C("round_off", "ROUND OFF"),
         })
       );
@@ -496,10 +541,18 @@ export async function buildVoucherDocs(
   const masterIds = new Set<string>();
 
   for (const v of vouchers) {
-    // party-side slip settlements are MIRROR vouchers — the SLIP builder is
-    // the authority for that receipt; exporting the mirror too would land
-    // the same money in Tally twice
-    if (v.allocations.some((a) => a.remarks === "BROKER_SLIP_P_SETTLEMENT")) continue;
+    // auto-created settlement vouchers are exported by the CHALAN / SLIP
+    // builders in the split style — exporting them here too would land the
+    // same money in Tally twice
+    if (
+      v.allocations.some(
+        (a) =>
+          a.remarks === "BROKER_SLIP_P_SETTLEMENT" ||
+          a.remarks === "BROKER_SLIP_V_SETTLEMENT" ||
+          a.remarks === "CHALAN_BAL_SETTLEMENT"
+      )
+    )
+      continue;
     const isReceipt = v.type === "RECEIPT";
     const amount = toNum(v.amount);
     const tds = toNum(v.tdsAmt);
@@ -642,6 +695,8 @@ export async function buildSlipDocs(
     },
     orderBy: [{ slipDate: "asc" }, { slipNo: "asc" }],
   });
+  // voucher-era owner-side settlements, keyed by slip id
+  const slipVVouchers = await settlementFromVouchers(tx, session.firmId, "BROKER_SLIP_V_SETTLEMENT");
 
   const P = (key: string, fb: string) => ctx.look("SLIP_P", key, fb);
   const C = (key: string, fb: string) => ctx.look("CHALAN", key, fb);
@@ -875,21 +930,30 @@ export async function buildSlipDocs(
         });
 
         if (s.vPaymentStatus === "PAID") {
+          // legacy slip-side figures + the settlement voucher's (voucher-era
+          // v-columns are zero) — one combined split export
+          const vv = slipVVouchers.get(s.id);
           vouchers.push(
             ...settlementVouchers({
               keyBase: `SLIP:${s.id}:V`,
               counterLedger: oLedger,
               refNo,
-              date: s.vPaymentDate ? tallyDate(s.vPaymentDate) : sDate,
+              date: s.vPaymentDate
+                ? tallyDate(s.vPaymentDate)
+                : vv?.date
+                  ? tallyDate(vv.date)
+                  : sDate,
               narrationBase: `${tag} (owner side)${s.vPaymentRemarks ? ` — ${s.vPaymentRemarks}` : ""}`,
               counterSide: "DR", // owner debited — money went OUT
-              paid: toNum(s.vPaidAmount),
+              paid: round2(toNum(s.vPaidAmount) + (vv?.paid ?? 0)),
               payLedger: s.vPaymentHeadId
                 ? moneyLedger(ctx, s.vPaymentHeadId, C("cash", "CASH"))
-                : C("cash", "CASH"),
-              shortage: toNum(s.vShortage),
+                : vv?.bankPartyId
+                  ? moneyLedger(ctx, vv.bankPartyId, C("cash", "CASH"))
+                  : C("cash", "CASH"),
+              shortage: round2(toNum(s.vShortage) + (vv?.shortage ?? 0)),
               shortageLedger: C("shortage", "SHORTAGE RECOVERY"),
-              roundOff: toNum(s.vRoundOff),
+              roundOff: round2(toNum(s.vRoundOff) + (vv?.roundOff ?? 0)),
               roundOffLedger: C("round_off", "ROUND OFF"),
             })
           );

@@ -312,7 +312,9 @@ export function ChalanRegisterClient({
       cell: ({ row }) => (
         <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
           <Button asChild variant="ghost" size="sm" className="h-7 px-2">
-            <Link href={`/chalan?id=${row.original.id}`}>Edit</Link>
+            {/* ret = this register view's filters — the chalan page returns
+                here with them intact after save / balance pay */}
+            <Link href={`/chalan?id=${row.original.id}&ret=${encodeURIComponent(searchParams.toString())}`}>Edit</Link>
           </Button>
           {isMarket &&
             row.original.isFinal &&
@@ -321,7 +323,7 @@ export function ChalanRegisterClient({
             row.original.lrCount > 0 &&
             row.original.podDone >= row.original.lrCount && (
               <Button asChild variant="secondary" size="sm" className="h-7 px-2">
-                <Link href={`/chalan?id=${row.original.id}#balance`}>Balance Pay</Link>
+                <Link href={`/chalan?id=${row.original.id}&ret=${encodeURIComponent(searchParams.toString())}#balance`}>Balance Pay</Link>
               </Button>
             )}
           <Button asChild variant="ghost" size="sm" className="h-7 px-2">
@@ -526,7 +528,9 @@ export function ChalanRegisterClient({
       <DataTable
         columns={columns}
         data={rows}
-        onRowClick={(row) => router.push(`/chalan?id=${row.id}`)}
+        onRowClick={(row) =>
+          router.push(`/chalan?id=${row.id}&ret=${encodeURIComponent(searchParams.toString())}`)
+        }
       />
 
       {/* chalan status — complete tracking dashboard */}

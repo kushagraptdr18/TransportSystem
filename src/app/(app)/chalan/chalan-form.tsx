@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -102,6 +102,12 @@ export interface ChalanRecord {
   balAdvanceLines: { advanceId: string; amount: number }[];
   /** already settled against this chalan from a Payment Voucher */
   voucherSettled: number;
+  /** combined SAVED settlement (chalan-side legacy + settlement voucher) —
+      display only, never used to prefill the payment inputs */
+  settledPaid?: number;
+  settledShortage?: number;
+  settledRoundOff?: number;
+  settledAdvanceAdj?: number;
   podTotal: number;
   podDone: number;
   /** total shortage weight recorded across the LRs' PODs */
@@ -146,6 +152,10 @@ export function ChalanForm({
   record: ChalanRecord | null;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // the register view's filters, carried in so we can land back EXACTLY
+  // where the user left (date range, broker, vehicle, tab, page — sab)
+  const registerReturn = `/chalan/register${searchParams.get("ret") ? `?${searchParams.get("ret")}` : ""}`;
   const { toast } = useToast();
 
   // ------- header -------
@@ -414,8 +424,8 @@ export function ChalanForm({
           title: "Balance settled — chalan marked PAID",
           description: `Paid ${formatMoney(res.paidAmount)} — posted to the bank/cash book.`,
         });
-        // redirect to the register and refresh so the new status shows immediately
-        router.push("/chalan/register");
+        // back to the register WITH its filters, refreshed for the new status
+        router.push(registerReturn);
         router.refresh();
       } else {
         toast({ variant: "destructive", title: "Balance payment failed", description: res.error });
@@ -567,7 +577,7 @@ export function ChalanForm({
     setSaving(false);
     if (res.ok) {
       toast({ title: "Chalan finalized", description: "LRs moved to ON CHALAN." });
-      router.push("/chalan/register");
+      router.push(registerReturn);
     } else {
       toast({ variant: "destructive", title: "Finalize failed", description: res.error });
     }
@@ -1112,6 +1122,26 @@ export function ChalanForm({
             </CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3 p-4 pt-2 sm:grid-cols-2 lg:grid-cols-4">
+            {/* saved settlement at a glance — the money lives on the
+                settlement voucher, so the input previews below read 0 once
+                everything is settled */}
+            {paymentStatus === "PAID" && record && (
+              <div className="rounded-md border bg-muted/40 p-2 text-xs sm:col-span-2 lg:col-span-4">
+                <b>Settled:</b> Paid {formatMoney(record.settledPaid ?? 0)}
+                {(record.settledShortage ?? 0) > 0.009 && (
+                  <> · Shortage {formatMoney(record.settledShortage ?? 0)}</>
+                )}
+                {Math.abs(record.settledRoundOff ?? 0) > 0.009 && (
+                  <> · Round off {formatMoney(record.settledRoundOff ?? 0)}</>
+                )}
+                {(record.settledAdvanceAdj ?? 0) > 0.009 && (
+                  <> · Advance adjusted {formatMoney(record.settledAdvanceAdj ?? 0)}</>
+                )}
+                {record.balPaymentDate && <> — on {formatDate(record.balPaymentDate)}</>}
+                {record.balPaymentMode && <> ({record.balPaymentMode})</>}
+                <span className="text-muted-foreground"> · edit/delete: Voucher Register</span>
+              </div>
+            )}
             <Field label="Balance Amount">
               <div className="space-y-1">
                 <NumInput value={balOpen} readOnly />

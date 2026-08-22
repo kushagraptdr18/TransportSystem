@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Trash2 } from "lucide-react";
 import { formatDate, formatMoney } from "@/lib/utils";
@@ -113,6 +113,10 @@ export function BrokerRegisterTable({
   canDelete: boolean;
 }) {
   const router = useRouter();
+  // ret = this register view's filters — the slip page returns here with
+  // them intact after save / settle
+  const searchParams = useSearchParams();
+  const ret = encodeURIComponent(searchParams.toString());
   const { toast } = useToast();
   const [toDelete, setToDelete] = React.useState<BrokerRegisterRow | null>(null);
   const [deleting, setDeleting] = React.useState(false);
@@ -228,7 +232,7 @@ export function BrokerRegisterTable({
                   so it can be reviewed and corrected rather than write-once */}
               <Button asChild variant="secondary" size="sm" className="h-6 px-2 text-xs">
                 <Link
-                  href={`/broker/slip?id=${row.original.id}#balance-receivable`}
+                  href={`/broker/slip?id=${row.original.id}&ret=${ret}#balance-receivable`}
                   onClick={(e: React.MouseEvent) => e.stopPropagation()}
                 >
                   Receive
@@ -256,7 +260,7 @@ export function BrokerRegisterTable({
               <Badge variant="destructive">Pending</Badge>
               <Button asChild variant="secondary" size="sm" className="h-6 px-2 text-xs">
                 <Link
-                  href={`/broker/slip?id=${row.original.id}#balance-payable`}
+                  href={`/broker/slip?id=${row.original.id}&ret=${ret}#balance-payable`}
                   onClick={(e: React.MouseEvent) => e.stopPropagation()}
                 >
                   Pay
@@ -418,7 +422,7 @@ export function BrokerRegisterTable({
         columns={columns}
         data={data}
         emptyMessage="No broker slips found."
-        onRowClick={(row) => router.push(`/broker/slip?id=${row.id}`)}
+        onRowClick={(row) => router.push(`/broker/slip?id=${row.id}&ret=${ret}`)}
       />
 
       {/* hidden input for register-side POD uploads */}

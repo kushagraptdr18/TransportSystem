@@ -1737,7 +1737,9 @@ export async function getChalanStatus(
         outstanding: position.outstanding,
         // the chalan is settled when nothing is open, whichever module paid it
         paymentStatus: position.outstanding <= 0.009 ? "PAID" : chalan.paymentStatus,
-        balPaidAmount: toNum(chalan.balPaidAmount),
+        // combined: chalan-side legacy figure + the settlement voucher's cash
+        // (voucher-era chalan columns stay 0 — the money lives on the voucher)
+        balPaidAmount: round2(toNum(chalan.balPaidAmount) + position.voucherPaid),
         balPaymentDate: chalan.balPaymentDate ? chalan.balPaymentDate.toISOString() : null,
         balPaymentMode: chalan.balPaymentMode ?? "",
         // a deduction entered on the voucher IS the chalan's deduction — one
