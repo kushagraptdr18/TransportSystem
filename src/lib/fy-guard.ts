@@ -8,12 +8,18 @@ import type { Tx } from "@/lib/db";
  * with the wrong fyId stamp and split registers.
  */
 /**
- * DAY-level compare, never time-level: FY rows and form dates arrive with
- * mixed midnights (UTC-stamped vs local-stamped), and a time compare falsely
- * rejected 1 April / 31 March at the boundary. A calendar day is either in
- * the year or it isn't — the clock has no vote.
+ * DAY-level compare in IST, never time-level: the browser serializes a
+ * picked "1 April" as 31 March 18:30 UTC, and the UTC production server's
+ * local getters then read the wrong day — rejecting 1 April inside its own
+ * FY. The business runs on Indian time (the dashboard pins IST the same
+ * way), so the calendar day is extracted at +5:30 for BOTH the form date
+ * and the FY bounds, whatever midnight each was stored with.
  */
-const dayNum = (d: Date) => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+const IST_MS = 5.5 * 3600 * 1000;
+const dayNum = (d: Date) => {
+  const t = new Date(d.getTime() + IST_MS);
+  return t.getUTCFullYear() * 10000 + (t.getUTCMonth() + 1) * 100 + t.getUTCDate();
+};
 
 export async function assertDateInFy(
   tx: Tx,
