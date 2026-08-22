@@ -101,7 +101,15 @@ export default async function OperationalPnlPage({
       : undefined;
 
   const data = await withTenant(session.tenantId, async (tx) => {
-    const scope = { firmId: session.firmId, fyId: session.fyId };
+    // Period rule (FY continuity): everything is DATE-scoped; no explicit
+    // range → the session FY's own dates. Revenue AND the chalan side are
+    // attributed by the LR's date — an old-year LR billed/chalaned in the
+    // new year stays the OLD year's P&L, all its components together.
+    const sessionFy = await tx.financialYear.findUniqueOrThrow({ where: { id: session.fyId } });
+    const period = dateWhere ?? { gte: sessionFy.startDate, lte: sessionFy.endDate };
+    const inPeriod = (d: Date) =>
+      (!period.gte || d >= period.gte) && (!period.lte || d <= period.lte);
+    const scope = { firmId: session.firmId };
 
     // Finance is included EXCEPT vehicle loans and Other Receipts/Payments.
     // Finance postings ride the generic VOUCHER refType, so the excluded
@@ -137,15 +145,13 @@ export default async function OperationalPnlPage({
       )
     );
 
-    const [billedLrLinks, pendingLrs, slips, chalans, heads, headSums] = await Promise.all([
-      // LRs on LIVE invoices — billed in the period the BILL was made
+    const [billedLrLinks, pendingLrs, slips, chalanRows, heads, headEntries] = await Promise.all([
+      // BILLED = the LR sits on a LIVE bill (made in ANY year) — the revenue
+      // itself belongs to the LR's own date/year
       tx.invoiceLr.findMany({
         where: {
-          invoice: {
-            ...scope,
-            deletedAt: null,
-            ...(dateWhere ? { invoiceDate: dateWhere } : {}),
-          },
+          invoice: { ...scope, deletedAt: null },
+          lr: { lrDate: period },
         },
         include: { lr: true },
       }),
@@ -156,25 +162,34 @@ export default async function OperationalPnlPage({
           deletedAt: null,
           lrType: { notIn: ["CANCELLED", "PAPER_CHANGE"] },
           invoiceLrs: { none: {} },
-          ...(dateWhere ? { lrDate: dateWhere } : {}),
+          lrDate: period,
         },
         select: { total: true },
       }),
       tx.brokerSlip.aggregate({
-        where: { ...scope, deletedAt: null, ...(dateWhere ? { slipDate: dateWhere } : {}) },
+        where: { ...scope, deletedAt: null, slipDate: period },
         // BOTH sides at GROSS chalan amount — before any deduction; the
         // deduction/charge effects live in the ledger head sections
         _sum: { pChalanAmt: true, vChalanAmt: true },
       }),
-      tx.chalan.aggregate({
+      // chalans fetched wide and attributed by the EARLIEST linked LR's date
+      // (fallback: chalan date) — summed below
+      tx.chalan.findMany({
         // a cancelled chalan (accident / rejection) is no longer an expense
-        where: { ...scope, deletedAt: null, cancelledAt: null, ...(dateWhere ? { chalanDate: dateWhere } : {}) },
-        // gross chalan amount — before commission / TDS / other deductions
-        _sum: { totalChalanAmt: true },
+        where: { ...scope, deletedAt: null, cancelledAt: null },
+        select: {
+          id: true,
+          chalanDate: true,
+          totalChalanAmt: true,
+          lrs: { select: { lr: { select: { lrDate: true } } } },
+        },
       }),
       tx.accountHead.findMany({ select: { id: true, name: true, kind: true } }),
-      tx.ledgerEntry.groupBy({
-        by: ["accountHeadId", "side"],
+      // individual entries (not groupBy): chalan-accrual charge legs
+      // (Commission / Mamool / ODC / Detention ... refType CHALAN) follow
+      // their chalan's LR-date year, so they are fetched for ALL dates and
+      // re-attributed below; everything else stays on its own date
+      tx.ledgerEntry.findMany({
         where: {
           ...scope,
           accountHeadId: blockedHeadIds.length ? { not: null, notIn: blockedHeadIds } : { not: null },
@@ -189,11 +204,43 @@ export default async function OperationalPnlPage({
               ? [{ NOT: { refType: "LOAN", refId: { in: vehicleLoanIds } } }]
               : []),
           ],
-          ...(dateWhere ? { date: dateWhere } : {}),
+          OR: [{ date: period }, { refType: "CHALAN" }],
         },
-        _sum: { amount: true },
+        select: { accountHeadId: true, side: true, amount: true, date: true, refType: true, refId: true },
       }),
     ]);
+
+    // earliest linked LR decides each chalan's year
+    const chalanEff = new Map<string, Date>();
+    for (const c of chalanRows) {
+      const lrTimes = c.lrs.map((l) => l.lr.lrDate.getTime());
+      chalanEff.set(c.id, lrTimes.length ? new Date(Math.min(...lrTimes)) : c.chalanDate);
+    }
+    const chalanOwnerSum = r2(
+      chalanRows.reduce(
+        (s, c) =>
+          inPeriod(chalanEff.get(c.id) ?? c.chalanDate) ? s + toNum(String(c.totalChalanAmt)) : s,
+        0
+      )
+    );
+    const chalans = { _sum: { totalChalanAmt: chalanOwnerSum } };
+
+    // re-aggregate the entries with chalan legs on their LR-date year
+    const sumKey = new Map<string, { accountHeadId: string; side: string; total: number }>();
+    for (const e of headEntries) {
+      if (!e.accountHeadId) continue;
+      const eff = e.refType === "CHALAN" ? chalanEff.get(e.refId) ?? e.date : e.date;
+      if (!inPeriod(eff)) continue;
+      const key = `${e.accountHeadId}:${e.side}`;
+      const acc = sumKey.get(key) ?? { accountHeadId: e.accountHeadId, side: e.side, total: 0 };
+      acc.total = r2(acc.total + toNum(String(e.amount)));
+      sumKey.set(key, acc);
+    }
+    const headSums = Array.from(sumKey.values()).map((s) => ({
+      accountHeadId: s.accountHeadId as string | null,
+      side: s.side,
+      _sum: { amount: s.total },
+    }));
 
     // COMPANY-mapped heads: pull in the vehicle-module legs their mapping
     // claims (the advance/transfer refTypes stay out — they never carry heads
@@ -217,7 +264,7 @@ export default async function OperationalPnlPage({
                 "DRIVER_SHORTAGE",
               ],
             },
-            ...(dateWhere ? { date: dateWhere } : {}),
+            date: period,
           },
           _sum: { amount: true },
         })
