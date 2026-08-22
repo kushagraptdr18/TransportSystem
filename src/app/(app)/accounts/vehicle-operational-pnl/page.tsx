@@ -70,11 +70,11 @@ export default async function VehicleOperationalPnlPage({
     // OLD year's P&L, never the new one's.
     const sessionFy = await tx.financialYear.findUniqueOrThrow({ where: { id: session.fyId } });
     const period = dateWhere ?? { gte: sessionFy.startDate, lte: sessionFy.endDate };
+    // LOCAL year-month — toISOString on an IST-stamped 1 April rolls back to
+    // "…-03" and double-counts March salaries across both FYs
+    const ym = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     const monthPeriod =
-      monthWhere ?? {
-        gte: sessionFy.startDate.toISOString().slice(0, 7),
-        lte: sessionFy.endDate.toISOString().slice(0, 7),
-      };
+      monthWhere ?? { gte: ym(sessionFy.startDate), lte: ym(sessionFy.endDate) };
     const scope = { firmId: session.firmId };
     const ownIds = (
       await tx.vehicle.findMany({ where: { ownershipType: "OWNER" }, select: { id: true } })

@@ -910,14 +910,18 @@ export async function getStaffDetails(
   return withTenant(session.tenantId, async (tx) => {
     const party = await tx.party.findFirst({ where: { id: partyId } });
     if (!party) return { ok: false as const, error: "Staff not found" };
-    const scope = { firmId: session.firmId, fyId: session.fyId, partyId, deletedAt: null };
+    // LIFETIME view (FY continuity): the list totals, the salary dialog's
+    // open-advance/loan pickers and the save action all work firm-wide — an
+    // old-year advance must be selectable for recovery here too, and the
+    // ledger's running balance seeds from the lifetime opening
+    const scope = { firmId: session.firmId, partyId, deletedAt: null };
     const [profile, advances, loans, salaries, entries] = await Promise.all([
       tx.staffProfile.findUnique({ where: { partyId } }),
       tx.staffAdvance.findMany({ where: scope, orderBy: { date: "asc" } }),
       tx.staffLoan.findMany({ where: scope, orderBy: { date: "asc" } }),
       tx.staffSalary.findMany({ where: scope, orderBy: { month: "asc" } }),
       tx.ledgerEntry.findMany({
-        where: { firmId: session.firmId, fyId: session.fyId, partyId },
+        where: { firmId: session.firmId, partyId },
         orderBy: [{ date: "asc" }, { createdAt: "asc" }],
       }),
     ]);

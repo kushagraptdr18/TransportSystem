@@ -144,7 +144,9 @@ export default async function ChalanRegisterPage({
       refType: "FREIGHT_CHALLAN",
       docs: chalans.map((c) => ({
         id: c.id,
-        balance: toNum(c.balance),
+        // LIVE balance (grandTotal − advances) — the stored column freezes at
+        // save time and can disagree with the dashboard payable tile
+        balance: Math.round((toNum(c.grandTotal) - toNum(c.advanceTotal)) * 100) / 100,
         ownPaid: toNum(c.balPaidAmount),
         ownShortage: toNum(c.balShortage),
         ownRoundOff: toNum(c.balRoundOff),

@@ -95,9 +95,8 @@ export async function bulkSetVehicleDocStatus(input: {
         where: { id: { in: input.ids } },
         data: {
           status: input.status,
-          // explicit renewal-status action — this is the only stamp the auto
-          // DONE→PENDING flip respects (a mere create/edit stays flippable)
-          statusSetAt: new Date(),
+          // NOTE: DONE never survives inside the reminder window — a real
+          // renewal enters a NEW expiry date, which is what lets DONE stick
           ...(input.remarks?.trim() ? { remarks: input.remarks.trim() } : {}),
         },
       });

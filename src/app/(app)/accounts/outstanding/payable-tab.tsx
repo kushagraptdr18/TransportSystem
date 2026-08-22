@@ -60,7 +60,9 @@ export async function OutstandingPayableTab({
     };
     const effMonthLte =
       searchParams.date_to?.slice(0, 7) ??
-      (sessionFy ? sessionFy.endDate.toISOString().slice(0, 7) : undefined);
+      (sessionFy
+        ? `${sessionFy.endDate.getFullYear()}-${String(sessionFy.endDate.getMonth() + 1).padStart(2, "0")}`
+        : undefined);
     // freight on OWNER (company) and RELATIVE vehicles never belongs in this
     // register — those settle through their own workflows; only market/broker
     // vehicle freight is a standard payable

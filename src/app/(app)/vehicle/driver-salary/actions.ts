@@ -153,7 +153,8 @@ export async function getPendingShortages(driverId: string): Promise<{
 const salarySchema = z.object({
   id: z.string().nullish(),
   driverId: z.string().min(1, "Driver is required"),
-  month: z.string().regex(/^\d{4}-\d{2}$/, "Salary month is required"),
+  // month 01-12 only — "2026-13" would post an Invalid Date into the ledger
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Salary month is required"),
   salaryAmount: z.number().min(0),
   incentive: z.number().min(0).default(0),
   bonus: z.number().min(0).default(0),
@@ -324,17 +325,37 @@ export async function processDriverSalary(
         await reverseLedger(tx, "DRIVER_SALARY", id);
         await audit(tx, session, { entity: "DriverSalary", entityId: id, action: "UPDATE", before, after: updated });
       } else {
-        const created = await tx.driverSalary.create({
-          data: {
-            tenantId: session.tenantId,
+        // a soft-deleted month still holds the unique(firm, fy, driver, month)
+        // key — REVIVE it instead of creating, or the month is locked forever
+        // (same trap the staff module fixed)
+        const deleted = await tx.driverSalary.findFirst({
+          where: {
             firmId: session.firmId,
-            fyId: session.fyId,
-            createdById: session.userId,
-            ...values,
+            driverId: d.driverId,
+            month: d.month,
+            deletedAt: { not: null },
           },
         });
-        id = created.id;
-        await audit(tx, session, { entity: "DriverSalary", entityId: id, action: "CREATE", after: created });
+        if (deleted) {
+          const revived = await tx.driverSalary.update({
+            where: { id: deleted.id },
+            data: { ...values, deletedAt: null, paymentStatus: "PENDING", paidAmount: 0 },
+          });
+          id = revived.id;
+          await audit(tx, session, { entity: "DriverSalary", entityId: id, action: "CREATE", after: revived });
+        } else {
+          const created = await tx.driverSalary.create({
+            data: {
+              tenantId: session.tenantId,
+              firmId: session.firmId,
+              fyId: session.fyId,
+              createdById: session.userId,
+              ...values,
+            },
+          });
+          id = created.id;
+          await audit(tx, session, { entity: "DriverSalary", entityId: id, action: "CREATE", after: created });
+        }
       }
 
       if (d.adjustShortage && pending.length) {

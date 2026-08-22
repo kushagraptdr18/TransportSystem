@@ -1290,6 +1290,9 @@ export async function saveBalancePayment(
         };
       }
       const paymentDate = new Date(`${data.paymentDate}T00:00:00`);
+      // the settlement voucher is stamped into the SESSION FY — a back-dated
+      // payment date would put it in the wrong year's registers and exports
+      await assertDateInFy(tx, session, paymentDate, "balance payment");
 
       // manual advance adjustment first; only the residual moves through bank/cash
       const advTotal =
@@ -1337,6 +1340,9 @@ export async function saveBalancePayment(
         const entryType =
           data.paymentMode === "CASH" ? "CASH" : data.paymentMode === "CARD" ? "CARD" : "BANK";
         const voucher = await tx.voucher.create({
+          // header follows the voucher module's semantics: amount = GROSS
+          // (cash + shortage), netAmount = cash actually moved — the register
+          // Net column and the Tally export both read these
           data: {
             tenantId: session.tenantId,
             firmId: session.firmId,
@@ -1349,8 +1355,9 @@ export async function saveBalancePayment(
             moduleLink: "FREIGHT_CHALLAN",
             partyId: chalan.brokerId,
             bankPartyId: data.paymentHeadId || null,
-            amount: paidAmount,
+            amount: round2(paidAmount + data.shortage),
             deduction: data.shortage,
+            netAmount: paidAmount,
             remarks: `Balance payment — chalan ${chalan.chalanNo}${data.remarks ? " — " + data.remarks : ""}`,
             allocations: {
               create: [
@@ -1363,6 +1370,9 @@ export async function saveBalancePayment(
                   amount: paidAmount,
                   deduction: data.shortage,
                   roundOff: data.roundOff,
+                  // marks an auto-created settlement voucher: the register
+                  // blocks EDITING it (delete + re-settle instead)
+                  remarks: "CHALAN_BAL_SETTLEMENT",
                 },
               ],
             },
@@ -1457,15 +1467,16 @@ export async function saveBalancePayment(
         );
       }
       await postLedger(tx, session, balEntries);
-      // full teardown, not just the recoveries — editing the shortage down to
-      // zero must also drop the recovery's ledger credit and any auto-raised
-      // entry, or a phantom open shortage survives the re-settlement
+      // LEGACY-era artifacts only (`:BAL` without a voucher id) — voucher-era
+      // recoveries are keyed per voucher (`:BAL:<voucherId>`) so an update or
+      // an unrelated voucher's delete can never tear down a LIVE voucher's
+      // shortage recovery and unbalance the ledger
       await releaseShortage(tx, "CHALAN", `${chalan.id}:BAL`);
       if (data.shortage > 0.009) {
         await recoverShortage(tx, session, {
           date: paymentDate,
           module: "CHALAN",
-          refId: `${chalan.id}:BAL`,
+          refId: voucherId ? `${chalan.id}:BAL:${voucherId}` : `${chalan.id}:BAL`,
           refNo: chalan.chalanNo,
           source: "OWNER",
           partyId: chalan.brokerId,

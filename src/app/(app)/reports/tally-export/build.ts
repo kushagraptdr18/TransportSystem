@@ -496,8 +496,10 @@ export async function buildVoucherDocs(
   const masterIds = new Set<string>();
 
   for (const v of vouchers) {
-    // money must actually move through a mapped bank/cash/card account
-    if (!v.bankPartyId) continue;
+    // party-side slip settlements are MIRROR vouchers — the SLIP builder is
+    // the authority for that receipt; exporting the mirror too would land
+    // the same money in Tally twice
+    if (v.allocations.some((a) => a.remarks === "BROKER_SLIP_P_SETTLEMENT")) continue;
     const isReceipt = v.type === "RECEIPT";
     const amount = toNum(v.amount);
     const tds = toNum(v.tdsAmt);
@@ -507,7 +509,12 @@ export async function buildVoucherDocs(
     const allocRoundOff = round2(v.allocations.reduce((s, a) => s + toNum(a.roundOff), 0));
     const rowOther = round2(v.allocations.reduce((s, a) => s + toNum(a.otherAmt), 0));
     const shortage = round2(Math.max(0, deduction - rowOther));
-    if (net <= 0.009 && tds <= 0.009 && deduction <= 0.009) continue;
+    if (net <= 0.009 && tds <= 0.009 && deduction <= 0.009 && Math.abs(allocRoundOff) <= 0.009)
+      continue;
+    // cash must move through a mapped bank/cash account — but a pure
+    // shortage / round-off settlement has NO cash leg and exports as a
+    // Journal instead of being dropped
+    if (!v.bankPartyId && net > 0.009) continue;
 
     const counterLedger = v.partyId
       ? partyLedger(ctx, v.partyId)
@@ -516,7 +523,7 @@ export async function buildVoucherDocs(
       const p = ctx.partyById.get(v.partyId);
       if (p) masterIds.add(p.id);
     }
-    const bankLedgerName = moneyLedger(ctx, v.bankPartyId, "BANK");
+    const bankLedgerName = v.bankPartyId ? moneyLedger(ctx, v.bankPartyId, "BANK") : "";
 
     // bill refs: each allocation's fully-settled portion against its document
     const counterTotal = round2(amount + allocRoundOff);
@@ -550,7 +557,7 @@ export async function buildVoucherDocs(
     };
 
     const lines: TallyVoucher["lines"] = [counterSideLine];
-    if (net > 0.009) lines.push(moneySide(bankLedgerName, net));
+    if (net > 0.009 && bankLedgerName) lines.push(moneySide(bankLedgerName, net));
     if (tds > 0.009)
       lines.push(
         moneySide(isReceipt ? V("tds_recv", "TDS RECEIVABLE 194C") : V("tds_pay", "TDS ON TRANSPORT 194C"), tds)
@@ -578,7 +585,8 @@ export async function buildVoucherDocs(
       vouchers: [
         {
           key: `VOUCHER:${v.id}`,
-          type: isReceipt ? "Receipt" : "Payment",
+          // no cash leg (pure shortage / round-off settlement) → Journal
+          type: net > 0.009 ? (isReceipt ? "Receipt" : "Payment") : "Journal",
           date: tallyDate(v.voucherDate),
           narration: nar,
           lines,

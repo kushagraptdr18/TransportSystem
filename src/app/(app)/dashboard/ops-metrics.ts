@@ -61,10 +61,12 @@ export async function getOpsMetrics(todayCal: string): Promise<OpsMetrics> {
           where: { showReminder: true },
           select: { id: true, name: true, reminderDays: true },
         }),
-        // loans are lifetime — an old-year loan's EMI stays due (FY continuity)
+        // loans are lifetime — an old-year loan's EMI stays due (FY continuity).
+        // Universe matches the /emi-due page exactly: ACTIVE + outstanding +
+        // an EMI amount or a schedule — never the emiApplicable flag alone.
         tx.loan.findMany({
-          where: { firmId: session.firmId, deletedAt: null, status: "ACTIVE", emiApplicable: true },
-          select: { id: true, amount: true, emiStartDate: true, emiFrequency: true },
+          where: { firmId: session.firmId, deletedAt: null, status: "ACTIVE" },
+          select: { id: true, amount: true, emiAmount: true, emiStartDate: true, emiFrequency: true },
         }),
         // route heartbeat continues across FYs — a lane's history does not
         // reset on 1 April
@@ -142,8 +144,10 @@ export async function getOpsMetrics(todayCal: string): Promise<OpsMetrics> {
       const agg = emiByLoan.get(l.id);
       const repaid = Number(agg?._sum.principal ?? 0);
       if (Number(l.amount) - repaid <= 0.009) continue;
-      emiActive++;
       const due = nextDueDate(l.emiStartDate, l.emiFrequency, agg?._count._all ?? 0);
+      // same gate as /emi-due: an EMI amount or a schedule must exist
+      if (!(Number(l.emiAmount) > 0 || due)) continue;
+      emiActive++;
       if (due && due <= now) emiDue++;
     }
 

@@ -460,6 +460,12 @@ export function DocStatusClient({
                 ))}
               </div>
             </div>
+            {form.status === "DONE" && (
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                Done tabhi tikega jab NAYI expiry date daali ho — purani expiry reminder window ke
+                andar ho to status apne aap wapas Pending ho jayega.
+              </p>
+            )}
             <div className="space-y-1 sm:col-span-2">
               <Label className="text-xs">Remarks {form.status === "PROBLEM" ? "* (reason required)" : ""}</Label>
               <Textarea rows={2} value={form.remarks} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} />

@@ -29,7 +29,36 @@ async function sequenceFyId(
     orderBy: { startDate: "asc" },
     select: { id: true },
   });
-  return first?.id ?? fyId;
+  const canonical = first?.id ?? fyId;
+  // consolidate strays: rows created under OTHER fy keys (pre-feature, or a
+  // back-inserted earlier FY changing which row is "first") must never let
+  // the counter fall backwards and re-issue numbers — the canonical row is
+  // always bumped to the highest `next` seen anywhere for this docType
+  const rows = await tx.documentSequence.findMany({
+    where: { firmId, docType },
+    select: { fyId: true, next: true, prefix: true },
+  });
+  const maxNext = rows.reduce((m, r) => Math.max(m, r.next), 0);
+  const canonicalRow = rows.find((r) => r.fyId === canonical);
+  if (rows.length && (!canonicalRow || canonicalRow.next < maxNext)) {
+    const tenant = await tx.documentSequence.findFirst({
+      where: { firmId, docType },
+      select: { tenantId: true },
+    });
+    await tx.documentSequence.upsert({
+      where: { firmId_fyId_docType: { firmId, fyId: canonical, docType } },
+      create: {
+        tenantId: tenant?.tenantId ?? "",
+        firmId,
+        fyId: canonical,
+        docType,
+        next: maxNext,
+        prefix: rows.find((r) => r.prefix)?.prefix ?? "",
+      },
+      update: { next: maxNext },
+    });
+  }
+  return canonical;
 }
 
 /**

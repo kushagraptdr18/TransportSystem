@@ -777,8 +777,41 @@ export async function saveBrokerBalancePayment(
         };
       }
       const paymentDate = new Date(`${data.paymentDate}T00:00:00`);
+      // the settlement voucher is stamped into the SESSION FY — a back-dated
+      // payment date would land it in the wrong year's registers and exports
+      await assertDateInFy(tx, session, paymentDate, "balance settlement");
       const refType = data.side === "P" ? "BROKER_SLIP_RECEIVED" : "BROKER_SLIP_PAID";
       const counterPartyId = data.side === "P" ? slip.partyId : slip.ownerId;
+      // money legs need BOTH sides — without a counterparty the bank leg
+      // would post alone and the books go off by the paid amount
+      if (!counterPartyId) {
+        return {
+          ok: false as const,
+          error:
+            data.side === "P"
+              ? "Slip par party/transporter set nahi hai — pehle slip mein party daalo, fir settle karo."
+              : "Slip par owner set nahi hai — pehle slip mein owner daalo, fir settle karo.",
+        };
+      }
+
+      // RE-SETTLEMENT of the party side replaces the earlier mirror voucher:
+      // reverse and retire it first, or every "Update Balance Receipt" would
+      // stack another full-value receipt (double bank + party entries)
+      if (data.side === "P") {
+        const oldAllocs = await tx.voucherAllocation.findMany({
+          where: {
+            refId: slip.id,
+            remarks: "BROKER_SLIP_P_SETTLEMENT",
+            voucher: { deletedAt: null, firmId: session.firmId },
+          },
+          select: { voucherId: true },
+        });
+        for (const oldId of Array.from(new Set(oldAllocs.map((a) => a.voucherId)))) {
+          await reverseLedger(tx, "VOUCHER", oldId);
+          await releaseShortage(tx, "BROKER_SLIP", `${slip.id}:P:${oldId}`);
+          await tx.voucher.update({ where: { id: oldId }, data: { deletedAt: new Date() } });
+        }
+      }
 
       // The settlement is a REAL voucher (Receipt on the party side, Payment
       // on the owner side) so it shows in the Voucher Register and can be
@@ -811,8 +844,11 @@ export async function saveBrokerBalancePayment(
             moduleLink: "BROKER_ENTRY",
             partyId: counterPartyId,
             bankPartyId: data.paymentHeadId,
-            amount: paidAmount,
+            // module semantics: amount = GROSS (cash + shortage), netAmount =
+            // cash moved — the register Net column and Tally read these
+            amount: Math.round((paidAmount + data.shortage) * 100) / 100,
             deduction: data.shortage,
+            netAmount: paidAmount,
             remarks: `Balance ${data.side === "P" ? "received" : "paid"} — broker slip ${slip.slipNo}${data.remarks ? " — " + data.remarks : ""}`,
             allocations: {
               create: [
@@ -825,7 +861,10 @@ export async function saveBrokerBalancePayment(
                   amount: paidAmount,
                   deduction: data.shortage,
                   roundOff: data.roundOff,
-                  ...(data.side === "P" ? { remarks: "BROKER_SLIP_P_SETTLEMENT" } : {}),
+                  // markers: settlement vouchers are delete-and-redo, never
+                  // edited from the register
+                  remarks:
+                    data.side === "P" ? "BROKER_SLIP_P_SETTLEMENT" : "BROKER_SLIP_V_SETTLEMENT",
                 },
               ],
             },
@@ -900,8 +939,13 @@ export async function saveBrokerBalancePayment(
       // NOTHING, so the counterparty stayed on the books for money that never
       // moved and the slip could never close. Both post now — shortage through
       // the register, round-off to its own head.
-      const settleRef = `${slip.id}:${data.side}`;
-      await releaseShortage(tx, "BROKER_SLIP", settleRef);
+      // LEGACY-era artifacts only — voucher-era shortage rows are keyed per
+      // voucher (`:P/V:<voucherId>`) so re-settlement or an unrelated
+      // voucher's delete can never destroy a live voucher's recovery
+      await releaseShortage(tx, "BROKER_SLIP", `${slip.id}:${data.side}`);
+      const settleRef = voucherId
+        ? `${slip.id}:${data.side}:${voucherId}`
+        : `${slip.id}:${data.side}`;
       const extras: Parameters<typeof postLedger>[2] = [];
       if (counterPartyId && Math.abs(data.roundOff) > 0.009) {
         // a negative round-off means a little extra moved, so the legs flip

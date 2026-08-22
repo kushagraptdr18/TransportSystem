@@ -511,6 +511,21 @@ export async function saveVoucher(input: unknown): Promise<SaveVoucherResult> {
         });
         if (!before) throw new Error("Voucher not found in this firm");
         if (before.deletedAt) throw new Error("Voucher has been deleted");
+        // auto-created settlement vouchers are delete-and-redo only: their
+        // header semantics and document sync live in the chalan/slip actions,
+        // and a register edit would silently desync both
+        if (
+          before.allocations.some(
+            (a) =>
+              a.remarks === "CHALAN_BAL_SETTLEMENT" ||
+              a.remarks === "BROKER_SLIP_P_SETTLEMENT" ||
+              a.remarks === "BROKER_SLIP_V_SETTLEMENT"
+          )
+        ) {
+          throw new Error(
+            "Ye chalan/broker-slip ka settlement voucher hai — ise yahan se DELETE karke document se dobara settle karein; register se edit nahi hota."
+          );
+        }
         prevRowShortage = round2(
           before.allocations.reduce((s, a) => s + Number(a.deduction), 0)
         );
@@ -1084,7 +1099,9 @@ export async function deleteVoucher(
       // real vouchers now) opens again: its status returns to PENDING and the
       // balance-payment shortage recovery is released with the money
       for (const alloc of before.allocations.filter((a) => a.refType === "FREIGHT_CHALLAN")) {
-        await releaseShortage(tx, "CHALAN", `${alloc.refId}:BAL`);
+        // voucher-scoped key: only THIS voucher's recovery is torn down —
+        // another voucher's settlement of the same chalan stays intact
+        await releaseShortage(tx, "CHALAN", `${alloc.refId}:BAL:${id}`);
         const chalan = await tx.chalan.findFirst({
           where: { id: alloc.refId, firmId: session.firmId, deletedAt: null, cancelledAt: null },
         });
@@ -1114,7 +1131,7 @@ export async function deleteVoucher(
       }
       // owner side of a broker slip settled by THIS voucher opens again
       for (const alloc of before.allocations.filter((a) => a.refType === "BROKER_ENTRY")) {
-        await releaseShortage(tx, "BROKER_SLIP", `${alloc.refId}:V`);
+        await releaseShortage(tx, "BROKER_SLIP", `${alloc.refId}:V:${id}`);
         const slip = await tx.brokerSlip.findFirst({
           where: { id: alloc.refId, firmId: session.firmId, deletedAt: null },
         });
@@ -1145,7 +1162,7 @@ export async function deleteVoucher(
       for (const alloc of before.allocations.filter(
         (a) => a.remarks === "BROKER_SLIP_P_SETTLEMENT"
       )) {
-        await releaseShortage(tx, "BROKER_SLIP", `${alloc.refId}:P`);
+        await releaseShortage(tx, "BROKER_SLIP", `${alloc.refId}:P:${id}`);
         await tx.brokerSlip.updateMany({
           where: { id: alloc.refId, firmId: session.firmId, deletedAt: null },
           data: {
