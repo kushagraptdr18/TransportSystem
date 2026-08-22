@@ -54,8 +54,24 @@ type RawDoc = {
   outstanding: number;
 };
 
-async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promise<RawDoc[]> {
+async function collect(
+  tx: Tx,
+  scope: { firmId: string },
+  side: OutSide,
+  /** "as on" reporting: only settlements made on/before this date count —
+      a bill paid AFTER the date shows PENDING, exactly as it stood then */
+  asOf: Date | null
+): Promise<RawDoc[]> {
   const out: RawDoc[] = [];
+  // own-payment figures stored on documents count only if their payment date
+  // falls inside the as-on window
+  const ownBy = (paidDate: Date | null | undefined, value: number) =>
+    !asOf || (paidDate && paidDate <= asOf) ? value : 0;
+  // advance consumption as it stood on the date — uses carry their own dates
+  const consumedAsOf = (a: { consumedAmount: unknown; uses?: { date: Date; amount: unknown }[] }) =>
+    asOf && a.uses
+      ? round2(a.uses.filter((u) => u.date <= asOf).reduce((s, u) => s + toNum(String(u.amount)), 0))
+      : round2(toNum(String(a.consumedAmount)));
   if (side === "RECV") {
     const [invoices, slips, advances, settlements, drivers] = await Promise.all([
       tx.invoice.findMany({ where: { ...scope, deletedAt: null } }),
@@ -64,14 +80,23 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
       tx.brokerSlip.findMany({ where: { ...scope, deletedAt: null, partyId: { not: null } } }),
       // advances we PAID that nothing consumed yet — the party owes them back
       // (chalan-cancel advances included, labelled apart)
-      tx.partyAdvance.findMany({ where: { ...scope, deletedAt: null, kind: "PAID" } }),
-      // a negative pending settlement = the driver owes the company
+      tx.partyAdvance.findMany({
+        where: { ...scope, deletedAt: null, kind: "PAID" },
+        include: { uses: { select: { date: true, amount: true } } },
+      }),
+      // a negative settlement = the driver owes the company. As-on mode also
+      // fetches rows settled LATER — on the date they were still open.
       tx.driverSettlement.findMany({
-        where: { ...scope, deletedAt: null, status: "PENDING", amount: { lt: 0 } },
+        where: {
+          ...scope,
+          deletedAt: null,
+          amount: { lt: 0 },
+          ...(asOf ? {} : { status: "PENDING" }),
+        },
       }),
       tx.driver.findMany({ select: { id: true, partyId: true, name: true } }),
     ]);
-    const settle = await invoiceSettlement(tx, { ...scope, invoices });
+    const settle = await invoiceSettlement(tx, { ...scope, invoices, asOf });
     for (const i of invoices) {
       const s = settle.get(i.id);
       if (!s || s.outstanding <= 0.009) continue;
@@ -90,8 +115,11 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
       // recomputed live — the stored pBalance column can go stale, and the
       // settlement contract forbids trusting a stored balance
       const balance = round2(toNum(String(s.pNetAmt)) - toNum(String(s.pAdvance)));
-      const own = round2(
-        toNum(String(s.pPaidAmount)) + toNum(String(s.pShortage)) + toNum(String(s.pRoundOff))
+      const own = ownBy(
+        s.pPaymentDate,
+        round2(
+          toNum(String(s.pPaidAmount)) + toNum(String(s.pShortage)) + toNum(String(s.pRoundOff))
+        )
       );
       const outstanding = round2(balance - own);
       if (outstanding <= 0.009) continue;
@@ -107,7 +135,8 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
       });
     }
     for (const a of advances) {
-      const available = round2(toNum(String(a.amount)) - toNum(String(a.consumedAmount)));
+      const consumed = consumedAsOf(a);
+      const available = round2(toNum(String(a.amount)) - consumed);
       if (available <= 0.009) continue;
       out.push({
         partyId: a.partyId,
@@ -116,7 +145,7 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
         date: a.date,
         type: a.source === "CHALAN_CANCEL" ? "CANCEL ADVANCE" : "ADVANCE (PAID)",
         amount: round2(toNum(String(a.amount))),
-        settled: round2(toNum(String(a.consumedAmount))),
+        settled: consumed,
         outstanding: available,
       });
     }
@@ -124,9 +153,12 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
     const settPos = await refPositions(tx, {
       ...scope,
       refType: "DRIVER_SETTLEMENT",
+      asOf,
       docs: settlements.map((s) => ({ id: s.id, original: Math.abs(toNum(String(s.amount))) })),
     });
     for (const s of settlements) {
+      // settled on/before the date → it was closed by then, skip
+      if (asOf && s.status === "SETTLED" && s.settledDate && s.settledDate <= asOf) continue;
       const p = settPos.get(s.id);
       if (!p || p.outstanding <= 0.009) continue;
       const drv = driverById.get(s.driverId);
@@ -170,9 +202,15 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
         },
       }),
       tx.staffSalary.findMany({ where: { ...scope, deletedAt: null } }),
-      // a positive pending settlement = the company owes the driver
+      // a positive settlement = the company owes the driver; as-on mode also
+      // fetches rows settled LATER (still open on that date)
       tx.driverSettlement.findMany({
-        where: { ...scope, deletedAt: null, status: "PENDING", amount: { gt: 0 } },
+        where: {
+          ...scope,
+          deletedAt: null,
+          amount: { gt: 0 },
+          ...(asOf ? {} : { status: "PENDING" }),
+        },
       }),
       tx.driver.findMany({ select: { id: true, partyId: true, name: true } }),
     ]);
@@ -182,14 +220,15 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
   const chalanPos = await payableSettlement(tx, {
     ...scope,
     refType: "FREIGHT_CHALLAN",
+    asOf,
     docs: marketChalans.map((c) => ({
       id: c.id,
       // live: grandTotal − advances, never the stored balance column
       balance: round2(toNum(String(c.grandTotal)) - toNum(String(c.advanceTotal))),
-      ownPaid: toNum(String(c.balPaidAmount)),
-      ownShortage: toNum(String(c.balShortage)),
-      ownRoundOff: toNum(String(c.balRoundOff)),
-      ownAdvanceAdjusted: toNum(String(c.balAdvanceAdjusted)),
+      ownPaid: ownBy(c.balPaymentDate, toNum(String(c.balPaidAmount))),
+      ownShortage: ownBy(c.balPaymentDate, toNum(String(c.balShortage))),
+      ownRoundOff: ownBy(c.balPaymentDate, toNum(String(c.balRoundOff))),
+      ownAdvanceAdjusted: ownBy(c.balPaymentDate, toNum(String(c.balAdvanceAdjusted))),
     })),
   });
   for (const c of marketChalans) {
@@ -212,13 +251,14 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
   const slipPos = await payableSettlement(tx, {
     ...scope,
     refType: "BROKER_ENTRY",
+    asOf,
     docs: marketSlips.map((s) => ({
       id: s.id,
       // live: owner net − owner advance, never the stored vBalance column
       balance: round2(toNum(String(s.vNetAmt)) - toNum(String(s.vAdvance))),
-      ownPaid: toNum(String(s.vPaidAmount)),
-      ownShortage: toNum(String(s.vShortage)),
-      ownRoundOff: toNum(String(s.vRoundOff)),
+      ownPaid: ownBy(s.vPaymentDate, toNum(String(s.vPaidAmount))),
+      ownShortage: ownBy(s.vPaymentDate, toNum(String(s.vShortage))),
+      ownRoundOff: ownBy(s.vPaymentDate, toNum(String(s.vRoundOff))),
     })),
   });
   for (const s of marketSlips) {
@@ -238,6 +278,7 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
   const hirePos = await payableSettlement(tx, {
     ...scope,
     refType: "LORRY_HIRE",
+    asOf,
     docs: hires.map((h) => ({
       id: h.id,
       // live: total hire − advance, never the stored balance column
@@ -271,6 +312,7 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
     const pos = await refPositions(tx, {
       ...scope,
       refType,
+      asOf,
       docs: docs.map((d) => ({ id: d.id, original: d.amount })),
     });
     for (const d of docs) {
@@ -330,12 +372,13 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
   const salPos = await refPositions(tx, {
     ...scope,
     refType: "STAFF_PAYROLL",
+    asOf,
     docs: salaries.map((s) => ({
       id: s.id,
       original: toNum(String(s.netSalary)),
       // the recorded amount, not the status flag — after an edit the two can
       // differ, and the flag would hide a genuinely open remainder
-      ownSettled: toNum(String(s.paidAmount)),
+      ownSettled: ownBy(s.paymentDate, toNum(String(s.paidAmount))),
     })),
   });
   const staffParties = new Map(salaries.map((s) => [s.id, s.partyId]));
@@ -358,9 +401,11 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
   const drvPos = await refPositions(tx, {
     ...scope,
     refType: "DRIVER_SETTLEMENT",
+    asOf,
     docs: driverPay.map((s) => ({ id: s.id, original: toNum(String(s.amount)) })),
   });
   for (const s of driverPay) {
+    if (asOf && s.status === "SETTLED" && s.settledDate && s.settledDate <= asOf) continue;
     const p = drvPos.get(s.id);
     if (!p || p.outstanding <= 0.009) continue;
     const drv = driverById.get(s.driverId);
@@ -379,9 +424,11 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
   // advances RECEIVED that nothing consumed — we owe them back to the party
   const advRecv = await tx.partyAdvance.findMany({
     where: { ...scope, deletedAt: null, kind: "RECEIVED" },
+    include: { uses: { select: { date: true, amount: true } } },
   });
   for (const a of advRecv) {
-    const available = round2(toNum(String(a.amount)) - toNum(String(a.consumedAmount)));
+    const consumed = consumedAsOf(a);
+    const available = round2(toNum(String(a.amount)) - consumed);
     if (available <= 0.009) continue;
     out.push({
       partyId: a.partyId,
@@ -390,7 +437,7 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
       date: a.date,
       type: "ADVANCE (RECEIVED)",
       amount: round2(toNum(String(a.amount))),
-      settled: round2(toNum(String(a.consumedAmount))),
+      settled: consumed,
       outstanding: available,
     });
   }
@@ -399,15 +446,18 @@ async function collect(tx: Tx, scope: { firmId: string }, side: OutSide): Promis
 
 export async function getOutstandingAgeing(input: {
   side: OutSide;
-  /** view another FY's position — docs dated up to that year's end */
+  /** view another FY's AS-ON position — everything as it stood on 31 March */
   fyId?: string | null;
+  /** custom "as on" date (yyyy-mm-dd) — beats the FY choice */
+  asOf?: string | null;
 }): Promise<{ ok: true; data: OutstandingData; fys: { id: string; label: string }[] } | { ok: false; error: string }> {
   const session = requireSession();
   try {
-    // FY continuity, both directions: outstanding never expires with the year
-    // (old unpaid documents keep counting), but a document also never leaks
-    // BACKWARDS — a bill dated in a later FY must not appear while viewing an
-    // earlier year. Docs are bounded to the viewed FY's end date.
+    // "As on" reporting: with an FY or a custom date picked, the WHOLE
+    // position rewinds to that date — documents up to it, settlements up to
+    // it, ageing buckets measured FROM it. A bill paid after the date shows
+    // PENDING, exactly as it stood then. No selection → live as of today
+    // (docs still bounded to the session FY's end — no forward leak).
     const scope = { firmId: session.firmId };
     const data = await withTenant(session.tenantId, async (tx) => {
       const fys = await tx.financialYear.findMany({
@@ -420,13 +470,21 @@ export async function getOutstandingAgeing(input: {
         fys.find((f) => f.id === (input.fyId || session.fyId)) ??
         fys.find((f) => f.id === session.fyId) ??
         fys[0];
+      const asOfDate = input.asOf
+        ? new Date(input.asOf + "T23:59:59")
+        : input.fyId && viewFy
+          ? viewFy.endDate
+          : null;
       const [collected, parties] = await Promise.all([
-        collect(tx, scope, input.side),
+        collect(tx, scope, input.side, asOfDate),
         tx.party.findMany({ select: { id: true, name: true, mobile: true } }),
       ]);
-      const docs = viewFy ? collected.filter((d) => d.date <= viewFy.endDate) : collected;
+      const bound = asOfDate ?? viewFy?.endDate ?? null;
+      const docs = bound ? collected.filter((d) => d.date <= bound) : collected;
       const partyById = new Map(parties.map((p) => [p.id, p]));
-      const now = Date.now();
+      // ageing buckets measure from the AS-ON date, not today — the report
+      // reads exactly as if it had been printed that day
+      const now = (asOfDate ?? new Date()).getTime();
 
       const byParty = new Map<string, AgeingRow>();
       for (const d of docs) {

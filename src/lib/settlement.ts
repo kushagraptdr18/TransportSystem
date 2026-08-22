@@ -82,6 +82,8 @@ export async function refPositions(
     refType: ModuleLink;
     docs: { id: string; original: number; ownSettled?: number }[];
     excludeVoucherId?: string | null;
+    /** "as on" reporting: count only vouchers dated on/before this */
+    asOf?: Date | null;
   }
 ): Promise<Map<string, RefPosition>> {
   const ids = opts.docs.map((d) => d.id);
@@ -96,6 +98,7 @@ export async function refPositions(
           voucher: {
             deletedAt: null,
             firmId: opts.firmId,
+            ...(opts.asOf ? { voucherDate: { lte: opts.asOf } } : {}),
             ...(opts.excludeVoucherId ? { id: { not: opts.excludeVoucherId } } : {}),
           },
         },
@@ -157,7 +160,14 @@ export async function refPositions(
  */
 export async function settledByRef(
   tx: Tx,
-  opts: { firmId: string; fyId?: string | null; refTypes: ModuleLink[]; refIds?: string[] }
+  opts: {
+    firmId: string;
+    fyId?: string | null;
+    refTypes: ModuleLink[];
+    refIds?: string[];
+    /** "as on" reporting: count only vouchers dated on/before this */
+    asOf?: Date | null;
+  }
 ): Promise<Map<string, number>> {
   const allocations = await tx.voucherAllocation.findMany({
     where: {
@@ -166,6 +176,7 @@ export async function settledByRef(
       voucher: {
         deletedAt: null,
         firmId: opts.firmId,
+        ...(opts.asOf ? { voucherDate: { lte: opts.asOf } } : {}),
       },
     },
     select: {
@@ -233,6 +244,8 @@ export async function payableSettlement(
     refType: ModuleLink;
     docs: PayableDoc[];
     excludeVoucherId?: string | null;
+    /** "as on" reporting: count only vouchers dated on/before this */
+    asOf?: Date | null;
   }
 ): Promise<Map<string, PayablePosition>> {
   const ids = opts.docs.map((d) => d.id);
@@ -244,6 +257,7 @@ export async function payableSettlement(
           voucher: {
             deletedAt: null,
             firmId: opts.firmId,
+            ...(opts.asOf ? { voucherDate: { lte: opts.asOf } } : {}),
             ...(opts.excludeVoucherId ? { id: { not: opts.excludeVoucherId } } : {}),
           },
         },
@@ -319,7 +333,13 @@ export function settlementStatus(total: number, outstanding: number): Settlement
  */
 export async function invoiceSettlement(
   tx: Tx,
-  opts: { firmId: string; fyId?: string; invoices: { id: string; netTotal: unknown; advance: unknown }[] }
+  opts: {
+    firmId: string;
+    fyId?: string;
+    invoices: { id: string; netTotal: unknown; advance: unknown }[];
+    /** "as on" reporting: count only vouchers dated on/before this */
+    asOf?: Date | null;
+  }
 ): Promise<Map<string, { net: number; received: number; outstanding: number; status: SettlementStatus }>> {
   const ids = opts.invoices.map((i) => i.id);
   const settled = ids.length
@@ -329,6 +349,7 @@ export async function invoiceSettlement(
         fyId: null,
         refTypes: BILL_REF_TYPES,
         refIds: ids,
+        asOf: opts.asOf,
       })
     : new Map<string, number>();
   const out = new Map<

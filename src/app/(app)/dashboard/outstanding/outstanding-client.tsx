@@ -17,13 +17,16 @@ export function OutstandingClient({
   error,
   fys = [],
   selectedFy = null,
+  asOf = null,
 }: {
   side: OutSide;
   data: OutstandingData;
   error: string | null;
-  /** FY filter: documents dated up to the chosen year's end */
+  /** FY pick = position AS ON that year's 31 March */
   fys?: { id: string; label: string }[];
   selectedFy?: string | null;
+  /** custom "as on" date (yyyy-mm-dd) — beats the FY pick */
+  asOf?: string | null;
 }) {
   const [q, setQ] = React.useState("");
   const [minAmt, setMinAmt] = React.useState("");
@@ -70,9 +73,11 @@ export function OutstandingClient({
           </InfoHint>
         </h1>
         <div className="flex items-center gap-2">
+          {/* "As on" — FY pick = that year's 31 March; the date box beats it.
+              Everything (documents, payments, buckets) rewinds to the date. */}
           {fys.length > 1 && (
             <select
-              aria-label="Financial year"
+              aria-label="As-on financial year"
               className="h-8 rounded-md border border-input bg-background px-1.5 text-xs font-medium"
               value={selectedFy ?? ""}
               onChange={(e) => {
@@ -81,19 +86,34 @@ export function OutstandingClient({
                 window.location.href = `/dashboard/outstanding?${p.toString()}`;
               }}
             >
-              <option value="">Current FY</option>
+              <option value="">Aaj tak (live)</option>
               {fys.map((f) => (
                 <option key={f.id} value={f.id}>
-                  FY {f.label}
+                  As on 31/03 — FY {f.label}
                 </option>
               ))}
             </select>
           )}
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            As on
+            <input
+              type="date"
+              aria-label="As-on date"
+              className="h-8 rounded-md border border-input bg-background px-1.5 text-xs"
+              value={asOf ?? ""}
+              onChange={(e) => {
+                const p = new URLSearchParams({ side });
+                if (selectedFy) p.set("fy", selectedFy);
+                if (e.target.value) p.set("asof", e.target.value);
+                window.location.href = `/dashboard/outstanding?${p.toString()}`;
+              }}
+            />
+          </label>
           <Button asChild size="sm" variant={recv ? "default" : "outline"} className="h-8">
-            <a href={`/dashboard/outstanding?side=RECV${selectedFy ? `&fy=${selectedFy}` : ""}`}>Receivable</a>
+            <a href={`/dashboard/outstanding?side=RECV${selectedFy ? `&fy=${selectedFy}` : ""}${asOf ? `&asof=${asOf}` : ""}`}>Receivable</a>
           </Button>
           <Button asChild size="sm" variant={recv ? "outline" : "default"} className="h-8">
-            <a href={`/dashboard/outstanding?side=PAY${selectedFy ? `&fy=${selectedFy}` : ""}`}>Payable</a>
+            <a href={`/dashboard/outstanding?side=PAY${selectedFy ? `&fy=${selectedFy}` : ""}${asOf ? `&asof=${asOf}` : ""}`}>Payable</a>
           </Button>
           <ExportButton
             rows={rows}

@@ -7,10 +7,11 @@ export const dynamic = "force-dynamic";
 export default async function OutstandingPage({
   searchParams,
 }: {
-  searchParams: { side?: string; fy?: string };
+  searchParams: { side?: string; fy?: string; asof?: string };
 }) {
   const side: OutSide = searchParams.side === "PAY" ? "PAY" : "RECV";
-  const res = await getOutstandingAgeing({ side, fyId: searchParams.fy || null });
+  const asOf = searchParams.asof && /^\d{4}-\d{2}-\d{2}$/.test(searchParams.asof) ? searchParams.asof : null;
+  const res = await getOutstandingAgeing({ side, fyId: searchParams.fy || null, asOf });
   return (
     <OutstandingClient
       side={side}
@@ -18,6 +19,7 @@ export default async function OutstandingPage({
       error={res.ok ? null : res.error}
       fys={res.ok ? res.fys : []}
       selectedFy={searchParams.fy || null}
+      asOf={asOf}
     />
   );
 }
