@@ -21,6 +21,18 @@ const dayNum = (d: Date) => {
   return t.getUTCFullYear() * 10000 + (t.getUTCMonth() + 1) * 100 + t.getUTCDate();
 };
 
+/**
+ * The END bound needs one extra rule: an endDate stamped 23:59:59 in UTC
+ * shifts to 05:29 IST the NEXT morning, which would admit 1 April of the
+ * following year. A late UTC time-of-day (≥ 12:00) means the stamp already
+ * names its intended day in UTC — read it there; early stamps (date-only
+ * UTC midnights) read in IST like everything else.
+ */
+const endDayNum = (d: Date) =>
+  d.getUTCHours() >= 12
+    ? d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate()
+    : dayNum(d);
+
 export async function assertDateInFy(
   tx: Tx,
   session: { fyId: string },
@@ -30,8 +42,10 @@ export async function assertDateInFy(
   const fy = await tx.financialYear.findUnique({ where: { id: session.fyId } });
   if (!fy) return;
   const d = dayNum(date);
-  if (d < dayNum(fy.startDate) || d > dayNum(fy.endDate)) {
-    const label = `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
+  if (d < dayNum(fy.startDate) || d > endDayNum(fy.endDate)) {
+    // label the IST day — the same day the guard actually evaluated
+    const t = new Date(date.getTime() + IST_MS);
+    const label = `${String(t.getUTCDate()).padStart(2, "0")}/${String(t.getUTCMonth() + 1).padStart(2, "0")}/${t.getUTCFullYear()}`;
     throw new Error(
       `Ye date (${label}) FY ${fy.label} ki nahi hai — uss FY mein jaakar ${what} karein.`
     );

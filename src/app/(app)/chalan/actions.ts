@@ -654,6 +654,9 @@ export async function saveChalanAdvances(
         refType: ADV_USE_ADVANCE,
         refId: chalanId,
         refNo: chalan.chalanNo,
+        // as-on reports date this adjustment by the CHALAN's date, so an
+        // edit/re-save never rewrites history to the save wall-clock
+        date: chalan.chalanDate,
         lines: adjRows.map((r) => ({ advanceId: r.advanceId as string, amount: r.amount })),
       });
       const voucherNoOf = new Map(applied.map((a) => [a.advanceId, a.voucherNo]));

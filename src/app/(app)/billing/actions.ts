@@ -938,6 +938,9 @@ export async function saveInvoice(
           refType: "INVOICE",
           refId: invoiceId,
           refNo: data.invoiceNo,
+          // as-on reports date this adjustment by the BILL's date, so an
+          // edit/re-save never rewrites history to the save wall-clock
+          date: new Date(data.invoiceDate),
         });
       }
 

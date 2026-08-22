@@ -50,6 +50,9 @@ export async function consumeAdvances(
     refNo: string;
     /** RECEIVED = consumable by receivable bills; PAID = by payable docs */
     kind?: "RECEIVED" | "PAID";
+    /** the DOCUMENT's date — as-on reports date the adjustment by this, not
+        by the save wall-clock */
+    date?: Date;
   }
 ): Promise<number> {
   if (opts.amount <= 0) return 0;
@@ -82,6 +85,7 @@ export async function consumeAdvances(
         refId: opts.refId,
         refNo: opts.refNo,
         amount: take,
+        ...(opts.date ? { date: opts.date } : {}),
       },
     });
   }

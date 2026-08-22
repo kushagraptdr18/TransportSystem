@@ -86,7 +86,9 @@ export function OutstandingClient({
                 window.location.href = `/dashboard/outstanding?${p.toString()}`;
               }}
             >
-              <option value="">Aaj tak (live)</option>
+              <option value="">
+                {asOf ? `As on ${asOf.split("-").reverse().join("/")}` : "Aaj tak (live)"}
+              </option>
               {fys.map((f) => (
                 <option key={f.id} value={f.id}>
                   As on 31/03 — FY {f.label}
@@ -102,8 +104,8 @@ export function OutstandingClient({
               className="h-8 rounded-md border border-input bg-background px-1.5 text-xs"
               value={asOf ?? ""}
               onChange={(e) => {
+                // the custom date REPLACES an FY pick — one as-on truth at a time
                 const p = new URLSearchParams({ side });
-                if (selectedFy) p.set("fy", selectedFy);
                 if (e.target.value) p.set("asof", e.target.value);
                 window.location.href = `/dashboard/outstanding?${p.toString()}`;
               }}

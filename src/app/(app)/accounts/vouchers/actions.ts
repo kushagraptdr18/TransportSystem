@@ -1124,7 +1124,13 @@ export async function deleteVoucher(
           if ((pos.get(chalan.id)?.outstanding ?? 0) > 0.009) {
             await tx.chalan.update({
               where: { id: chalan.id },
-              data: { paymentStatus: "PENDING", balPaymentDate: null },
+              data: {
+                paymentStatus: "PENDING",
+                // the advance-adjusted part stays settled (its consumption is
+                // not restored) — keep its date, or as-on reports would zero
+                // it and overstate the payable
+                ...(Number(chalan.balAdvanceAdjusted) > 0.009 ? {} : { balPaymentDate: null }),
+              },
             });
           }
         }

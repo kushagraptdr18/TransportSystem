@@ -470,10 +470,18 @@ export async function getOutstandingAgeing(input: {
         fys.find((f) => f.id === (input.fyId || session.fyId)) ??
         fys.find((f) => f.id === session.fyId) ??
         fys[0];
-      const asOfDate = input.asOf
-        ? new Date(input.asOf + "T23:59:59")
-        : input.fyId && viewFy
-          ? viewFy.endDate
+      // validated here too — the action is callable directly, and a malformed
+      // string would otherwise become Invalid Date and silently empty the report
+      const asOfStr =
+        input.asOf && /^\d{4}-\d{2}-\d{2}$/.test(input.asOf) ? input.asOf : null;
+      // FY pick = the WHOLE of 31 March: seeded FYs stamp endDate at
+      // midnight, which would drop that day's intraday settlements
+      const fyEndFull = viewFy ? new Date(viewFy.endDate) : null;
+      fyEndFull?.setHours(23, 59, 59, 999);
+      const asOfDate = asOfStr
+        ? new Date(asOfStr + "T23:59:59")
+        : input.fyId && fyEndFull
+          ? fyEndFull
           : null;
       const [collected, parties] = await Promise.all([
         collect(tx, scope, input.side, asOfDate),
